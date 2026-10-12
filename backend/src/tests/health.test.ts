@@ -1,12 +1,11 @@
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
-import { createApp } from '../app.js';
-import { testConfig } from './test-config.js';
+import { createTestApp } from './test-config.js';
 
 describe('GET /api/v1/health', () => {
-  const app = createApp(testConfig);
+  const app = createTestApp({ databaseUp: true });
 
-  it('returns 200 with the service status', async () => {
+  it('returns 200 when the database is up', async () => {
     const response = await request(app).get('/api/v1/health');
 
     expect(response.status).toBe(200);
@@ -16,10 +15,17 @@ describe('GET /api/v1/health', () => {
       status: 'ok',
       service: 'snackify-api',
       environment: 'test',
-      checks: { database: 'not_configured' },
+      checks: { database: 'up' },
     });
     expect(Number.isNaN(Date.parse(response.body.timestamp))).toBe(false);
     expect(response.body.uptimeSeconds).toBeGreaterThanOrEqual(0);
+  });
+
+  it('returns 503 when the database is down', async () => {
+    const response = await request(createTestApp({ databaseUp: false })).get('/api/v1/health');
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({ status: 'unavailable', checks: { database: 'down' } });
   });
 
   it('sets security headers and hides the framework', async () => {

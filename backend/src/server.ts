@@ -1,12 +1,9 @@
-import { existsSync } from 'node:fs';
 import { createApp } from './app.js';
-import { loadConfig, type AppConfig } from './config/env.js';
+import { loadConfig, loadDotEnv, type AppConfig } from './config/env.js';
+import { createPool, databaseHealthCheck } from './database/pool.js';
 import { logger } from './utils/logger.js';
 
-// Load backend/.env for local development. Real environment variables take precedence.
-if (existsSync('.env')) {
-  process.loadEnvFile('.env');
-}
+loadDotEnv();
 
 let config: AppConfig;
 try {
@@ -16,9 +13,11 @@ try {
   process.exit(1);
 }
 
-const app = createApp(config);
+const pool = createPool(config.databaseUrl);
+const checkDatabase = databaseHealthCheck(pool);
+const app = createApp(config, { checkDatabase });
 
-const server = app.listen(config.port, (error?: Error) => {
+const server = app.listen(config.port, async (error?: Error) => {
   if (error) {
     const hint =
       'code' in error && error.code === 'EADDRINUSE'
@@ -31,11 +30,21 @@ const server = app.listen(config.port, (error?: Error) => {
     environment: config.nodeEnv,
     healthCheck: `http://localhost:${config.port}/api/v1/health`,
   });
+
+  // Keep running if the database is down (health reports 503), but say so clearly.
+  if (await checkDatabase()) {
+    logger.info('Database connection OK');
+  } else {
+    logger.warn('Database is not reachable. Is PostgreSQL running and DATABASE_URL correct?');
+  }
 });
 
 function shutdown(signal: string): void {
   logger.info('Shutting down', { signal });
-  server.close(() => process.exit(0));
+  server.close(async () => {
+    await pool.end();
+    process.exit(0);
+  });
 }
 
 process.on('SIGINT', () => shutdown('SIGINT'));

@@ -1,20 +1,25 @@
 import { Router } from 'express';
 import type { AppConfig } from '../../config/env.js';
 
-export function healthRouter(config: AppConfig): Router {
+/** Resolves to true when the database answers; never rejects. */
+export type DatabaseCheck = () => Promise<boolean>;
+
+export function healthRouter(config: AppConfig, checkDatabase: DatabaseCheck): Router {
   const router = Router();
 
-  router.get('/', (_req, res) => {
+  router.get('/', async (_req, res) => {
+    const databaseUp = await checkDatabase();
+
     res.set('Cache-Control', 'no-store');
-    res.json({
-      status: 'ok',
+    // 503 tells monitoring tools and clients that the API cannot serve requests right now.
+    res.status(databaseUp ? 200 : 503).json({
+      status: databaseUp ? 'ok' : 'unavailable',
       service: 'snackify-api',
       environment: config.nodeEnv,
       timestamp: new Date().toISOString(),
       uptimeSeconds: Math.round(process.uptime()),
       checks: {
-        // PostgreSQL is connected in the next stage; this will then report "up" or "down".
-        database: 'not_configured',
+        database: databaseUp ? 'up' : 'down',
       },
     });
   });

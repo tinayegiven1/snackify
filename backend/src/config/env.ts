@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { z } from 'zod';
 
 export interface AppConfig {
@@ -5,6 +6,15 @@ export interface AppConfig {
   port: number;
   /** Browser origins allowed to call the API (e.g. the Flutter web dev server). */
   corsOrigins: string[];
+  /** PostgreSQL connection string for the API's runtime role (snackify_app). */
+  databaseUrl: string;
+}
+
+/** Loads backend/.env for local development. Real environment variables take precedence. */
+export function loadDotEnv(path = '.env'): void {
+  if (existsSync(path)) {
+    process.loadEnvFile(path);
+  }
 }
 
 const corsOriginsSchema = z
@@ -27,30 +37,52 @@ const corsOriginsSchema = z
       .min(1, 'At least one origin is required'),
   );
 
+// Messages are fixed text: a database URL contains a password, so it must never be echoed.
+const postgresUrlSchema = z
+  .string({ error: 'Required (see backend/.env.example)' })
+  .refine(
+    (value) => URL.canParse(value) && /^postgres(ql)?:$/.test(new URL(value).protocol),
+    'Must be a PostgreSQL URL like postgres://user:password@localhost:5432/snackify_dev',
+  );
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   CORS_ORIGINS: corsOriginsSchema.default(['http://localhost:8080']),
+  DATABASE_URL: postgresUrlSchema,
 });
 
+function invalidConfig(error: z.ZodError, path: string[] = []): Error {
+  const problems = error.issues
+    .map((issue) => `  - ${[...path, ...issue.path].join('.') || 'environment'}: ${issue.message}`)
+    .join('\n');
+  return new Error(`Invalid environment configuration:\n${problems}`);
+}
+
 /**
- * Reads and validates configuration from environment variables.
+ * Reads and validates the API configuration from environment variables.
  * Throws an error naming each invalid variable; values are never echoed back,
- * so secrets added later cannot leak into logs.
+ * so secrets cannot leak into logs.
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const result = envSchema.safeParse(env);
-
   if (!result.success) {
-    const problems = result.error.issues
-      .map((issue) => `  - ${issue.path.join('.') || 'environment'}: ${issue.message}`)
-      .join('\n');
-    throw new Error(`Invalid environment configuration:\n${problems}`);
+    throw invalidConfig(result.error);
   }
 
   return {
     nodeEnv: result.data.NODE_ENV,
     port: result.data.PORT,
     corsOrigins: result.data.CORS_ORIGINS,
+    databaseUrl: result.data.DATABASE_URL,
   };
+}
+
+/** Reads one PostgreSQL URL variable, such as MIGRATION_DATABASE_URL, for scripts and tests. */
+export function readDatabaseUrl(name: string, env: NodeJS.ProcessEnv = process.env): string {
+  const result = postgresUrlSchema.safeParse(env[name]);
+  if (!result.success) {
+    throw invalidConfig(result.error, [name]);
+  }
+  return result.data;
 }

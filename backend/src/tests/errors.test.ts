@@ -1,10 +1,9 @@
 import express from 'express';
 import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../app.js';
 import { errorHandler } from '../middleware/error-handler.js';
 import { AppError } from '../utils/app-error.js';
-import { testConfig } from './test-config.js';
+import { createTestApp } from './test-config.js';
 
 describe('error handling', () => {
   afterEach(() => {
@@ -12,7 +11,7 @@ describe('error handling', () => {
   });
 
   it('returns a JSON 404 for unknown routes', async () => {
-    const response = await request(createApp(testConfig)).get('/api/v1/does-not-exist');
+    const response = await request(createTestApp()).get('/api/v1/does-not-exist');
 
     expect(response.status).toBe(404);
     expect(response.body).toEqual({
@@ -21,7 +20,7 @@ describe('error handling', () => {
   });
 
   it('returns 400 INVALID_JSON for a malformed JSON body', async () => {
-    const response = await request(createApp(testConfig))
+    const response = await request(createTestApp())
       .post('/api/v1/health')
       .set('Content-Type', 'application/json')
       .send('{"name": ');

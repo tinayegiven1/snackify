@@ -33,21 +33,32 @@ field failed validation). Raw database errors and stack traces are never returne
 
 ### `GET /api/v1/health`
 
-Reports whether the API is running. No authentication required.
+Reports whether the API is running and can reach PostgreSQL (it runs `SELECT 1`, waiting at most
+2 seconds). No authentication required. Responses are never cached.
 
-**200 OK**
+**200 OK**: the API and database are working.
 
 ```json
 {
   "status": "ok",
   "service": "snackify-api",
   "environment": "development",
-  "timestamp": "2026-10-12T10:52:24.950Z",
+  "timestamp": "2026-10-12T12:21:18.369Z",
   "uptimeSeconds": 12,
-  "checks": { "database": "not_configured" }
+  "checks": { "database": "up" }
 }
 ```
 
-`checks.database` is `not_configured` until PostgreSQL is connected in the next stage. The plan
-is for it to then report the database status, with a `503` response when the database is
-unreachable.
+**503 Service Unavailable**: the API is running but cannot reach the database, so it cannot
+serve requests. The reason is written to the server log, never to the response.
+
+```json
+{
+  "status": "unavailable",
+  "service": "snackify-api",
+  "environment": "development",
+  "timestamp": "2026-10-12T12:21:19.449Z",
+  "uptimeSeconds": 1,
+  "checks": { "database": "down" }
+}
+```

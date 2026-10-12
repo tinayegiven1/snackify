@@ -5,29 +5,36 @@ snacks business. One backend API and database serve a Flutter web app and a Flut
 
 The full product specification is in [Snackify_Claude_Code_Spec.md](Snackify_Claude_Code_Spec.md).
 
-## Current status: Stage 1 (foundation)
+## Current status: Stage 2 (database)
 
-| Part                                   | Status                                                         |
-| -------------------------------------- | -------------------------------------------------------------- |
-| Backend (Node.js, Express, TypeScript) | Health endpoint, config validation, error handling, tests      |
-| Flutter app (web + Android)            | Responsive dashboard shell with **sample data only**           |
-| PostgreSQL, migrations, login          | Not started (next stage)                                       |
-| Products, stock, dispatches, billing   | Not started (navigation shows "coming soon" pages)             |
+| Part                                   | Status                                                              |
+| -------------------------------------- | ------------------------------------------------------------------- |
+| Backend (Node.js, Express, TypeScript) | Health endpoint with database check, config validation, tests       |
+| PostgreSQL                             | Local dev + test databases, least-privilege roles, migrations, seed |
+| Database tables                        | `products` (first migration). More tables arrive with each feature  |
+| Flutter app (web + Android)            | Responsive dashboard shell with **sample data only**                |
+| Login, stock, dispatches, billing      | Not started (navigation shows "coming soon" pages)                  |
 
 ## Project structure
 
 ```text
-Snackify/
+snackify/
 ├── backend/                 Express + TypeScript API
 │   ├── src/
 │   │   ├── app.ts           Builds the Express app (used by server and tests)
-│   │   ├── server.ts        Starts the HTTP server
+│   │   ├── server.ts        Starts the HTTP server and database pool
 │   │   ├── config/          Environment variable validation
+│   │   ├── database/        Connection pool, health check, migration runner
 │   │   ├── middleware/      404 and error handlers
 │   │   ├── modules/health/  GET /api/v1/health
+│   │   ├── scripts/         db:migrate and db:seed commands
 │   │   ├── utils/           AppError, JSON logger
-│   │   └── tests/           Vitest + Supertest tests
+│   │   └── tests/           Unit tests; tests/db/ = tests against PostgreSQL
 │   └── .env.example
+├── database/
+│   ├── setup/               One-time script that creates roles and databases
+│   ├── migrations/          SQL schema changes, applied in order
+│   └── seeds/               Sample data for local development (no real data)
 ├── mobile_web/              Flutter app for web and Android
 │   ├── lib/
 │   │   ├── core/            config, network (API client), routing, theme
@@ -35,7 +42,7 @@ Snackify/
 │   │   └── features/dashboard/
 │   ├── test/
 │   └── assets/images/
-└── docs/api-documentation.md
+└── docs/                    api-documentation.md, database-design.md
 ```
 
 ## Prerequisites
@@ -47,7 +54,59 @@ Snackify/
 | Flutter SDK (includes Dart)         | Web and Android app     | 3.47 stable  |
 | Android Studio + Android SDK        | Android builds          | SDK 36       |
 | Google Chrome or Microsoft Edge     | Running the web app     | any current  |
-| PostgreSQL                          | Next stage              | 17 or newer  |
+| PostgreSQL (with pgAdmin)           | Database                | 18.x         |
+
+---
+
+## Database (PostgreSQL)
+
+The design, conventions and roles are described in
+[docs/database-design.md](docs/database-design.md).
+
+### One-time setup
+
+1. Install PostgreSQL 18 from <https://www.postgresql.org/download/windows/> (the EDB
+   installer). It runs as the Windows service `postgresql-x64-18` and starts with Windows.
+   Remember the password you choose for the `postgres` superuser.
+2. Create the Snackify roles and databases. Choose two long passwords, then from the project
+   root:
+
+   ```powershell
+   $env:SNACKIFY_OWNER_PASSWORD = '<long random password 1>'
+   $env:SNACKIFY_APP_PASSWORD   = '<long random password 2>'
+   & 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h localhost -U postgres -d postgres -f database/setup/local-setup.sql
+   ```
+
+   This creates `snackify_owner` (runs migrations), `snackify_app` (used by the API), and the
+   databases `snackify_dev` and `snackify_test`. It is safe to run again, for example to change
+   the passwords.
+3. Copy `backend/.env.example` to `backend/.env` and replace the `CHANGE_ME_...` placeholders
+   with the two passwords.
+
+On this PC the setup is already done. The `postgres` password was generated during install and
+is stored in `%APPDATA%\postgresql\pgpass.conf` (the text after the last `:` on each line), so
+`psql` connects without asking. pgAdmin asks for it the first time; paste it from that file and
+tick **Save password**. The Snackify role passwords are in `backend/.env`.
+
+### Browse the data
+
+Open **pgAdmin 4** from the Start menu, then **Servers → PostgreSQL 18 → Databases →
+snackify_dev → Schemas → public → Tables**. Or use the command line:
+
+```powershell
+& 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h localhost -U postgres -d snackify_dev -c "select sku, name, flavour, size, default_price from products"
+```
+
+### Migrations and sample data
+
+From the `backend` folder:
+
+```powershell
+npm run db:migrate                     # apply all pending migrations
+npm run db:seed                        # load sample products (safe to repeat)
+npm run db:rollback                    # undo the most recent migration (not in production)
+npm run db:new-migration -- add-customers   # create a new, empty SQL migration file
+```
 
 ---
 
@@ -57,13 +116,14 @@ All commands run from the `backend` folder (PowerShell shown).
 
 ### First-time setup
 
+Set up the database first (see above), then:
+
 ```powershell
 cd backend
 npm install
-Copy-Item .env.example .env
+npm run db:migrate
+npm run db:seed
 ```
-
-`.env` holds local settings and is ignored by Git. The defaults work as-is.
 
 ### Run in development (auto-restarts on file changes)
 
@@ -79,13 +139,14 @@ Open <http://localhost:3000/api/v1/health> in a browser, or run:
 curl.exe http://localhost:3000/api/v1/health
 ```
 
-Expected: HTTP 200 with `"status":"ok"`. `"database":"not_configured"` is expected until the
-next stage.
+Expected: HTTP 200 with `"status":"ok"` and `"database":"up"`. If PostgreSQL cannot be reached,
+the API still runs but answers HTTP 503 with `"database":"down"`, and the server log says why.
 
 ### Checks
 
 ```powershell
-npm test               # Vitest + Supertest
+npm test               # unit tests (no database needed)
+npm run test:db        # tests against the snackify_test database (rebuilds its schema first)
 npm run typecheck      # TypeScript strict mode
 npm run lint           # ESLint
 npm run format:check   # Prettier (use `npm run format` to fix)
@@ -101,13 +162,18 @@ npm start
 
 ### Configuration (`backend/.env`)
 
-| Variable       | Default                 | Meaning                                                     |
-| -------------- | ----------------------- | ----------------------------------------------------------- |
-| `NODE_ENV`     | `development`           | `development`, `test` or `production`                       |
-| `PORT`         | `3000`                  | Port the API listens on                                     |
-| `CORS_ORIGINS` | `http://localhost:8080` | Comma-separated browser origins allowed to call the API     |
+| Variable                      | Default                 | Meaning                                                 |
+| ----------------------------- | ----------------------- | ------------------------------------------------------- |
+| `NODE_ENV`                    | `development`           | `development`, `test` or `production`                   |
+| `PORT`                        | `3000`                  | Port the API listens on                                 |
+| `CORS_ORIGINS`                | `http://localhost:8080` | Comma-separated browser origins allowed to call the API |
+| `DATABASE_URL`                | (required)              | API connection, as `snackify_app`, to `snackify_dev`    |
+| `MIGRATION_DATABASE_URL`      | (required for migrations) | `snackify_owner` connection used by `db:migrate`      |
+| `TEST_DATABASE_URL`           | (required for `test:db`) | `snackify_app` connection to `snackify_test`           |
+| `TEST_MIGRATION_DATABASE_URL` | (required for `test:db`) | `snackify_owner` connection to `snackify_test`         |
 
-Invalid values stop the server at startup with a message naming the variable.
+Invalid values stop the server at startup with a message naming the variable. Database URLs
+contain passwords, so they are never printed.
 
 ---
 
@@ -184,10 +250,12 @@ dart format .
 
 ---
 
-## Known limitations (Stage 1)
+## Known limitations (Stage 2)
 
-- The dashboard shows **sample data only**; nothing is saved or loaded from a database yet.
-- No database, login or role permissions yet. Do not deploy this stage to the internet.
+- The Flutter dashboard still shows **sample data only**; it does not read the database yet.
+- If the database is down, the app's status chip shows **API offline**, because the health
+  endpoint then answers 503.
+- No login or role permissions yet. Do not deploy this stage to the internet.
 - The backend allows browser requests only from the origins in `CORS_ORIGINS`.
 - Plain HTTP is only for local development. Production must use HTTPS.
 - **Keep the project out of OneDrive and other sync folders.** Sync tools lock files in
