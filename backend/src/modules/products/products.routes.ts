@@ -1,0 +1,117 @@
+import { Router } from 'express';
+import type pg from 'pg';
+import { z } from 'zod';
+import { getAuth, requireAuth, requireRole } from '../../middleware/authenticate.js';
+import { AppError } from '../../utils/app-error.js';
+import { parseBody } from '../../utils/validation.js';
+import { createProduct, getProduct, listProducts, updateProduct } from './products.service.js';
+
+// These rules match the database constraints, so most mistakes get a clear field message.
+const text = (max: number) =>
+  z
+    .string({ error: 'Required' })
+    .trim()
+    .min(1, 'Required')
+    .max(max, `Use at most ${max} characters`);
+
+const skuSchema = z
+  .string({ error: 'Required' })
+  .trim()
+  .toUpperCase()
+  .regex(
+    /^[A-Z0-9][A-Z0-9._-]{0,39}$/,
+    'Use up to 40 letters, digits, dots, dashes or underscores, e.g. PC-BBQ-S',
+  );
+
+/** A barcode, or null / empty text for "no barcode". */
+const barcodeSchema = z
+  .string({ error: 'Must be text or null' })
+  .trim()
+  .nullable()
+  .transform((value) => value || null)
+  .refine(
+    (value) => value === null || /^[A-Za-z0-9-]{4,48}$/.test(value),
+    'Use 4–48 letters, digits or dashes',
+  );
+
+/** Money as an exact decimal: "0.50" (a JSON number such as 0.5 is also accepted). */
+const priceSchema = z
+  .union([z.string(), z.number()], { error: 'Required' })
+  .transform((value) => String(value).trim())
+  .refine(
+    (value) => /^\d{1,10}(\.\d{1,2})?$/.test(value),
+    'Use an amount of 0 or more with up to 2 decimal places, e.g. 0.50',
+  );
+
+const createProductSchema = z.object({
+  sku: skuSchema,
+  name: text(100),
+  flavour: text(60),
+  size: text(40),
+  barcode: barcodeSchema.optional().transform((value) => value ?? null),
+  defaultPrice: priceSchema,
+});
+
+const updateProductSchema = z
+  .strictObject(
+    {
+      sku: skuSchema.optional(),
+      name: text(100).optional(),
+      flavour: text(60).optional(),
+      size: text(40).optional(),
+      barcode: barcodeSchema.optional(),
+      defaultPrice: priceSchema.optional(),
+      isActive: z.boolean({ error: 'Must be true or false' }).optional(),
+    },
+    { error: 'This field cannot be changed' },
+  )
+  .refine((changes) => Object.keys(changes).length > 0, 'Send at least one field to change');
+
+const listQuerySchema = z.object({
+  q: z.string().trim().max(100, 'Use at most 100 characters').optional(),
+  includeInactive: z
+    .enum(['true', 'false'], { error: 'Must be true or false' })
+    .optional()
+    .transform((value) => value === 'true'),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+/** An invalid id cannot match any product, so treat it as "not found". */
+function productIdParam(id: unknown): string {
+  const result = z.uuid().safeParse(id);
+  if (!result.success) {
+    throw new AppError(404, 'PRODUCT_NOT_FOUND', 'No product has that id.');
+  }
+  return result.data;
+}
+
+/** Product catalogue. Every signed-in user can view it; only admins can change it (spec 5). */
+export function productsRouter(db: pg.Pool): Router {
+  const router = Router();
+  router.use(requireAuth(db));
+
+  router.get('/', async (req, res) => {
+    const search = parseBody(listQuerySchema, req.query);
+    res.json(await listProducts(db, search));
+  });
+
+  router.get('/:id', async (req, res) => {
+    res.json({ product: await getProduct(db, productIdParam(req.params.id)) });
+  });
+
+  router.post('/', requireRole('admin'), async (req, res) => {
+    const input = parseBody(createProductSchema, req.body);
+    const product = await createProduct(db, input, getAuth(res).user.id);
+    res.status(201).json({ product });
+  });
+
+  router.patch('/:id', requireRole('admin'), async (req, res) => {
+    const id = productIdParam(req.params.id);
+    const changes = parseBody(updateProductSchema, req.body);
+    const product = await updateProduct(db, id, changes, getAuth(res).user.id);
+    res.json({ product });
+  });
+
+  return router;
+}

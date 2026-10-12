@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../../core/app_services.dart';
 import '../../core/routing/app_destinations.dart';
 import '../../core/theme/app_theme.dart';
 import '../../features/auth/domain/app_user.dart';
 import '../../features/dashboard/presentation/dashboard_screen.dart';
+import '../../features/products/presentation/products_screen.dart';
 import 'api_status_indicator.dart';
 import 'coming_soon_view.dart';
 import 'snackify_logo.dart';
@@ -13,16 +15,11 @@ const double kWideLayoutBreakpoint = 840;
 
 /// App frame: top bar, navigation, and the selected section.
 class AppShell extends StatefulWidget {
-  const AppShell({
-    super.key,
-    required this.user,
-    required this.onSignOut,
-    required this.checkBackendHealth,
-  });
+  const AppShell({super.key, required this.user, required this.onSignOut, required this.services});
 
   final AppUser user;
   final Future<void> Function() onSignOut;
-  final Future<bool> Function() checkBackendHealth;
+  final AppServices services;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -50,16 +47,22 @@ class _AppShellState extends State<AppShell> {
         widget.onSignOut();
       },
     );
-    final page = _selectedIndex == 0
-        ? const DashboardScreen()
-        : ComingSoonView(title: destination.label);
+    final page = switch (destination.label) {
+      'Dashboard' => const DashboardScreen(),
+      // Only admins manage products (spec section 5); the server enforces this too.
+      'Products' => ProductsScreen(
+        repository: widget.services.products,
+        canEdit: widget.user.role == StaffRole.admin,
+      ),
+      _ => ComingSoonView(title: destination.label),
+    };
 
     return Scaffold(
       key: _scaffoldKey,
       appBar: AppBar(
         title: Text(destination.label),
         actions: [
-          ApiStatusIndicator(checkHealth: widget.checkBackendHealth),
+          ApiStatusIndicator(checkHealth: widget.services.checkBackendHealth),
           const SizedBox(width: 12),
         ],
       ),

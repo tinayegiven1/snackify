@@ -1,17 +1,16 @@
 import 'package:flutter/material.dart';
 
+import 'core/app_services.dart';
 import 'core/theme/app_theme.dart';
 import 'features/auth/presentation/auth_controller.dart';
 import 'features/auth/presentation/login_screen.dart';
 import 'shared/widgets/app_shell.dart';
 
 class SnackifyApp extends StatelessWidget {
-  const SnackifyApp({super.key, required this.auth, required this.checkBackendHealth});
+  const SnackifyApp({super.key, required this.auth, required this.services});
 
   final AuthController auth;
-
-  /// Returns true when the Snackify API is reachable. Injected so tests can fake it.
-  final Future<bool> Function() checkBackendHealth;
+  final AppServices services;
 
   @override
   Widget build(BuildContext context) {
@@ -28,7 +27,7 @@ class SnackifyApp extends StatelessWidget {
           AuthStatus.signedIn => AppShell(
             user: auth.user!,
             onSignOut: auth.signOut,
-            checkBackendHealth: checkBackendHealth,
+            services: services,
           ),
         },
       ),

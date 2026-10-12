@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 
 /// Thrown when the API cannot be reached or returns an error response.
 class ApiException implements Exception {
-  ApiException(this.message, {this.statusCode, this.code = 'UNKNOWN'});
+  ApiException(this.message, {this.statusCode, this.code = 'UNKNOWN', this.fieldErrors = const {}});
 
   /// Shown to the user. The backend writes these in plain language.
   final String message;
@@ -13,6 +13,9 @@ class ApiException implements Exception {
 
   /// The backend's error code, e.g. INVALID_CREDENTIALS, or NETWORK_ERROR when unreachable.
   final String code;
+
+  /// Problems with individual fields, e.g. {'sku': 'Already used by another product'}.
+  final Map<String, String> fieldErrors;
 
   bool get isNetworkError => code == networkErrorCode;
 
@@ -45,6 +48,9 @@ class ApiClient {
 
   Future<Map<String, dynamic>> postJson(String path, [Map<String, Object?>? body]) =>
       _send('POST', path, body);
+
+  Future<Map<String, dynamic>> patchJson(String path, Map<String, Object?> body) =>
+      _send('PATCH', path, body);
 
   Future<Map<String, dynamic>> _send(String method, String path, [Object? body]) async {
     final request = http.Request(method, Uri.parse('$_baseUrl$path'))
@@ -96,15 +102,23 @@ class ApiClient {
     return decoded;
   }
 
-  /// Reads the backend's standard error shape: { "error": { "code", "message" } }.
+  /// Reads the backend's standard error shape:
+  /// { "error": { "code", "message", "details": [{ "field", "message" }] } }.
   ApiException _errorFrom(Object? body, int statusCode) {
     if (body is Map<String, dynamic>) {
       final error = body['error'];
       if (error is Map<String, dynamic> && error['message'] is String) {
+        final details = error['details'];
         return ApiException(
           error['message'] as String,
           statusCode: statusCode,
           code: error['code'] is String ? error['code'] as String : 'UNKNOWN',
+          fieldErrors: {
+            if (details is List)
+              for (final item in details.whereType<Map<String, dynamic>>())
+                if (item['field'] is String && item['message'] is String)
+                  item['field'] as String: item['message'] as String,
+          },
         );
       }
     }

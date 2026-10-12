@@ -7,6 +7,7 @@ import { errorHandler } from './middleware/error-handler.js';
 import { notFoundHandler } from './middleware/not-found.js';
 import { authRouter } from './modules/auth/auth.routes.js';
 import { healthRouter, type DatabaseCheck } from './modules/health/health.routes.js';
+import { productsRouter } from './modules/products/products.routes.js';
 import { usersRouter } from './modules/users/users.routes.js';
 
 /** Things the app needs from outside, passed in so tests can replace them. */
@@ -26,6 +27,7 @@ export function createApp(config: AppConfig, deps: AppDependencies): Express {
   app.use('/api/v1/health', healthRouter(config, deps.checkDatabase));
   app.use('/api/v1/auth', authRouter(deps.db));
   app.use('/api/v1/users', usersRouter(deps.db));
+  app.use('/api/v1/products', productsRouter(deps.db));
 
   app.use(notFoundHandler);
   app.use(errorHandler);

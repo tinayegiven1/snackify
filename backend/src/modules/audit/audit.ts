@@ -7,16 +7,32 @@ export type AuditAction =
   | 'auth.password_changed'
   | 'user.created'
   | 'user.updated'
-  | 'user.password_reset';
+  | 'user.password_reset'
+  | 'product.created'
+  | 'product.updated';
 
 export interface AuditEntry {
   /** The signed-in user who acted, or null for setup commands and unknown users. */
   actorUserId: string | null;
   action: AuditAction;
-  entityType?: 'user';
+  entityType?: 'user' | 'product';
   entityId?: string;
   /** Extra facts about the action. Never include passwords, tokens or other secrets. */
   details?: Record<string, unknown>;
+}
+
+/** Lists the fields whose value changed, as { field: { from, to } }, for audit details. */
+export function changedFields<T extends Record<string, unknown>>(
+  before: T,
+  after: T,
+): Record<string, { from: unknown; to: unknown }> {
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  for (const field of Object.keys(after)) {
+    if (before[field] !== after[field]) {
+      changes[field] = { from: before[field], to: after[field] };
+    }
+  }
+  return changes;
 }
 
 /** Appends an entry to the audit log. Pass the transaction client to save it with the change. */

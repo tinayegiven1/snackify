@@ -9,6 +9,9 @@ class AppConfig {
 
   static const String _apiBaseUrlOverride = String.fromEnvironment('API_BASE_URL');
 
+  /// The business's base currency: product default prices are in this currency.
+  static const String currencyCode = 'USD';
+
   static String get apiBaseUrl {
     if (_apiBaseUrlOverride.isNotEmpty) return _apiBaseUrlOverride;
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {

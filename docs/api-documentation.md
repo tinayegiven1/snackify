@@ -195,3 +195,92 @@ role or deactivate themselves (`409 CANNOT_CHANGE_OWN_ACCESS`), so there is alwa
 
 **204 No Content**. The user is signed out everywhere and must use the new password. Admins
 change their own password with `/auth/change-password` instead (`409 USE_CHANGE_PASSWORD`).
+
+## Products
+
+Everyone signed in can view products; only **admins** can add or change them (spec section 5).
+Products are never deleted (there is no DELETE endpoint); deactivate them instead.
+
+Prices are exact decimal **strings** such as `"0.50"`, in the business's base currency (USD),
+so money is never rounded by floating-point maths. When sending a price, a string (`"0.5"`) or a
+JSON number (`0.5`) is accepted; it must be 0 or more with at most 2 decimal places.
+
+| Field          | Rules                                                                 |
+| -------------- | --------------------------------------------------------------------- |
+| `sku`          | Required, unique. Stored in capitals: letters, digits, `.` `_` `-`, up to 40 |
+| `name`         | Required, up to 100 characters                                        |
+| `flavour`      | Required, up to 60 characters                                         |
+| `size`         | Required, up to 40 characters                                         |
+| `barcode`      | Optional; `null` or `""` for none. Unique when set; 4–48 letters, digits or `-` |
+| `defaultPrice` | Required, see above                                                   |
+| `isActive`     | Changes only; `false` hides the product from normal lists             |
+
+The same name + flavour + size cannot be registered twice (letter case is ignored).
+
+Product errors: **409** `SKU_TAKEN` or `BARCODE_TAKEN` (with `details` naming the field),
+**409** `PRODUCT_EXISTS` (same name, flavour and size), **404** `PRODUCT_NOT_FOUND`.
+
+### `GET /api/v1/products`
+
+Query parameters, all optional:
+
+| Parameter         | Meaning                                                                  |
+| ----------------- | ------------------------------------------------------------------------ |
+| `q`               | Part of the SKU, name, flavour or size (case ignored), or an exact barcode |
+| `includeInactive` | `true` to include deactivated products                                   |
+| `limit`           | 1–200, default 50                                                        |
+| `offset`          | 0 or more, default 0                                                     |
+
+**200 OK**, sorted by name, flavour, size. `total` is the number of matches, which may be more
+than one page.
+
+```json
+{
+  "products": [
+    {
+      "id": "3b0d6c5e-...",
+      "sku": "PC-BBQ-S",
+      "name": "Potato Crisps",
+      "flavour": "BBQ",
+      "size": "Small",
+      "barcode": "2000000000015",
+      "defaultPrice": "0.50",
+      "isActive": true,
+      "createdAt": "2026-10-12T12:18:44.000Z",
+      "updatedAt": "2026-10-12T12:18:44.000Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+### `GET /api/v1/products/:id`
+
+**200 OK** with `{ "product": { ... } }`.
+
+### `POST /api/v1/products` (admins)
+
+```json
+{
+  "sku": "PC-SV-L",
+  "name": "Potato Crisps",
+  "flavour": "Salt & Vinegar",
+  "size": "Large",
+  "barcode": null,
+  "defaultPrice": "1.00"
+}
+```
+
+**201 Created** with `{ "product": { ... } }`. Recorded in the audit log as `product.created`.
+
+### `PATCH /api/v1/products/:id` (admins)
+
+Send only the fields to change. Leaving `barcode` out keeps it; `"barcode": null` removes it.
+
+```json
+{ "defaultPrice": "0.55", "isActive": false }
+```
+
+**200 OK** with `{ "product": { ... } }`. The audit log records exactly what changed, e.g.
+`{"changes": {"defaultPrice": {"from": "0.50", "to": "0.55"}}}`. Earlier sales keep the
+price they were made at; only new transactions use the new default.

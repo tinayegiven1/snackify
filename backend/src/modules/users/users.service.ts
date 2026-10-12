@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { isUniqueViolation, withTransaction, type Queryable } from '../../database/transaction.js';
 import { AppError } from '../../utils/app-error.js';
-import { recordAudit, type AuditAction } from '../audit/audit.js';
+import { changedFields, recordAudit, type AuditAction } from '../audit/audit.js';
 import { hashPassword } from '../auth/passwords.js';
 import type { PublicUser, Role } from '../auth/roles.js';
 import { revokeUserSessions } from '../auth/sessions.js';
@@ -182,20 +182,17 @@ export async function updateUser(
       await revokeUserSessions(client, userId);
     }
 
-    // Record only what actually changed, as { field: { from, to } }.
-    const diff: Record<string, { from: unknown; to: unknown }> = {};
-    if (after.fullName !== before.full_name)
-      diff.fullName = { from: before.full_name, to: after.fullName };
-    if (after.role !== before.role) diff.role = { from: before.role, to: after.role };
-    if (after.isActive !== before.is_active)
-      diff.isActive = { from: before.is_active, to: after.isActive };
-
+    const beforeValues = {
+      fullName: before.full_name,
+      role: before.role,
+      isActive: before.is_active,
+    };
     await recordAudit(client, {
       actorUserId: actor.id,
       action: 'user.updated',
       entityType: 'user',
       entityId: userId,
-      details: { changes: diff },
+      details: { changes: changedFields(beforeValues, after) },
     });
   });
 

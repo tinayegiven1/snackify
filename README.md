@@ -5,16 +5,16 @@ snacks business. One backend API and database serve a Flutter web app and a Flut
 
 The full product specification is in [Snackify_Claude_Code_Spec.md](Snackify_Claude_Code_Spec.md).
 
-## Current status: Stage 3 (sign-in and staff accounts)
+## Current status: Stage 4 (product catalogue)
 
-| Part                                   | Status                                                                  |
-| -------------------------------------- | ----------------------------------------------------------------------- |
-| Backend (Node.js, Express, TypeScript) | Health check, sign-in/out, roles, staff account API, audit log, tests   |
-| PostgreSQL                             | Dev + test databases, least-privilege roles, migrations, seed           |
-| Database tables                        | `products`, `users`, `sessions`, `audit_logs`                           |
-| Flutter app (web + Android)            | Login screen, session restore, sign-out; dashboard with **sample data** |
-| Staff management screens               | Not yet: use the API or `npm run user:create`                           |
-| Stock, dispatches, billing             | Not started (navigation shows "coming soon" pages)                      |
+| Part                                   | Status                                                                     |
+| -------------------------------------- | -------------------------------------------------------------------------- |
+| Backend (Node.js, Express, TypeScript) | Health, sign-in/out, roles, staff accounts, products API, audit log, tests |
+| PostgreSQL                             | Dev + test databases, least-privilege roles, migrations, seed              |
+| Database tables                        | `products`, `users`, `sessions`, `audit_logs`                              |
+| Flutter app (web + Android)            | Login, **Products** (search, add, edit, deactivate); dashboard with **sample data** |
+| Staff management screens               | Not yet: use the API or `npm run user:create`                              |
+| Stock, customers, dispatches, billing  | Not started (navigation shows "coming soon" pages)                         |
 
 ## Project structure
 
@@ -27,7 +27,7 @@ snackify/
 │   │   ├── config/          Environment variable validation
 │   │   ├── database/        Connection pool, transactions, migration runner
 │   │   ├── middleware/      Sign-in and role checks, 404 and error handlers
-│   │   ├── modules/         auth, users, audit, health
+│   │   ├── modules/         auth, users, products, audit, health
 │   │   ├── scripts/         db:migrate, db:seed and user:create commands
 │   │   ├── utils/           AppError, validation, JSON logger
 │   │   └── tests/           Unit tests; tests/db/ = tests against PostgreSQL
@@ -40,7 +40,7 @@ snackify/
 │   ├── lib/
 │   │   ├── core/            config, network (API client), routing, theme
 │   │   ├── shared/widgets/  app shell, API status chip, logo
-│   │   └── features/        auth (login, session), dashboard
+│   │   └── features/        auth (login, session), dashboard, products
 │   ├── test/
 │   └── assets/images/
 └── docs/                    api-documentation.md, database-design.md
@@ -273,8 +273,12 @@ start takes about a minute while Flutter compiles; later starts are faster.
 2. The dashboard opens. Your name and role are at the bottom of the menu, with **Sign out**.
 3. Reload the page (or restart the app): you stay signed in until you sign out or 12 hours pass.
 4. The chip in the top-right corner shows **API online** when the app can reach the backend.
-5. Resize the browser window: below 840 px wide, navigation moves into a menu drawer; wider
-   screens show a permanent sidebar.
+5. Open **Products**. With the sample data loaded (`npm run db:seed`) you see six products.
+   Search for "bbq", tick **Show inactive**, and (as an admin) use **Add product** or tap a
+   product to change its price or deactivate it. Staff who are not admins can search the list
+   but cannot change it.
+6. Resize the browser window: below 840 px wide, navigation moves into a menu drawer and
+   products are shown as a list; wider screens show a permanent sidebar and a table.
 
 ### Checks
 
@@ -286,9 +290,12 @@ dart format .
 
 ---
 
-## Known limitations (Stage 3)
+## Known limitations (Stage 4)
 
 - The Flutter dashboard still shows **sample data only**; it does not read the database yet.
+- Product prices are shown in USD (the assumed base currency, set in
+  `mobile_web/lib/core/config/app_config.dart`).
+- The products screen loads up to 200 products at a time; use search to find others.
 - There are no staff-management screens yet; use `npm run user:create` or the API.
 - Users are not forced to change a password an admin has reset.
 - The sign-in attempt counter is kept in memory: it resets when the backend restarts and
