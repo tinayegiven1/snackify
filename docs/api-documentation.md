@@ -51,6 +51,12 @@ Raw database errors, stack traces and submitted values are never returned.
 | 409    | `INSUFFICIENT_STOCK`       | The change would leave less than zero in stock             |
 | 409    | `CUSTOMER_CODE_TAKEN`      | Another customer already uses that code                    |
 | 404    | `CUSTOMER_NOT_FOUND`       | No customer has that id                                    |
+| 404    | `DISPATCH_NOT_FOUND`       | No dispatch has that id                                    |
+| 409    | `DISPATCH_NOT_DRAFT`       | Only drafts can be edited, cancelled or confirmed          |
+| 409    | `DISPATCH_NOT_CONFIRMED`   | Only confirmed dispatches can be reversed                  |
+| 409    | `DISPATCH_DATE_IN_FUTURE`  | A dispatch dated in the future cannot be confirmed yet     |
+| 409    | `CUSTOMER_INACTIVE`        | The customer has been deactivated                          |
+| 409    | `CREDIT_LIMIT_EXCEEDED`    | Confirming would go over the credit limit (see below)      |
 | 413    | `PAYLOAD_TOO_LARGE`        | The request body is larger than 100 KB                     |
 | 429    | `TOO_MANY_ATTEMPTS`        | 10 failed password attempts from one address in 15 minutes |
 | 500    | `INTERNAL_ERROR`           | Unexpected server error (details are logged)               |
@@ -490,3 +496,157 @@ Send only the fields to change; `null` clears `phone`, `address` or `creditLimit
 
 Planned with dispatches and invoices: the customer's dispatches, invoices, payments and
 outstanding balance.
+
+## Dispatches
+
+A dispatch sends goods to a customer (spec 6.6): **draft → confirmed**, or **draft →
+cancelled**; a confirmed dispatch can be **reversed**. Dispatch numbers (`D000001`, …) are given
+when the draft is created and kept even if it is cancelled, so the numbering has no gaps.
+
+| Action                                   | Who                                    |
+| ---------------------------------------- | -------------------------------------- |
+| View and search                          | Everyone signed in                     |
+| Create, edit and cancel drafts           | Salespeople, storekeepers and admins   |
+| Confirm (stock is deducted)              | Storekeepers and admins                |
+| Reverse a confirmed dispatch             | Admins, with a reason                  |
+
+Rules:
+
+- **Drafts do not change stock.** Confirming checks every line against stock on hand and
+  deducts it in one transaction; if any line is short, nothing is deducted (**409**
+  `INSUFFICIENT_STOCK`, with `details: [{ productId, requested, available }]`).
+- **Simultaneous confirmations cannot oversell**: products are locked while stock is checked
+  and deducted.
+- **Confirming is safe to repeat.** Confirming an already-confirmed dispatch changes nothing
+  and returns `alreadyConfirmed: true`.
+- **Prices are snapshots.** Each line keeps the price agreed for this dispatch; it defaults to
+  the product's current price. Later price changes never alter past dispatches.
+- **Confirmed dispatches are never edited or deleted** (the database itself refuses). Mistakes
+  are corrected with a reversal, which puts the stock back with `reversal` movements that
+  point at the original ones; both stay in the history.
+- **Credit-limit warnings.** If confirming would take the customer's unpaid balance over their
+  credit limit, the request is refused with **409** `CREDIT_LIMIT_EXCEEDED` and
+  `details: { creditLimit, balanceBefore, dispatchTotal, balanceAfter, exceedsLimit }`. Send
+  the confirmation again with `"acknowledgeCreditLimit": true` to go ahead; the dispatch is then
+  marked `confirmedOverCreditLimit` and the audit log records the override. **Until payments are
+  recorded (a later stage), every confirmed dispatch counts as unpaid**, so warnings appear
+  earlier than they eventually will.
+
+Changes are recorded in the audit log: `dispatch.confirmed`, `dispatch.cancelled`,
+`dispatch.reversed`.
+
+### `POST /api/v1/dispatches` (create a draft)
+
+```json
+{
+  "customerId": "…",
+  "dispatchDate": "2026-10-12",
+  "notes": "Deliver before noon",
+  "items": [
+    { "productId": "…", "quantity": 12 },
+    { "productId": "…", "quantity": 5, "unitPrice": "0.25" }
+  ]
+}
+```
+
+`dispatchDate` defaults to today. Each product may appear once; 1–100 lines. `unitPrice` left
+out = the product's default price. **201 Created** with `{ "dispatch": { … } }`:
+
+```json
+{
+  "dispatch": {
+    "id": "…",
+    "dispatchNumber": "D000001",
+    "status": "draft",
+    "dispatchDate": "2026-10-12",
+    "notes": "Deliver before noon",
+    "customer": { "id": "…", "code": "C0001", "name": "Avondale Tuckshop", "creditLimit": "300.00" },
+    "items": [
+      {
+        "id": "…",
+        "product": { "id": "…", "sku": "PC-BBQ-S", "name": "Potato Crisps", "flavour": "BBQ", "size": "Small" },
+        "quantity": 12,
+        "unitPrice": "0.50",
+        "lineTotal": "6.00",
+        "quantityOnHand": 100
+      }
+    ],
+    "totalQuantity": 12,
+    "totalValue": "6.00",
+    "createdBy": { "id": "…", "fullName": "Tendai Moyo" },
+    "createdAt": "…",
+    "confirmedBy": null,
+    "confirmedAt": null,
+    "confirmedOverCreditLimit": false,
+    "cancelledBy": null,
+    "cancelledAt": null,
+    "cancelReason": null,
+    "reversedBy": null,
+    "reversedAt": null,
+    "reversalReason": null,
+    "creditCheck": {
+      "creditLimit": "300.00",
+      "balanceBefore": "0.00",
+      "dispatchTotal": "6.00",
+      "balanceAfter": "6.00",
+      "exceedsLimit": false
+    }
+  }
+}
+```
+
+`creditCheck` (what confirming would do) and `quantityOnHand` (to spot shortages) are there so
+a draft can be reviewed before it is confirmed. `creditCheck` is `null` once it is no longer a
+draft.
+
+### `PUT /api/v1/dispatches/:id` (edit a draft)
+
+Same body as creating; replaces the customer, date, notes and all lines. **409**
+`DISPATCH_NOT_DRAFT` once confirmed, cancelled or reversed.
+
+### `POST /api/v1/dispatches/:id/confirm` (storekeepers and admins)
+
+Body (optional): `{ "acknowledgeCreditLimit": true }`.
+**200 OK** with `{ "dispatch": { … }, "alreadyConfirmed": false }`. A dispatch dated in the future
+cannot be confirmed (**409** `DISPATCH_DATE_IN_FUTURE`).
+
+### `POST /api/v1/dispatches/:id/cancel` (drafts only)
+
+```json
+{ "reason": "Customer changed their order" }
+```
+
+### `POST /api/v1/dispatches/:id/reverse` (admins, confirmed dispatches only)
+
+```json
+{ "reason": "Delivered to the wrong shop" }
+```
+
+### `GET /api/v1/dispatches`
+
+Query: optional `status` (`draft`, `confirmed`, `cancelled`, `reversed`), `customerId`, `from`,
+`to` (dispatch dates), `q` (part of the dispatch number or customer name), `limit` (1–200,
+default 50), `offset`. Newest first.
+
+```json
+{
+  "dispatches": [
+    {
+      "id": "…",
+      "dispatchNumber": "D000001",
+      "status": "confirmed",
+      "dispatchDate": "2026-10-12",
+      "customer": { "id": "…", "code": "C0001", "name": "Avondale Tuckshop" },
+      "lineCount": 1,
+      "totalQuantity": 12,
+      "totalValue": "6.00",
+      "createdBy": "Tendai Moyo"
+    }
+  ],
+  "total": 1
+}
+```
+
+### `GET /api/v1/dispatches/:id`
+
+**200 OK** with `{ "dispatch": { … } }` as above.

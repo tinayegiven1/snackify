@@ -7,11 +7,13 @@ import 'package:http/testing.dart';
 import 'package:snackify/app.dart';
 import 'package:snackify/core/app_services.dart';
 import 'package:snackify/core/formatting/dates.dart';
+import 'package:snackify/core/formatting/money.dart';
 import 'package:snackify/core/network/api_client.dart';
 import 'package:snackify/features/auth/data/auth_repository.dart';
 import 'package:snackify/features/auth/data/token_store.dart';
 import 'package:snackify/features/auth/presentation/auth_controller.dart';
 import 'package:snackify/features/customers/data/customers_repository.dart';
+import 'package:snackify/features/dispatches/data/dispatches_repository.dart';
 import 'package:snackify/features/products/data/products_repository.dart';
 import 'package:snackify/features/stock/data/stock_repository.dart';
 
@@ -35,6 +37,35 @@ class FakeBackend {
   final List<Map<String, Object?>> products = [];
   final List<Map<String, Object?>> receipts = [];
   final List<Map<String, Object?>> customers = [];
+
+  /// Dispatches, oldest first. Lines are stored as {productId, quantity, unitPrice}.
+  final List<Map<String, Object?>> dispatches = [];
+
+  /// Adds a draft dispatch directly, e.g. addDraft('C0001', {'PC-BBQ-S': 12}).
+  Map<String, Object?> addDraft(String customerCode, Map<String, int> quantities) {
+    final dispatch = <String, Object?>{
+      'id': 'dispatch-${dispatches.length + 1}',
+      'dispatchNumber': 'D${(dispatches.length + 1).toString().padLeft(6, '0')}',
+      'status': 'draft',
+      'dispatchDate': toApiDate(today()),
+      'notes': null,
+      'customerId': customers.firstWhere((c) => c['code'] == customerCode)['id'],
+      'lines': [
+        for (final MapEntry(key: sku, value: quantity) in quantities.entries)
+          {
+            'productId': products.firstWhere((p) => p['sku'] == sku)['id'],
+            'quantity': quantity,
+            'unitPrice': products.firstWhere((p) => p['sku'] == sku)['defaultPrice'],
+          },
+      ],
+      'confirmedOverCreditLimit': false,
+      'confirmedBy': null,
+      'cancelReason': null,
+      'reversalReason': null,
+    };
+    dispatches.add(dispatch);
+    return dispatch;
+  }
 
   /// Adds a customer directly, as if it already existed on the server.
   void addCustomer(
@@ -142,6 +173,7 @@ class FakeBackend {
     }
     if (path.startsWith('/api/v1/stock')) return _stock(request);
     if (path.startsWith('/api/v1/customers')) return _customers(request);
+    if (path.startsWith('/api/v1/dispatches')) return _dispatches(request);
     return _error(404, 'NOT_FOUND', 'Not found');
   }
 
@@ -418,6 +450,181 @@ class FakeBackend {
     return _json(200, {'customer': customer});
   }
 
+  int _lineCents(Map<String, Object?> line) =>
+      (line['quantity'] as int) * parseCents(line['unitPrice'] as String)!;
+
+  int _totalCents(Map<String, Object?> dispatch) =>
+      (dispatch['lines'] as List<Map<String, Object?>>).fold(0, (sum, l) => sum + _lineCents(l));
+
+  /// Unpaid balance: every confirmed dispatch (no payments exist yet).
+  int _balanceCents(Object? customerId) => dispatches
+      .where((d) => d['customerId'] == customerId && d['status'] == 'confirmed')
+      .fold(0, (sum, d) => sum + _totalCents(d));
+
+  Map<String, Object?> _dispatchJson(Map<String, Object?> d) {
+    final customer = customers.firstWhere((c) => c['id'] == d['customerId']);
+    final lines = d['lines'] as List<Map<String, Object?>>;
+    final total = _totalCents(d);
+    final limit = customer['creditLimit'] as String?;
+    final before = _balanceCents(customer['id']);
+    return {
+      ...d,
+      'customer': {
+        'id': customer['id'],
+        'code': customer['code'],
+        'name': customer['name'],
+        'creditLimit': limit,
+      },
+      'items': [
+        for (final line in lines)
+          {
+            'id': 'line-${line['productId']}',
+            'product': _summary(products.firstWhere((p) => p['id'] == line['productId'])),
+            'quantity': line['quantity'],
+            'unitPrice': line['unitPrice'],
+            'lineTotal': formatCents(_lineCents(line)),
+            'quantityOnHand': onHand(line['productId']),
+          },
+      ],
+      'totalQuantity': lines.fold<int>(0, (sum, l) => sum + (l['quantity'] as int)),
+      'totalValue': formatCents(total),
+      'createdBy': {'id': 'user-1', 'fullName': 'Tendai Moyo'},
+      'creditCheck': d['status'] != 'draft'
+          ? null
+          : {
+              'creditLimit': limit,
+              'balanceBefore': formatCents(before),
+              'dispatchTotal': formatCents(total),
+              'balanceAfter': formatCents(before + total),
+              'exceedsLimit': limit != null && before + total > parseCents(limit)!,
+            },
+    };
+  }
+
+  http.Response _dispatches(http.Request request) {
+    final forbidden = _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
+    final segments = request.url.pathSegments; // api, v1, dispatches, [id], [action]
+    final id = segments.length > 3 ? segments[3] : null;
+    final action = segments.length > 4 ? segments[4] : null;
+    final dispatch = id == null ? null : dispatches.firstWhere((d) => d['id'] == id);
+    final body = request.body.isEmpty
+        ? const <String, dynamic>{}
+        : jsonDecode(request.body) as Map<String, dynamic>;
+    final canCreate = role != 'accounts';
+    final canConfirm = role == 'admin' || role == 'storekeeper';
+
+    if (request.method == 'GET' && dispatch == null) {
+      final status = request.url.queryParameters['status'];
+      final matching = dispatches.reversed
+          .where((d) => status == null || d['status'] == status)
+          .map(_dispatchJson)
+          .toList();
+      return _json(200, {'dispatches': matching, 'total': matching.length});
+    }
+    if (request.method == 'GET') return _json(200, {'dispatch': _dispatchJson(dispatch!)});
+
+    if (action == null) {
+      // Create (POST) or replace (PUT) a draft.
+      if (!canCreate) return forbidden;
+      if (dispatch != null && dispatch['status'] != 'draft') {
+        return _error(409, 'DISPATCH_NOT_DRAFT', 'This dispatch can no longer be changed.');
+      }
+      final target =
+          dispatch ??
+          <String, Object?>{
+            'id': 'dispatch-${dispatches.length + 1}',
+            'dispatchNumber': 'D${(dispatches.length + 1).toString().padLeft(6, '0')}',
+            'status': 'draft',
+            'confirmedOverCreditLimit': false,
+            'confirmedBy': null,
+            'cancelReason': null,
+            'reversalReason': null,
+          };
+      target.addAll({
+        'customerId': body['customerId'],
+        'dispatchDate': body['dispatchDate'],
+        'notes': body['notes'],
+        'lines': [
+          for (final item in body['items'] as List)
+            {
+              'productId': item['productId'],
+              'quantity': item['quantity'],
+              'unitPrice': item['unitPrice'],
+            },
+        ],
+      });
+      if (dispatch == null) dispatches.add(target);
+      return _json(dispatch == null ? 201 : 200, {'dispatch': _dispatchJson(target)});
+    }
+
+    final d = dispatch!;
+    final lines = d['lines'] as List<Map<String, Object?>>;
+    switch (action) {
+      case 'confirm':
+        if (!canConfirm) return forbidden;
+        if (d['status'] == 'confirmed') {
+          return _json(200, {'dispatch': _dispatchJson(d), 'alreadyConfirmed': true});
+        }
+        final short = lines.where((l) => (l['quantity'] as int) > onHand(l['productId']));
+        if (short.isNotEmpty) {
+          final line = short.first;
+          final product = products.firstWhere((p) => p['id'] == line['productId']);
+          return _error(
+            409,
+            'INSUFFICIENT_STOCK',
+            'Not enough stock for: ${product['name']} — ${product['flavour']} — '
+                '${product['size']} (need ${line['quantity']}, have ${onHand(line['productId'])}).',
+          );
+        }
+        final check = _dispatchJson(d)['creditCheck'] as Map<String, Object?>;
+        final overLimit = check['exceedsLimit'] == true;
+        if (overLimit && body['acknowledgeCreditLimit'] != true) {
+          return _error(
+            409,
+            'CREDIT_LIMIT_EXCEEDED',
+            'This dispatch would take the unpaid balance to ${check['balanceAfter']}, '
+                'over the credit limit of ${check['creditLimit']}.',
+          );
+        }
+        for (final line in lines) {
+          _addMovement(
+            line['productId'],
+            'dispatch',
+            -(line['quantity'] as int),
+            d['dispatchDate'] as String,
+            reference: d['dispatchNumber'] as String,
+          );
+        }
+        d.addAll({
+          'status': 'confirmed',
+          'confirmedOverCreditLimit': overLimit,
+          'confirmedBy': {'id': 'user-1', 'fullName': 'Tendai Moyo'},
+        });
+        return _json(200, {'dispatch': _dispatchJson(d), 'alreadyConfirmed': false});
+
+      case 'cancel':
+        if (!canCreate) return forbidden;
+        d.addAll({'status': 'cancelled', 'cancelReason': body['reason']});
+        return _json(200, {'dispatch': _dispatchJson(d)});
+
+      case 'reverse':
+        if (role != 'admin') return forbidden;
+        for (final line in lines) {
+          _addMovement(
+            line['productId'],
+            'reversal',
+            line['quantity'] as int,
+            toApiDate(today()),
+            reference: d['dispatchNumber'] as String,
+            reason: body['reason'] as String?,
+          );
+        }
+        d.addAll({'status': 'reversed', 'reversalReason': body['reason']});
+        return _json(200, {'dispatch': _dispatchJson(d)});
+    }
+    return _error(404, 'NOT_FOUND', 'Not found');
+  }
+
   http.Response _skuTaken(Object? sku) => _json(409, {
     'error': {
       'code': 'SKU_TAKEN',
@@ -471,6 +678,7 @@ Future<TestApp> pumpSnackify(
     products: ProductsRepository(api),
     stock: StockRepository(api),
     customers: CustomersRepository(api),
+    dispatches: DispatchesRepository(api),
   );
 
   await tester.pumpWidget(SnackifyApp(auth: auth, services: services));

@@ -163,10 +163,39 @@ no `DELETE`), so dispatch and invoice history always points at a real customer.
 
 Which roles may change which columns is enforced by the API (see the API documentation).
 
+### `dispatches` and `dispatch_items` (spec 6.6)
+
+`dispatches` is the header: `dispatch_number` (unique, `D000001`… from `dispatch_number_seq`,
+given when the draft is created), `customer_id`, `status` (`draft`, `confirmed`, `cancelled`,
+`reversed`), `dispatch_date` (business day the goods leave), optional `notes`, and who/when for
+each step: `created_by/at`, `confirmed_by/at`, `cancelled_by/at` + `cancel_reason`,
+`reversed_by/at` + `reversal_reason`. Check constraints require the who/when (and a reason) that
+belong to each status. `confirmed_over_credit_limit` records a credit-limit override.
+
+`dispatch_items` holds one line per product (`UNIQUE (dispatch_id, product_id)`): `quantity`
+(`> 0`) and `unit_price` (`numeric(12,2)`, `>= 0`), the price agreed for this dispatch. It is a
+snapshot: later changes to the product's default price never alter it.
+
+Indexed by customer and date, and by status and date.
+
+**Never edited after confirmation, enforced by the database:**
+
+- A trigger on `dispatches` refuses any change to a confirmed, cancelled or reversed dispatch,
+  except confirmed → reversed (with nothing else changed).
+- A trigger on `dispatch_items` refuses inserting, changing or deleting lines unless the
+  dispatch is still a draft.
+- The API role has no `DELETE` on `dispatches`.
+
+**Stock:** confirming writes one `dispatch` movement per line into `stock_movements`
+(`quantity_delta` negative, `reference` = dispatch number, `dispatch_item_id` = the line).
+Reversing writes matching `reversal` movements (`reverses_movement_id` → the original, unique so
+nothing is reversed twice). Confirming locks the dispatch, the customer and every product on it
+(always in the same order, so two confirmations cannot deadlock) before checking stock.
+
 ## Planned tables
 
-Added by later stages, each with its own migration: `dispatches`, `dispatch_items`,
-`invoices`, `invoice_items`, `payments`, `payment_allocations`, `forecasts`.
+Added by later stages, each with its own migration: `invoices`, `invoice_items`, `payments`,
+`payment_allocations`, `forecasts`.
 
 ## Migrations
 

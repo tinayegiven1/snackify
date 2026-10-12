@@ -55,18 +55,14 @@ export function createDbTestApp(appPool: pg.Pool): Express {
 }
 
 /**
- * Empties every table, children before parents (as the owner, who may delete).
+ * Empties every table (as the owner). TRUNCATE skips the row-by-row safety triggers, which
+ * would otherwise refuse to remove the lines of confirmed dispatches.
  * Each test starts from an empty database this way.
  */
 export async function resetDatabase(ownerPool: pg.Pool): Promise<void> {
   await ownerPool.query(`
-    DELETE FROM stock_movements;
-    DELETE FROM stock_batches;
-    DELETE FROM audit_logs;
-    DELETE FROM sessions;
-    DELETE FROM users;
-    DELETE FROM products;
-    DELETE FROM customers;`);
+    TRUNCATE stock_movements, stock_batches, dispatch_items, dispatches, audit_logs,
+             sessions, users, products, customers`);
 }
 
 /** Adds a product directly (as the owner) and returns its id. */

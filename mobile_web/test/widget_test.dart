@@ -18,16 +18,16 @@ void main() {
     await pumpSnackify(tester, signedIn: true);
 
     expect(find.byType(DataTable), findsNothing);
-    expect(find.text('Dispatches'), findsNothing);
+    expect(find.text('Payments'), findsNothing);
 
     await tester.tap(find.byTooltip('Open navigation menu'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Dispatches'));
+    await tester.tap(find.text('Payments'));
     await tester.pumpAndSettle();
 
     expect(find.byType(Drawer), findsNothing);
-    expect(find.widgetWithText(AppBar, 'Dispatches'), findsOneWidget);
-    expect(find.text('Dispatches is coming soon'), findsOneWidget);
+    expect(find.widgetWithText(AppBar, 'Payments'), findsOneWidget);
+    expect(find.text('Payments is coming soon'), findsOneWidget);
   });
 
   testWidgets('wide layout uses a permanent sidebar and a low-stock table', (tester) async {

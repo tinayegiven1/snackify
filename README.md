@@ -5,16 +5,16 @@ snacks business. One backend API and database serve a Flutter web app and a Flut
 
 The full product specification is in [Snackify_Claude_Code_Spec.md](Snackify_Claude_Code_Spec.md).
 
-## Current status: Stage 6 (customers)
+## Current status: Stage 7 (dispatches)
 
 | Part                                   | Status                                                                     |
 | -------------------------------------- | -------------------------------------------------------------------------- |
-| Backend (Node.js, Express, TypeScript) | Health, sign-in, roles, staff, products, stock ledger, customers, audit log, tests |
+| Backend (Node.js, Express, TypeScript) | Health, sign-in, roles, staff, products, stock ledger, customers, dispatches, audit log, tests |
 | PostgreSQL                             | Dev + test databases, least-privilege roles, migrations, seed              |
-| Database tables                        | `products`, `users`, `sessions`, `audit_logs`, `stock_batches`, `stock_movements`, `customers` |
-| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**; dashboard with **sample data** |
+| Database tables                        | `products`, `users`, `sessions`, `audit_logs`, `stock_batches`, `stock_movements`, `customers`, `dispatches`, `dispatch_items` |
+| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**, **Dispatches** (drafts, confirm, cancel, reverse, credit warnings); dashboard with **sample data** |
 | Staff management screens               | Not yet: use the API or `npm run user:create`                              |
-| Dispatches, invoices, payments, reports | Not started (navigation shows "coming soon" pages)                        |
+| Invoices, payments, reports            | Not started (navigation shows "coming soon" pages)                         |
 
 ## Project structure
 
@@ -27,7 +27,7 @@ snackify/
 │   │   ├── config/          Environment variable validation
 │   │   ├── database/        Connection pool, transactions, migration runner
 │   │   ├── middleware/      Sign-in and role checks, 404 and error handlers
-│   │   ├── modules/         auth, users, products, stock, customers, audit, health
+│   │   ├── modules/         auth, users, products, stock, customers, dispatches, audit, health
 │   │   ├── scripts/         db:migrate, db:seed and user:create commands
 │   │   ├── utils/           AppError, validation, JSON logger
 │   │   └── tests/           Unit tests; tests/db/ = tests against PostgreSQL
@@ -40,7 +40,7 @@ snackify/
 │   ├── lib/
 │   │   ├── core/            config, network (API client), routing, theme
 │   │   ├── shared/widgets/  app shell, API status chip, logo
-│   │   └── features/        auth, dashboard, products, stock, customers
+│   │   └── features/        auth, dashboard, products, stock, customers, dispatches
 │   ├── test/
 │   └── assets/images/
 └── docs/                    api-documentation.md, database-design.md
@@ -292,7 +292,14 @@ start takes about a minute while Flutter compiles; later starts are faster.
    use **Add customer** (leave the code empty to get C0001, C0002, …). Accounts staff can
    tap a customer to set a **credit limit** but cannot change the other details; admins can
    also deactivate a customer. Storekeepers can view and search only.
-9. Resize the browser window: below 840 px wide, navigation moves into a menu drawer and
+9. Open **Dispatches** and use **New dispatch**: choose a customer, add products (the price
+   fills in from the product; change it if a different price was agreed), and **Save draft**.
+   Drafts do not change stock. Open the draft: it shows stock on hand per line and warns about
+   shortages or the customer's credit limit. A storekeeper or admin uses **Confirm dispatch**:
+   stock is deducted and the dispatch can no longer be edited. Over the credit limit, the app
+   asks first and offers **Confirm anyway**. Admins can **Reverse** a confirmed dispatch (the
+   stock comes back); drafts can be cancelled with a reason.
+10. Resize the browser window: below 840 px wide, navigation moves into a menu drawer and
    products are shown as a list; wider screens show a permanent sidebar and a table.
 
 ### Checks
@@ -305,14 +312,17 @@ dart format .
 
 ---
 
-## Known limitations (Stage 6)
+## Known limitations (Stage 7)
 
-- Credit limits are stored but not yet checked: that starts when dispatches and invoices
-  exist. The customer history (dispatches, invoices, payments, balance) comes with them too.
+- **Credit warnings count every confirmed dispatch as unpaid**, because payments are not
+  recorded yet (a later stage). Warnings will therefore appear earlier than they should once
+  customers have paid; the app lets you confirm anyway and records it.
+- No printable dispatch note yet, and the customer history (dispatches, invoices, payments,
+  balance) comes with invoicing.
 - The Flutter dashboard still shows **sample data only**; it does not read the database yet.
 - **Expiry warnings** are not shown yet. Expiry dates are recorded with each receipt, but
-  knowing which batches are still on the shelf needs dispatches to record which batch they took
-  stock from (next stages).
+  dispatches do not yet record which batch they took stock from, so it is not known which
+  batches are still on the shelf.
 - A wrong receipt is corrected with an adjustment (with a reason), not by editing or deleting
   it, so the history stays complete.
 - Camera barcode scanning comes later; a USB or Bluetooth barcode scanner (which types like a

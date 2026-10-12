@@ -52,6 +52,9 @@ class ApiClient {
   Future<Map<String, dynamic>> patchJson(String path, Map<String, Object?> body) =>
       _send('PATCH', path, body);
 
+  Future<Map<String, dynamic>> putJson(String path, Map<String, Object?> body) =>
+      _send('PUT', path, body);
+
   Future<Map<String, dynamic>> _send(String method, String path, [Object? body]) async {
     final request = http.Request(method, Uri.parse('$_baseUrl$path'))
       ..headers['Accept'] = 'application/json';
