@@ -49,6 +49,8 @@ Raw database errors, stack traces and submitted values are never returned.
 | 409    | `PRODUCT_INACTIVE`         | Stock cannot be received for a deactivated product         |
 | 409    | `OPENING_BALANCE_NOT_ALLOWED` | The product already has stock records                   |
 | 409    | `INSUFFICIENT_STOCK`       | The change would leave less than zero in stock             |
+| 409    | `CUSTOMER_CODE_TAKEN`      | Another customer already uses that code                    |
+| 404    | `CUSTOMER_NOT_FOUND`       | No customer has that id                                    |
 | 413    | `PAYLOAD_TOO_LARGE`        | The request body is larger than 100 KB                     |
 | 429    | `TOO_MANY_ATTEMPTS`        | 10 failed password attempts from one address in 15 minutes |
 | 500    | `INTERNAL_ERROR`           | Unexpected server error (details are logged)               |
@@ -408,3 +410,83 @@ Newest first. `balanceAfter` is the product's stock straight after each movement
   "total": 3
 }
 ```
+
+## Customers
+
+Customers are never deleted (there is no DELETE endpoint); admins deactivate them instead. Only
+the details billing and deliveries need are stored (spec 6.5).
+
+| Field         | Rules                                                                       |
+| ------------- | --------------------------------------------------------------------------- |
+| `code`        | Unique, stored in capitals, up to 20 letters/digits/`.`/`_`/`-`. Leave out (or send `""`) when adding to get the next code: `C0001`, `C0002`, … |
+| `name`        | Required, up to 120 characters                                              |
+| `phone`       | Optional. Digits, spaces, brackets, dashes, optional leading `+`            |
+| `address`     | Optional delivery address, up to 300 characters                             |
+| `creditLimit` | Optional money string (`"500.00"`) in the base currency; `null` for no limit |
+| `isActive`    | Changes only; `false` hides the customer from normal lists                  |
+
+**Who may do what** (spec section 5: salespeople manage *permitted* customer information).
+A request that tries to change a field the role may not change is refused with **403** and a
+`details` entry naming the field; nothing is changed.
+
+| Action                                       | Who                         |
+| -------------------------------------------- | --------------------------- |
+| View and search                              | Everyone signed in          |
+| Add a customer; change code, name, phone, address | Salespeople and admins |
+| Set or change `creditLimit`                  | Accounts staff and admins   |
+| Change `isActive`                            | Admins                      |
+
+Credit limits are stored now; checking them against unpaid balances starts when dispatches and
+invoices are added. Changes are recorded in the audit log (`customer.created`,
+`customer.updated` with exactly what changed).
+
+### `GET /api/v1/customers`
+
+Query: optional `q` (part of the code, name or phone, case ignored), `includeInactive=true`,
+`limit` (1–200, default 50), `offset`. Sorted by name.
+
+```json
+{
+  "customers": [
+    {
+      "id": "…",
+      "code": "C0001",
+      "name": "Avondale Tuckshop",
+      "phone": "+263 77 123 4567",
+      "address": "12 King George Road, Avondale",
+      "creditLimit": "500.00",
+      "isActive": true,
+      "createdAt": "2026-10-12T14:00:00.000Z",
+      "updatedAt": "2026-10-12T14:05:00.000Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+### `GET /api/v1/customers/:id`
+
+**200 OK** with `{ "customer": { … } }`.
+
+### `POST /api/v1/customers` (salespeople and admins)
+
+```json
+{ "name": "Avondale Tuckshop", "phone": "+263 77 123 4567", "address": "12 King George Road" }
+```
+
+**201 Created** with `{ "customer": { … } }`. Only admins may include `creditLimit` here.
+
+### `PATCH /api/v1/customers/:id`
+
+Send only the fields to change; `null` clears `phone`, `address` or `creditLimit`.
+
+```json
+{ "creditLimit": "750.00" }
+```
+
+**200 OK** with `{ "customer": { … } }`.
+
+### Later: `GET /api/v1/customers/:id/history`
+
+Planned with dispatches and invoices: the customer's dispatches, invoices, payments and
+outstanding balance.

@@ -3,6 +3,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { getAuth, requireAuth, requireRole } from '../../middleware/authenticate.js';
 import { AppError } from '../../utils/app-error.js';
+import { moneySchema, parseIdParam } from '../../utils/schemas.js';
 import { parseBody } from '../../utils/validation.js';
 import { createProduct, getProduct, listProducts, updateProduct } from './products.service.js';
 
@@ -34,15 +35,6 @@ const barcodeSchema = z
     'Use 4–48 letters, digits or dashes',
   );
 
-/** Money as an exact decimal: "0.50" (a JSON number such as 0.5 is also accepted). */
-const priceSchema = z
-  .union([z.string(), z.number()], { error: 'Required' })
-  .transform((value) => String(value).trim())
-  .refine(
-    (value) => /^\d{1,10}(\.\d{1,2})?$/.test(value),
-    'Use an amount of 0 or more with up to 2 decimal places, e.g. 0.50',
-  );
-
 /** Low-stock alert level in packs, or null for no alert. */
 const reorderLevelSchema = z
   .number({ error: 'Must be a whole number or null' })
@@ -57,7 +49,7 @@ const createProductSchema = z.object({
   flavour: text(60),
   size: text(40),
   barcode: barcodeSchema.optional().transform((value) => value ?? null),
-  defaultPrice: priceSchema,
+  defaultPrice: moneySchema,
   reorderLevel: reorderLevelSchema.optional().transform((value) => value ?? null),
 });
 
@@ -69,7 +61,7 @@ const updateProductSchema = z
       flavour: text(60).optional(),
       size: text(40).optional(),
       barcode: barcodeSchema.optional(),
-      defaultPrice: priceSchema.optional(),
+      defaultPrice: moneySchema.optional(),
       reorderLevel: reorderLevelSchema.optional(),
       isActive: z.boolean({ error: 'Must be true or false' }).optional(),
     },
@@ -87,14 +79,7 @@ const listQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
-/** An invalid id cannot match any product, so treat it as "not found". */
-function productIdParam(id: unknown): string {
-  const result = z.uuid().safeParse(id);
-  if (!result.success) {
-    throw new AppError(404, 'PRODUCT_NOT_FOUND', 'No product has that id.');
-  }
-  return result.data;
-}
+const productNotFound = () => new AppError(404, 'PRODUCT_NOT_FOUND', 'No product has that id.');
 
 /** Product catalogue. Every signed-in user can view it; only admins can change it (spec 5). */
 export function productsRouter(db: pg.Pool): Router {
@@ -107,7 +92,7 @@ export function productsRouter(db: pg.Pool): Router {
   });
 
   router.get('/:id', async (req, res) => {
-    res.json({ product: await getProduct(db, productIdParam(req.params.id)) });
+    res.json({ product: await getProduct(db, parseIdParam(req.params.id, productNotFound)) });
   });
 
   router.post('/', requireRole('admin'), async (req, res) => {
@@ -117,7 +102,7 @@ export function productsRouter(db: pg.Pool): Router {
   });
 
   router.patch('/:id', requireRole('admin'), async (req, res) => {
-    const id = productIdParam(req.params.id);
+    const id = parseIdParam(req.params.id, productNotFound);
     const changes = parseBody(updateProductSchema, req.body);
     const product = await updateProduct(db, id, changes, getAuth(res).user.id);
     res.json({ product });

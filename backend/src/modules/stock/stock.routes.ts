@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { getAuth, requireAuth, requireRole } from '../../middleware/authenticate.js';
 import { AppError } from '../../utils/app-error.js';
 import { businessToday, daysBetween } from '../../utils/dates.js';
+import { optionalText } from '../../utils/schemas.js';
 import { parseBody } from '../../utils/validation.js';
 import {
   adjustStock,
@@ -18,15 +19,6 @@ const MAX_REPORT_DAYS = 366;
 
 const dateSchema = z.iso.date({ error: 'Use a date like 2026-10-12' });
 const productIdSchema = z.uuid({ error: 'Must be a product id' });
-
-/** Optional text: trimmed, and empty text counts as "not given". */
-const optionalText = (max: number) =>
-  z
-    .string({ error: 'Must be text' })
-    .trim()
-    .max(max, `Use at most ${max} characters`)
-    .nullish()
-    .transform((value) => value || null);
 
 const receiptSchema = z.object({
   productId: productIdSchema,

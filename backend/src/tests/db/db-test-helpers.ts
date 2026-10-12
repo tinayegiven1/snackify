@@ -65,7 +65,8 @@ export async function resetDatabase(ownerPool: pg.Pool): Promise<void> {
     DELETE FROM audit_logs;
     DELETE FROM sessions;
     DELETE FROM users;
-    DELETE FROM products;`);
+    DELETE FROM products;
+    DELETE FROM customers;`);
 }
 
 /** Adds a product directly (as the owner) and returns its id. */

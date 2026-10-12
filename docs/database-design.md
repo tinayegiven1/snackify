@@ -144,10 +144,29 @@ product's row (`SELECT … FOR UPDATE`), checks the balance, and then writes the
 same transaction. Two people removing the same product's stock at the same moment are therefore
 handled one after the other. `npm run test:db` checks this by sending 20 simultaneous removals.
 
+### `customers` (spec 6.5)
+
+Only what billing and deliveries need; no other personal details. Never deleted (the API role has
+no `DELETE`), so dispatch and invoice history always points at a real customer.
+
+| Column         | Type            | Rules                                                     |
+| -------------- | --------------- | --------------------------------------------------------- |
+| `id`           | `uuid`          | Primary key                                               |
+| `code`         | `text`          | Unique, upper case, up to 20 chars. Generated as `C0001`, `C0002`, … from `customer_code_seq` when not given (skipping codes already used) |
+| `name`         | `text`          | Required, trimmed, 1–120 chars                            |
+| `phone`        | `text`          | Optional; digits, spaces, brackets, dashes, optional `+`  |
+| `address`      | `text`          | Optional delivery address, 1–300 chars                    |
+| `credit_limit` | `numeric(12,2)` | Optional, `>= 0`, base currency; `NULL` = no limit set    |
+| `is_active`    | `boolean`       | Defaults to `true`                                        |
+| `created_at`   | `timestamptz`   | Set on insert                                             |
+| `updated_at`   | `timestamptz`   | Updated automatically on every change                     |
+
+Which roles may change which columns is enforced by the API (see the API documentation).
+
 ## Planned tables
 
-Added by later stages, each with its own migration: `customers`, `dispatches`,
-`dispatch_items`, `invoices`, `invoice_items`, `payments`, `payment_allocations`, `forecasts`.
+Added by later stages, each with its own migration: `dispatches`, `dispatch_items`,
+`invoices`, `invoice_items`, `payments`, `payment_allocations`, `forecasts`.
 
 ## Migrations
 

@@ -5,16 +5,16 @@ snacks business. One backend API and database serve a Flutter web app and a Flut
 
 The full product specification is in [Snackify_Claude_Code_Spec.md](Snackify_Claude_Code_Spec.md).
 
-## Current status: Stage 5 (stock receiving and balances)
+## Current status: Stage 6 (customers)
 
 | Part                                   | Status                                                                     |
 | -------------------------------------- | -------------------------------------------------------------------------- |
-| Backend (Node.js, Express, TypeScript) | Health, sign-in, roles, staff, products, stock ledger, audit log, tests   |
+| Backend (Node.js, Express, TypeScript) | Health, sign-in, roles, staff, products, stock ledger, customers, audit log, tests |
 | PostgreSQL                             | Dev + test databases, least-privilege roles, migrations, seed              |
-| Database tables                        | `products`, `users`, `sessions`, `audit_logs`, `stock_batches`, `stock_movements` |
-| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections); dashboard with **sample data** |
+| Database tables                        | `products`, `users`, `sessions`, `audit_logs`, `stock_batches`, `stock_movements`, `customers` |
+| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**; dashboard with **sample data** |
 | Staff management screens               | Not yet: use the API or `npm run user:create`                              |
-| Customers, dispatches, billing         | Not started (navigation shows "coming soon" pages)                         |
+| Dispatches, invoices, payments, reports | Not started (navigation shows "coming soon" pages)                        |
 
 ## Project structure
 
@@ -27,7 +27,7 @@ snackify/
 │   │   ├── config/          Environment variable validation
 │   │   ├── database/        Connection pool, transactions, migration runner
 │   │   ├── middleware/      Sign-in and role checks, 404 and error handlers
-│   │   ├── modules/         auth, users, products, audit, health
+│   │   ├── modules/         auth, users, products, stock, customers, audit, health
 │   │   ├── scripts/         db:migrate, db:seed and user:create commands
 │   │   ├── utils/           AppError, validation, JSON logger
 │   │   └── tests/           Unit tests; tests/db/ = tests against PostgreSQL
@@ -40,7 +40,7 @@ snackify/
 │   ├── lib/
 │   │   ├── core/            config, network (API client), routing, theme
 │   │   ├── shared/widgets/  app shell, API status chip, logo
-│   │   └── features/        auth (login, session), dashboard, products
+│   │   └── features/        auth, dashboard, products, stock, customers
 │   ├── test/
 │   └── assets/images/
 └── docs/                    api-documentation.md, database-design.md
@@ -104,7 +104,7 @@ From the `backend` folder:
 
 ```powershell
 npm run db:migrate                     # apply all pending migrations
-npm run db:seed                        # load sample products (safe to repeat)
+npm run db:seed                        # load sample products and customers (safe to repeat)
 npm run db:rollback                    # undo the most recent migration (not in production)
 npm run db:new-migration -- add-customers   # create a new, empty SQL migration file
 ```
@@ -288,7 +288,11 @@ start takes about a minute while Flutter compiles; later starts are faster.
    **Adjust stock** to record damage or correct a count (a reason is required, and stock can
    never go below zero). The **Receipts** tab lists deliveries for today, the last 7 days, or
    chosen dates.
-8. Resize the browser window: below 840 px wide, navigation moves into a menu drawer and
+8. Open **Customers**. The sample data adds three made-up customers. Salespeople and admins
+   use **Add customer** (leave the code empty to get C0001, C0002, …). Accounts staff can
+   tap a customer to set a **credit limit** but cannot change the other details; admins can
+   also deactivate a customer. Storekeepers can view and search only.
+9. Resize the browser window: below 840 px wide, navigation moves into a menu drawer and
    products are shown as a list; wider screens show a permanent sidebar and a table.
 
 ### Checks
@@ -301,8 +305,10 @@ dart format .
 
 ---
 
-## Known limitations (Stage 5)
+## Known limitations (Stage 6)
 
+- Credit limits are stored but not yet checked: that starts when dispatches and invoices
+  exist. The customer history (dispatches, invoices, payments, balance) comes with them too.
 - The Flutter dashboard still shows **sample data only**; it does not read the database yet.
 - **Expiry warnings** are not shown yet. Expiry dates are recorded with each receipt, but
   knowing which batches are still on the shelf needs dispatches to record which batch they took

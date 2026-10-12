@@ -4,6 +4,8 @@ import '../../core/app_services.dart';
 import '../../core/routing/app_destinations.dart';
 import '../../core/theme/app_theme.dart';
 import '../../features/auth/domain/app_user.dart';
+import '../../features/customers/domain/customer.dart';
+import '../../features/customers/presentation/customers_screen.dart';
 import '../../features/dashboard/presentation/dashboard_screen.dart';
 import '../../features/products/presentation/products_screen.dart';
 import '../../features/stock/presentation/stock_screen.dart';
@@ -59,6 +61,10 @@ class _AppShellState extends State<AppShell> {
         stock: widget.services.stock,
         products: widget.services.products,
         user: widget.user,
+      ),
+      'Customers' => CustomersScreen(
+        repository: widget.services.customers,
+        permissions: CustomerPermissions.forRole(widget.user.role),
       ),
       _ => ComingSoonView(title: destination.label),
     };

@@ -11,6 +11,7 @@ import 'package:snackify/core/network/api_client.dart';
 import 'package:snackify/features/auth/data/auth_repository.dart';
 import 'package:snackify/features/auth/data/token_store.dart';
 import 'package:snackify/features/auth/presentation/auth_controller.dart';
+import 'package:snackify/features/customers/data/customers_repository.dart';
 import 'package:snackify/features/products/data/products_repository.dart';
 import 'package:snackify/features/stock/data/stock_repository.dart';
 
@@ -33,6 +34,27 @@ class FakeBackend {
   final Set<String> validTokens = {};
   final List<Map<String, Object?>> products = [];
   final List<Map<String, Object?>> receipts = [];
+  final List<Map<String, Object?>> customers = [];
+
+  /// Adds a customer directly, as if it already existed on the server.
+  void addCustomer(
+    String code,
+    String name, {
+    String? phone,
+    String? address,
+    String? creditLimit,
+    bool isActive = true,
+  }) {
+    customers.add({
+      'id': 'customer-${customers.length + 1}',
+      'code': code,
+      'name': name,
+      'phone': phone,
+      'address': address,
+      'creditLimit': creditLimit,
+      'isActive': isActive,
+    });
+  }
 
   /// The stock ledger, oldest first.
   final List<Map<String, Object?>> movements = [];
@@ -119,6 +141,7 @@ class FakeBackend {
       return request.method == 'POST' ? _createProduct(body) : _updateProduct(path, body);
     }
     if (path.startsWith('/api/v1/stock')) return _stock(request);
+    if (path.startsWith('/api/v1/customers')) return _customers(request);
     return _error(404, 'NOT_FOUND', 'Not found');
   }
 
@@ -318,6 +341,83 @@ class FakeBackend {
     return _json(200, {'product': product});
   }
 
+  /// Who may change which customer fields, as on the real server.
+  static const _customerFieldRoles = {
+    'code': ['admin', 'salesperson'],
+    'name': ['admin', 'salesperson'],
+    'phone': ['admin', 'salesperson'],
+    'address': ['admin', 'salesperson'],
+    'creditLimit': ['admin', 'accounts'],
+    'isActive': ['admin'],
+  };
+
+  http.Response _customers(http.Request request) {
+    final forbidden = _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
+    if (request.method == 'GET') {
+      final query = request.url.queryParameters;
+      final q = (query['q'] ?? '').toLowerCase();
+      final matches =
+          customers
+              .where((c) => query['includeInactive'] == 'true' || c['isActive'] == true)
+              .where(
+                (c) =>
+                    q.isEmpty ||
+                    [
+                      'code',
+                      'name',
+                      'phone',
+                    ].any((field) => '${c[field] ?? ''}'.toLowerCase().contains(q)),
+              )
+              .toList()
+            ..sort(
+              (a, b) => (a['name'] as String).toLowerCase().compareTo(
+                (b['name'] as String).toLowerCase(),
+              ),
+            );
+      return _json(200, {'customers': matches, 'total': matches.length});
+    }
+
+    final body = jsonDecode(request.body) as Map<String, dynamic>;
+    for (final field in body.keys) {
+      if (body[field] != null || request.method == 'PATCH') {
+        if (!(_customerFieldRoles[field] ?? const []).contains(role)) return forbidden;
+      }
+    }
+    final code = (body['code'] as String?)?.toUpperCase();
+    if (code != null &&
+        customers.any((c) => c['code'] == code && !request.url.path.endsWith('/${c['id']}'))) {
+      return _json(409, {
+        'error': {
+          'code': 'CUSTOMER_CODE_TAKEN',
+          'message': 'Another customer already uses the code "$code".',
+          'details': [
+            {'field': 'code', 'message': 'Already used by another customer'},
+          ],
+        },
+      });
+    }
+
+    if (request.method == 'POST') {
+      addCustomer(
+        code ?? 'C${(customers.length + 1).toString().padLeft(4, '0')}',
+        body['name'] as String,
+        phone: body['phone'] as String?,
+        address: body['address'] as String?,
+        creditLimit: body['creditLimit'] == null
+            ? null
+            : double.parse(body['creditLimit'] as String).toStringAsFixed(2),
+      );
+      return _json(201, {'customer': customers.last});
+    }
+
+    final customer = customers.firstWhere((c) => request.url.path.endsWith('/${c['id']}'));
+    customer.addAll({...body, 'code': ?code});
+    if (body['creditLimit'] != null) {
+      customer['creditLimit'] = double.parse(body['creditLimit'] as String).toStringAsFixed(2);
+    }
+    return _json(200, {'customer': customer});
+  }
+
   http.Response _skuTaken(Object? sku) => _json(409, {
     'error': {
       'code': 'SKU_TAKEN',
@@ -370,6 +470,7 @@ Future<TestApp> pumpSnackify(
     checkBackendHealth: () async => apiHealthy,
     products: ProductsRepository(api),
     stock: StockRepository(api),
+    customers: CustomersRepository(api),
   );
 
   await tester.pumpWidget(SnackifyApp(auth: auth, services: services));

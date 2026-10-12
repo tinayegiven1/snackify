@@ -7,6 +7,7 @@ import { configurePgTypes } from './database/pg-types.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { notFoundHandler } from './middleware/not-found.js';
 import { authRouter } from './modules/auth/auth.routes.js';
+import { customersRouter } from './modules/customers/customers.routes.js';
 import { healthRouter, type DatabaseCheck } from './modules/health/health.routes.js';
 import { productsRouter } from './modules/products/products.routes.js';
 import { stockRouter } from './modules/stock/stock.routes.js';
@@ -32,6 +33,7 @@ export function createApp(config: AppConfig, deps: AppDependencies): Express {
   app.use('/api/v1/users', usersRouter(deps.db));
   app.use('/api/v1/products', productsRouter(deps.db));
   app.use('/api/v1/stock', stockRouter(deps.db, config.businessTimezone));
+  app.use('/api/v1/customers', customersRouter(deps.db));
 
   app.use(notFoundHandler);
   app.use(errorHandler);
