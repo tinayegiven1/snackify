@@ -9,6 +9,7 @@ import 'features/auth/data/auth_repository.dart';
 import 'features/auth/data/token_store.dart';
 import 'features/auth/presentation/auth_controller.dart';
 import 'features/products/data/products_repository.dart';
+import 'features/stock/data/stock_repository.dart';
 
 void main() {
   final api = ApiClient(baseUrl: AppConfig.apiBaseUrl);
@@ -16,6 +17,7 @@ void main() {
   final services = AppServices(
     checkBackendHealth: BackendHealthService(api).isHealthy,
     products: ProductsRepository(api),
+    stock: StockRepository(api),
   );
   runApp(SnackifyApp(auth: auth, services: services));
 }

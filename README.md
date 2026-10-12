@@ -5,16 +5,16 @@ snacks business. One backend API and database serve a Flutter web app and a Flut
 
 The full product specification is in [Snackify_Claude_Code_Spec.md](Snackify_Claude_Code_Spec.md).
 
-## Current status: Stage 4 (product catalogue)
+## Current status: Stage 5 (stock receiving and balances)
 
 | Part                                   | Status                                                                     |
 | -------------------------------------- | -------------------------------------------------------------------------- |
-| Backend (Node.js, Express, TypeScript) | Health, sign-in/out, roles, staff accounts, products API, audit log, tests |
+| Backend (Node.js, Express, TypeScript) | Health, sign-in, roles, staff, products, stock ledger, audit log, tests   |
 | PostgreSQL                             | Dev + test databases, least-privilege roles, migrations, seed              |
-| Database tables                        | `products`, `users`, `sessions`, `audit_logs`                              |
-| Flutter app (web + Android)            | Login, **Products** (search, add, edit, deactivate); dashboard with **sample data** |
+| Database tables                        | `products`, `users`, `sessions`, `audit_logs`, `stock_batches`, `stock_movements` |
+| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections); dashboard with **sample data** |
 | Staff management screens               | Not yet: use the API or `npm run user:create`                              |
-| Stock, customers, dispatches, billing  | Not started (navigation shows "coming soon" pages)                         |
+| Customers, dispatches, billing         | Not started (navigation shows "coming soon" pages)                         |
 
 ## Project structure
 
@@ -203,6 +203,7 @@ npm start
 | `MIGRATION_DATABASE_URL`      | (required for migrations) | `snackify_owner` connection used by `db:migrate`      |
 | `TEST_DATABASE_URL`           | (required for `test:db`) | `snackify_app` connection to `snackify_test`           |
 | `TEST_MIGRATION_DATABASE_URL` | (required for `test:db`) | `snackify_owner` connection to `snackify_test`         |
+| `BUSINESS_TIMEZONE`           | `Africa/Harare`         | Time zone that decides "today" for business dates       |
 
 Invalid values stop the server at startup with a message naming the variable. Database URLs
 contain passwords, so they are never printed.
@@ -277,7 +278,17 @@ start takes about a minute while Flutter compiles; later starts are faster.
    Search for "bbq", tick **Show inactive**, and (as an admin) use **Add product** or tap a
    product to change its price or deactivate it. Staff who are not admins can search the list
    but cannot change it.
-6. Resize the browser window: below 840 px wide, navigation moves into a menu drawer and
+6. Open **Stock**. Every product starts at 0. As an admin, set a product's **Reorder level**
+   in Products, then use **Receive stock**:
+   - choose the product (type part of its name, or scan/type its barcode),
+   - enter a quantity, and optionally a batch number, expiry date and delivery note,
+   - tick **Opening balance** for stock that was already on the shelf (admins, first time only).
+   The **On hand** tab updates; products at or below their reorder level show **Low stock**.
+7. Tap a product on **On hand** to see its history with the running balance. Admins can use
+   **Adjust stock** to record damage or correct a count (a reason is required, and stock can
+   never go below zero). The **Receipts** tab lists deliveries for today, the last 7 days, or
+   chosen dates.
+8. Resize the browser window: below 840 px wide, navigation moves into a menu drawer and
    products are shown as a list; wider screens show a permanent sidebar and a table.
 
 ### Checks
@@ -290,9 +301,16 @@ dart format .
 
 ---
 
-## Known limitations (Stage 4)
+## Known limitations (Stage 5)
 
 - The Flutter dashboard still shows **sample data only**; it does not read the database yet.
+- **Expiry warnings** are not shown yet. Expiry dates are recorded with each receipt, but
+  knowing which batches are still on the shelf needs dispatches to record which batch they took
+  stock from (next stages).
+- A wrong receipt is corrected with an adjustment (with a reason), not by editing or deleting
+  it, so the history stays complete.
+- Camera barcode scanning comes later; a USB or Bluetooth barcode scanner (which types like a
+  keyboard) already works in the product search when receiving stock.
 - Product prices are shown in USD (the assumed base currency, set in
   `mobile_web/lib/core/config/app_config.dart`).
 - The products screen loads up to 200 products at a time; use search to find others.

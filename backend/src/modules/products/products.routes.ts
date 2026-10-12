@@ -43,6 +43,14 @@ const priceSchema = z
     'Use an amount of 0 or more with up to 2 decimal places, e.g. 0.50',
   );
 
+/** Low-stock alert level in packs, or null for no alert. */
+const reorderLevelSchema = z
+  .number({ error: 'Must be a whole number or null' })
+  .int('Must be a whole number')
+  .min(0, 'Must be 0 or more')
+  .max(1_000_000, 'Must be at most 1,000,000')
+  .nullable();
+
 const createProductSchema = z.object({
   sku: skuSchema,
   name: text(100),
@@ -50,6 +58,7 @@ const createProductSchema = z.object({
   size: text(40),
   barcode: barcodeSchema.optional().transform((value) => value ?? null),
   defaultPrice: priceSchema,
+  reorderLevel: reorderLevelSchema.optional().transform((value) => value ?? null),
 });
 
 const updateProductSchema = z
@@ -61,6 +70,7 @@ const updateProductSchema = z
       size: text(40).optional(),
       barcode: barcodeSchema.optional(),
       defaultPrice: priceSchema.optional(),
+      reorderLevel: reorderLevelSchema.optional(),
       isActive: z.boolean({ error: 'Must be true or false' }).optional(),
     },
     { error: 'This field cannot be changed' },

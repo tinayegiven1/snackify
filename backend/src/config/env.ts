@@ -8,6 +8,8 @@ export interface AppConfig {
   corsOrigins: string[];
   /** PostgreSQL connection string for the API's runtime role (snackify_app). */
   databaseUrl: string;
+  /** IANA time zone that decides what "today" is for business dates, e.g. Africa/Harare. */
+  businessTimezone: string;
 }
 
 /** Loads backend/.env for local development. Real environment variables take precedence. */
@@ -50,6 +52,17 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   CORS_ORIGINS: corsOriginsSchema.default(['http://localhost:8080']),
   DATABASE_URL: postgresUrlSchema,
+  BUSINESS_TIMEZONE: z
+    .string()
+    .refine((zone) => {
+      try {
+        new Intl.DateTimeFormat('en', { timeZone: zone });
+        return true;
+      } catch {
+        return false;
+      }
+    }, 'Must be a time zone name such as Africa/Harare')
+    .default('Africa/Harare'),
 });
 
 function invalidConfig(error: z.ZodError, path: string[] = []): Error {
@@ -75,6 +88,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: result.data.PORT,
     corsOrigins: result.data.CORS_ORIGINS,
     databaseUrl: result.data.DATABASE_URL,
+    businessTimezone: result.data.BUSINESS_TIMEZONE,
   };
 }
 

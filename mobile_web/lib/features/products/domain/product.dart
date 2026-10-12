@@ -10,6 +10,7 @@ class Product {
     required this.size,
     required this.barcode,
     required this.defaultPrice,
+    required this.reorderLevel,
     required this.isActive,
   });
 
@@ -21,6 +22,7 @@ class Product {
     size: json['size'] as String,
     barcode: json['barcode'] as String?,
     defaultPrice: json['defaultPrice'] as String,
+    reorderLevel: json['reorderLevel'] as int?,
     isActive: json['isActive'] as bool,
   );
 
@@ -33,6 +35,9 @@ class Product {
 
   /// Exact decimal text from the server, e.g. "0.50". Kept as text so money is never rounded.
   final String defaultPrice;
+
+  /// Stock level (in packs) at or below which the product counts as low; null for no alert.
+  final int? reorderLevel;
   final bool isActive;
 
   String get description => '$name — $flavour — $size';
@@ -49,6 +54,7 @@ class ProductInput {
     required this.size,
     required this.barcode,
     required this.defaultPrice,
+    this.reorderLevel,
     this.isActive = true,
   });
 
@@ -60,6 +66,7 @@ class ProductInput {
   /// Null when the product has no barcode.
   final String? barcode;
   final String defaultPrice;
+  final int? reorderLevel;
   final bool isActive;
 
   Map<String, Object?> toJson() => {
@@ -69,5 +76,6 @@ class ProductInput {
     'size': size,
     'barcode': barcode,
     'defaultPrice': defaultPrice,
+    'reorderLevel': reorderLevel,
   };
 }

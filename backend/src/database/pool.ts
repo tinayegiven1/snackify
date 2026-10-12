@@ -1,11 +1,9 @@
 import pg from 'pg';
 import { logger } from '../utils/logger.js';
-
-// Return DATE columns as 'YYYY-MM-DD' strings. By default pg turns them into JavaScript
-// Dates at local midnight, which can shift business dates by a day across time zones.
-pg.types.setTypeParser(pg.types.builtins.DATE, (value) => value);
+import { configurePgTypes } from './pg-types.js';
 
 export function createPool(connectionString: string): pg.Pool {
+  configurePgTypes();
   const pool = new pg.Pool({
     connectionString,
     max: 10,

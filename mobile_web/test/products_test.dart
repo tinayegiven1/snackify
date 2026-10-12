@@ -164,6 +164,8 @@ void main() {
 
     await tester.tap(find.text('Potato Crisps — BBQ'));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Active'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Active'));
     await saveForm(tester);
 

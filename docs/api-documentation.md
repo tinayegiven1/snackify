@@ -46,6 +46,9 @@ Raw database errors, stack traces and submitted values are never returned.
 | 409    | `USERNAME_TAKEN`           | The username is already used (letter case is ignored)      |
 | 409    | `CANNOT_CHANGE_OWN_ACCESS` | An admin tried to change their own role or deactivate themselves |
 | 409    | `USE_CHANGE_PASSWORD`      | An admin tried to reset their own password                 |
+| 409    | `PRODUCT_INACTIVE`         | Stock cannot be received for a deactivated product         |
+| 409    | `OPENING_BALANCE_NOT_ALLOWED` | The product already has stock records                   |
+| 409    | `INSUFFICIENT_STOCK`       | The change would leave less than zero in stock             |
 | 413    | `PAYLOAD_TOO_LARGE`        | The request body is larger than 100 KB                     |
 | 429    | `TOO_MANY_ATTEMPTS`        | 10 failed password attempts from one address in 15 minutes |
 | 500    | `INTERNAL_ERROR`           | Unexpected server error (details are logged)               |
@@ -213,6 +216,7 @@ JSON number (`0.5`) is accepted; it must be 0 or more with at most 2 decimal pla
 | `size`         | Required, up to 40 characters                                         |
 | `barcode`      | Optional; `null` or `""` for none. Unique when set; 4–48 letters, digits or `-` |
 | `defaultPrice` | Required, see above                                                   |
+| `reorderLevel` | Optional whole number (packs); stock at or below it counts as low. `null` for no alert |
 | `isActive`     | Changes only; `false` hides the product from normal lists             |
 
 The same name + flavour + size cannot be registered twice (letter case is ignored).
@@ -284,3 +288,123 @@ Send only the fields to change. Leaving `barcode` out keeps it; `"barcode": null
 **200 OK** with `{ "product": { ... } }`. The audit log records exactly what changed, e.g.
 `{"changes": {"defaultPrice": {"from": "0.50", "to": "0.55"}}}`. Earlier sales keep the
 price they were made at; only new transactions use the new default.
+
+## Stock
+
+Stock is kept as a **ledger**: every change is a movement with a signed `quantityDelta`
+(positive adds stock, negative removes it). Movements are never edited or deleted, and stock on
+hand is always the sum of the ledger. Business dates (`receivedDate`, `businessDate`) are
+`YYYY-MM-DD` in the business time zone (`BUSINESS_TIMEZONE`, default `Africa/Harare`) and may not
+be in the future.
+
+| Action                                      | Who                      |
+| ------------------------------------------- | ------------------------ |
+| View balances, receipts and movements       | Everyone signed in       |
+| Receive stock                               | Storekeepers and admins  |
+| Record an opening balance                   | Admins                   |
+| Damage and corrections (adjustments)        | Admins, with a reason    |
+
+Movement types: `opening_balance`, `receipt`, `damage`, `adjustment` (and later `dispatch`,
+`customer_return`, `reversal`).
+
+### `POST /api/v1/stock/receipts`
+
+```json
+{
+  "productId": "3b0d6c5e-...",
+  "quantity": 48,
+  "receivedDate": "2026-10-12",
+  "batchNumber": "L2026-10A",
+  "expiryDate": "2027-02-01",
+  "supplierReference": "Delivery note 1042",
+  "isOpeningBalance": false
+}
+```
+
+Only `productId` and `quantity` (a whole number, 1–1,000,000) are required. `receivedDate`
+defaults to today; `expiryDate` may not be before it. Empty optional text counts as "not given".
+
+An **opening balance** (`isOpeningBalance: true`, admins only) records stock that was already on
+the shelf. It is only allowed while the product has no stock records at all; after that, use an
+adjustment.
+
+**201 Created**
+
+```json
+{
+  "receipt": {
+    "id": "…",
+    "product": { "id": "…", "sku": "MP-CH-S", "name": "Maize Puffs", "flavour": "Cheese", "size": "Small" },
+    "quantity": 48,
+    "receivedDate": "2026-10-12",
+    "batchNumber": "L2026-10A",
+    "expiryDate": "2027-02-01",
+    "supplierReference": "Delivery note 1042",
+    "isOpeningBalance": false,
+    "receivedBy": { "id": "…", "fullName": "Tendai Moyo" },
+    "createdAt": "2026-10-12T13:05:00.000Z"
+  },
+  "quantityOnHand": 68
+}
+```
+
+### `GET /api/v1/stock/receipts`
+
+Query: `from`, `to` (default: today), optional `productId`. At most 366 days.
+**200 OK** with `{ "from", "to", "receipts": [ … ], "totalQuantity": 60 }`, newest first.
+
+### `POST /api/v1/stock/adjustments` (admins)
+
+```json
+{ "productId": "…", "type": "damage", "quantityDelta": -2, "reason": "Packs torn in transit" }
+```
+
+`type` is `damage` (must be negative) or `adjustment` (either direction, e.g. after a stock
+count). `reason` is required (3–500 characters). `businessDate` is optional (default today).
+Refused with **409** `INSUFFICIENT_STOCK` if it would leave less than zero. Recorded in the audit
+log as `stock.adjusted` with the balance before and after.
+
+**201 Created** with `{ "movement": { … }, "quantityOnHand": 98 }`.
+
+### `GET /api/v1/stock/balance`
+
+Query: optional `q` (as for products), `lowStockOnly=true`, `includeInactive=true`.
+
+```json
+{
+  "balances": [
+    {
+      "product": { "id": "…", "sku": "MP-CH-S", "name": "Maize Puffs", "flavour": "Cheese", "size": "Small", "isActive": true },
+      "quantityOnHand": 20,
+      "reorderLevel": 50,
+      "isLowStock": true
+    }
+  ]
+}
+```
+
+### `GET /api/v1/stock/movements`
+
+Query: optional `productId`, `from`, `to`, `limit` (1–500, default 100), `offset`.
+Newest first. `balanceAfter` is the product's stock straight after each movement was recorded.
+
+```json
+{
+  "movements": [
+    {
+      "id": "…",
+      "product": { "id": "…", "sku": "PC-BBQ-S", "name": "Potato Crisps", "flavour": "BBQ", "size": "Small" },
+      "type": "damage",
+      "quantityDelta": -3,
+      "businessDate": "2026-10-12",
+      "occurredAt": "2026-10-12T13:20:00.000Z",
+      "reference": null,
+      "reason": "Torn",
+      "batchNumber": null,
+      "createdBy": { "id": "…", "fullName": "Demo Admin" },
+      "balanceAfter": 97
+    }
+  ],
+  "total": 3
+}
+```

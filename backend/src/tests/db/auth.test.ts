@@ -7,7 +7,7 @@ import {
   createDbTestApp,
   createTestPools,
   createTestUser,
-  resetAuthTables,
+  resetDatabase,
   signIn,
 } from './db-test-helpers.js';
 
@@ -23,7 +23,7 @@ const me = (token?: string) => {
 };
 
 beforeEach(async () => {
-  await resetAuthTables(pools.owner);
+  await resetDatabase(pools.owner);
   app = createDbTestApp(pools.app);
   await createTestUser(pools.app, {
     username: 'tendai',

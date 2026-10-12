@@ -4,6 +4,7 @@ import '../../../core/network/api_client.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/widgets/snackify_logo.dart';
 import 'auth_controller.dart';
+import '../../../shared/widgets/message_view.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key, required this.auth});
@@ -75,7 +76,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       const SizedBox(height: 24),
                       if (message != null) ...[
-                        _MessageBanner(message: message),
+                        ErrorBanner(message: message),
                         const SizedBox(height: 16),
                       ],
                       TextFormField(
@@ -141,33 +142,6 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _MessageBanner extends StatelessWidget {
-  const _MessageBanner({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: colorScheme.errorContainer,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.error_outline, color: colorScheme.onErrorContainer),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(message, style: TextStyle(color: colorScheme.onErrorContainer)),
-          ),
-        ],
       ),
     );
   }

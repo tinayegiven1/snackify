@@ -8,6 +8,7 @@ export const testConfig: AppConfig = {
   corsOrigins: ['http://localhost:8080'],
   // Never connected to by unit tests.
   databaseUrl: 'postgres://unused:unused@localhost:5432/unused',
+  businessTimezone: 'Africa/Harare',
 };
 
 /**

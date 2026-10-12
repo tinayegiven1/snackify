@@ -6,6 +6,7 @@ import '../../core/theme/app_theme.dart';
 import '../../features/auth/domain/app_user.dart';
 import '../../features/dashboard/presentation/dashboard_screen.dart';
 import '../../features/products/presentation/products_screen.dart';
+import '../../features/stock/presentation/stock_screen.dart';
 import 'api_status_indicator.dart';
 import 'coming_soon_view.dart';
 import 'snackify_logo.dart';
@@ -53,6 +54,11 @@ class _AppShellState extends State<AppShell> {
       'Products' => ProductsScreen(
         repository: widget.services.products,
         canEdit: widget.user.role == StaffRole.admin,
+      ),
+      'Stock' => StockScreen(
+        stock: widget.services.stock,
+        products: widget.services.products,
+        user: widget.user,
       ),
       _ => ComingSoonView(title: destination.label),
     };

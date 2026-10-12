@@ -10,6 +10,7 @@ describe('loadConfig', () => {
       port: 3000,
       corsOrigins: ['http://localhost:8080'],
       databaseUrl: DATABASE_URL,
+      businessTimezone: 'Africa/Harare',
     });
   });
 

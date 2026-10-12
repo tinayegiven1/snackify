@@ -5,6 +5,7 @@ import '../../../core/config/app_config.dart';
 import '../../../core/network/api_client.dart';
 import '../data/products_repository.dart';
 import '../domain/product.dart';
+import '../../../shared/widgets/message_view.dart';
 
 // The same rules the server applies, so most mistakes are caught before sending.
 final _skuFormat = RegExp(r'^[A-Z0-9][A-Z0-9._-]{0,39}$');
@@ -30,6 +31,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   late final _sku = TextEditingController(text: widget.product?.sku);
   late final _barcode = TextEditingController(text: widget.product?.barcode);
   late final _price = TextEditingController(text: widget.product?.defaultPrice);
+  late final _reorderLevel = TextEditingController(text: widget.product?.reorderLevel?.toString());
   late bool _isActive = widget.product?.isActive ?? true;
 
   bool _saving = false;
@@ -42,7 +44,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
 
   @override
   void dispose() {
-    for (final controller in [_name, _flavour, _size, _sku, _barcode, _price]) {
+    for (final controller in [_name, _flavour, _size, _sku, _barcode, _price, _reorderLevel]) {
       controller.dispose();
     }
     super.dispose();
@@ -62,6 +64,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       size: _size.text.trim(),
       barcode: _barcode.text.trim().isEmpty ? null : _barcode.text.trim(),
       defaultPrice: _price.text.trim(),
+      reorderLevel: int.tryParse(_reorderLevel.text.trim()),
       isActive: _isActive,
     );
 
@@ -98,7 +101,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     if (_error != null) ...[
-                      _ErrorBanner(message: _error!),
+                      ErrorBanner(message: _error!),
                       const SizedBox(height: 16),
                     ],
                     _textField(
@@ -140,6 +143,19 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                       validator: (value) => _priceFormat.hasMatch(value)
                           ? null
                           : 'Use an amount like 0.50 (up to 2 decimal places)',
+                    ),
+                    _textField(
+                      'reorderLevel',
+                      _reorderLevel,
+                      'Reorder level (optional)',
+                      helper:
+                          'Warn when stock falls to this many packs. Leave empty for no warning.',
+                      required: false,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      validator: (value) => (int.tryParse(value) ?? 1000001) <= 1000000
+                          ? null
+                          : 'Use a whole number up to 1,000,000',
                     ),
                     if (!_isNew)
                       SwitchListTile(
@@ -217,33 +233,6 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
           if (value.isEmpty) return required ? 'Required' : null;
           return validator?.call(value);
         },
-      ),
-    );
-  }
-}
-
-class _ErrorBanner extends StatelessWidget {
-  const _ErrorBanner({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: colorScheme.errorContainer,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.error_outline, color: colorScheme.onErrorContainer),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(message, style: TextStyle(color: colorScheme.onErrorContainer)),
-          ),
-        ],
       ),
     );
   }

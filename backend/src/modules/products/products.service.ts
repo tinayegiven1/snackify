@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { escapeLike } from '../../database/sql.js';
 import { isUniqueViolation, withTransaction, type Queryable } from '../../database/transaction.js';
 import { AppError } from '../../utils/app-error.js';
 import { changedFields, recordAudit } from '../audit/audit.js';
@@ -13,6 +14,8 @@ export interface Product {
   barcode: string | null;
   /** Exact decimal string such as "0.50", in the business's base currency. */
   defaultPrice: string;
+  /** Stock level at or below which the product counts as low on stock; null for no alert. */
+  reorderLevel: number | null;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -26,13 +29,14 @@ interface ProductRow {
   size: string;
   barcode: string | null;
   default_price: string;
+  reorder_level: number | null;
   is_active: boolean;
   created_at: Date;
   updated_at: Date;
 }
 
 const PRODUCT_COLUMNS =
-  'id, sku, name, flavour, size, barcode, default_price, is_active, created_at, updated_at';
+  'id, sku, name, flavour, size, barcode, default_price, reorder_level, is_active, created_at, updated_at';
 
 function toProduct(row: ProductRow): Product {
   return {
@@ -43,6 +47,7 @@ function toProduct(row: ProductRow): Product {
     size: row.size,
     barcode: row.barcode,
     defaultPrice: row.default_price,
+    reorderLevel: row.reorder_level,
     isActive: row.is_active,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -75,9 +80,6 @@ function conflictError(error: unknown, input: { sku?: string; barcode?: string |
   }
   return null;
 }
-
-/** Escapes % and _ so search text is matched literally. */
-const escapeLike = (text: string) => text.replace(/[\\%_]/g, (char) => `\\${char}`);
 
 export interface ProductSearch {
   /** Matches part of the SKU, name, flavour or size (ignoring case), or the exact barcode. */
@@ -134,6 +136,7 @@ export interface NewProductInput {
   size: string;
   barcode: string | null;
   defaultPrice: string;
+  reorderLevel: number | null;
 }
 
 export async function createProduct(
@@ -144,10 +147,18 @@ export async function createProduct(
   try {
     return await withTransaction(pool, async (client) => {
       const { rows } = await client.query<ProductRow>(
-        `INSERT INTO products (sku, name, flavour, size, barcode, default_price)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO products (sku, name, flavour, size, barcode, default_price, reorder_level)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING ${PRODUCT_COLUMNS}`,
-        [input.sku, input.name, input.flavour, input.size, input.barcode, input.defaultPrice],
+        [
+          input.sku,
+          input.name,
+          input.flavour,
+          input.size,
+          input.barcode,
+          input.defaultPrice,
+          input.reorderLevel,
+        ],
       );
       const product = toProduct(rows[0] as ProductRow);
       await recordAudit(client, {
@@ -188,7 +199,7 @@ export async function updateProduct(
       const { rows: updated } = await client.query<ProductRow>(
         `UPDATE products
          SET sku = $2, name = $3, flavour = $4, size = $5, barcode = $6,
-             default_price = $7, is_active = $8
+             default_price = $7, is_active = $8, reorder_level = $9
          WHERE id = $1
          RETURNING ${PRODUCT_COLUMNS}`,
         [
@@ -200,6 +211,7 @@ export async function updateProduct(
           changes.barcode === undefined ? before.barcode : changes.barcode,
           changes.defaultPrice ?? before.defaultPrice,
           changes.isActive ?? before.isActive,
+          changes.reorderLevel === undefined ? before.reorderLevel : changes.reorderLevel,
         ],
       );
       const after = toProduct(updated[0] as ProductRow);
@@ -211,6 +223,7 @@ export async function updateProduct(
         size: p.size,
         barcode: p.barcode,
         defaultPrice: p.defaultPrice,
+        reorderLevel: p.reorderLevel,
         isActive: p.isActive,
       });
       await recordAudit(client, {

@@ -54,9 +54,47 @@ export function createDbTestApp(appPool: pg.Pool): Express {
   return createApp(testConfig, { db: appPool, checkDatabase: async () => true });
 }
 
-/** Removes all staff accounts, sessions and audit entries (as the owner, who may delete). */
-export async function resetAuthTables(ownerPool: pg.Pool): Promise<void> {
-  await ownerPool.query('DELETE FROM audit_logs; DELETE FROM sessions; DELETE FROM users;');
+/**
+ * Empties every table, children before parents (as the owner, who may delete).
+ * Each test starts from an empty database this way.
+ */
+export async function resetDatabase(ownerPool: pg.Pool): Promise<void> {
+  await ownerPool.query(`
+    DELETE FROM stock_movements;
+    DELETE FROM stock_batches;
+    DELETE FROM audit_logs;
+    DELETE FROM sessions;
+    DELETE FROM users;
+    DELETE FROM products;`);
+}
+
+/** Adds a product directly (as the owner) and returns its id. */
+export async function createTestProduct(
+  ownerPool: pg.Pool,
+  product: Partial<{
+    sku: string;
+    name: string;
+    flavour: string;
+    size: string;
+    reorderLevel: number | null;
+    isActive: boolean;
+  }> = {},
+): Promise<string> {
+  const p = {
+    sku: 'PC-BBQ-S',
+    name: 'Potato Crisps',
+    flavour: 'BBQ',
+    size: 'Small',
+    reorderLevel: null,
+    isActive: true,
+    ...product,
+  };
+  const { rows } = await ownerPool.query<{ id: string }>(
+    `INSERT INTO products (sku, name, flavour, size, default_price, reorder_level, is_active)
+     VALUES ($1, $2, $3, $4, 0.50, $5, $6) RETURNING id`,
+    [p.sku, p.name, p.flavour, p.size, p.reorderLevel, p.isActive],
+  );
+  return (rows[0] as { id: string }).id;
 }
 
 export function createTestUser(

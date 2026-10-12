@@ -8,7 +8,7 @@ import {
   createDbTestApp,
   createTestPools,
   createTestUser,
-  resetAuthTables,
+  resetDatabase,
   signIn,
 } from './db-test-helpers.js';
 
@@ -63,8 +63,7 @@ async function addSampleProducts() {
 }
 
 beforeEach(async () => {
-  await resetAuthTables(pools.owner);
-  await pools.owner.query('DELETE FROM products');
+  await resetDatabase(pools.owner);
   app = createDbTestApp(pools.app);
   admin = await createTestUser(pools.app, { username: 'admin', role: 'admin', password: PASSWORD });
   await createTestUser(pools.app, { username: 'store', role: 'storekeeper', password: PASSWORD });

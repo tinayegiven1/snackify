@@ -45,6 +45,7 @@ Example: "Potato Crisps — BBQ — Small" and "Potato Crisps — BBQ — Large"
 | `size`          | `text`          | Required, trimmed, 1–40 chars                                |
 | `barcode`       | `text`          | Optional; unique when present; letters, digits, `-`, 4–48 chars |
 | `default_price` | `numeric(12,2)` | Required, `>= 0`, in the business's base currency            |
+| `reorder_level` | `integer`       | Optional, `>= 0`. Stock at or below it is "low"              |
 | `is_active`     | `boolean`       | Defaults to `true`                                           |
 | `created_at`    | `timestamptz`   | Set on insert                                                |
 | `updated_at`    | `timestamptz`   | Updated automatically on every change                        |
@@ -99,11 +100,54 @@ The token itself is never stored, so a copy of the database cannot be used to si
 The API role can add entries but cannot change or delete them. Passwords and tokens are never
 written to the log.
 
+### `stock_batches`: stock received (spec 6.3)
+
+One row per delivery of one product, or per opening balance. Never edited: mistakes are corrected
+with an adjustment in the ledger, so the original record stays.
+
+| Column               | Type          | Rules                                                  |
+| -------------------- | ------------- | ------------------------------------------------------ |
+| `id`                 | `uuid`        | Primary key                                            |
+| `product_id`         | `uuid`        | References `products`                                  |
+| `quantity_received`  | `integer`     | `> 0` (packs)                                          |
+| `received_date`      | `date`        | Business day it arrived; the API refuses future dates  |
+| `batch_number`       | `text`        | Optional, 1–60 chars                                   |
+| `expiry_date`        | `date`        | Optional; not before `received_date`                   |
+| `supplier_reference` | `text`        | Optional supplier or delivery-note number, 1–120 chars |
+| `is_opening_balance` | `boolean`     | Stock already on the shelf before Snackify was used    |
+| `received_by`        | `uuid`        | References `users`                                     |
+| `created_at`         | `timestamptz` | When it was recorded                                   |
+
+### `stock_movements`: the stock ledger (spec 6.4), append-only
+
+| Column                 | Type          | Rules                                                     |
+| ---------------------- | ------------- | --------------------------------------------------------- |
+| `id`                   | `uuid`        | Primary key                                               |
+| `product_id`           | `uuid`        | References `products`                                     |
+| `batch_id`             | `uuid`        | The receipt, for `receipt` and `opening_balance` (required) |
+| `movement_type`        | `text`        | `opening_balance`, `receipt`, `dispatch`, `customer_return`, `damage`, `adjustment`, `reversal` |
+| `quantity_delta`       | `integer`     | Never 0. Must be positive for receipts, opening balances and returns, negative for dispatches and damage |
+| `business_date`        | `date`        | The business day it belongs to                            |
+| `occurred_at`          | `timestamptz` | When it was recorded                                      |
+| `created_by`           | `uuid`        | References `users`                                        |
+| `reference`            | `text`        | A document number, e.g. a delivery note                   |
+| `reason`               | `text`        | Required (3–500 chars) for damage, adjustments, reversals |
+| `reverses_movement_id` | `uuid`        | For reversals (later stages); each movement reversed at most once |
+
+Indexed by product and date. The API role can add rows but never change or delete them.
+
+**Stock on hand** comes from the `stock_balances` view: the sum of `quantity_delta` per product.
+There is no separate balance column that could drift from the history.
+
+**Never below zero, even under concurrency:** every operation that changes stock first locks the
+product's row (`SELECT … FOR UPDATE`), checks the balance, and then writes the movement in the
+same transaction. Two people removing the same product's stock at the same moment are therefore
+handled one after the other. `npm run test:db` checks this by sending 20 simultaneous removals.
+
 ## Planned tables
 
-Added by later stages, each with its own migration: `customers`, `stock_batches`,
-`stock_movements` (append-only ledger), `dispatches`, `dispatch_items`, `invoices`,
-`invoice_items`, `payments`, `payment_allocations`, `forecasts`.
+Added by later stages, each with its own migration: `customers`, `dispatches`,
+`dispatch_items`, `invoices`, `invoice_items`, `payments`, `payment_allocations`, `forecasts`.
 
 ## Migrations
 

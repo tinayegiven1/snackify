@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../core/network/api_client.dart';
+import '../../../shared/widgets/message_view.dart';
 import '../data/products_repository.dart';
 import '../domain/product.dart';
 import 'product_form_screen.dart';
@@ -79,6 +80,8 @@ class _ProductsScreenState extends State<ProductsScreen> {
   }
 
   Future<void> _openForm([Product? product]) async {
+    // An earlier "Saved ..." message would otherwise cover the form's Save button.
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     final saved = await Navigator.of(context).push<Product>(
       MaterialPageRoute(
         builder: (_) => ProductFormScreen(repository: widget.repository, product: product),
@@ -151,15 +154,11 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
   Widget _buildContent() {
     if (_error != null) {
-      return _MessageView(
+      return MessageView(
         icon: Icons.cloud_off_outlined,
         title: 'Could not load products',
         message: _error!,
-        action: FilledButton.icon(
-          onPressed: _load,
-          icon: const Icon(Icons.refresh),
-          label: const Text('Try again'),
-        ),
+        action: RetryButton(onPressed: _load),
       );
     }
     final page = _page;
@@ -168,7 +167,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
     }
     if (page.products.isEmpty) {
       final searching = _search.text.trim().isNotEmpty;
-      return _MessageView(
+      return MessageView(
         icon: searching ? Icons.search_off : Icons.inventory_2_outlined,
         title: searching ? 'No products match "${_search.text.trim()}"' : 'No products yet',
         message: searching
@@ -229,7 +228,7 @@ class _ProductList extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(product.formattedPrice, style: const TextStyle(fontWeight: FontWeight.w600)),
-              if (!product.isActive) const _InactiveBadge(),
+              if (!product.isActive) const StatusBadge('Inactive'),
             ],
           ),
           onTap: onTap == null ? null : () => onTap!(product),
@@ -276,66 +275,13 @@ class _ProductTable extends StatelessWidget {
                     DataCell(Text(product.sku)),
                     DataCell(Text(product.barcode ?? '—')),
                     DataCell(Text(product.formattedPrice)),
-                    DataCell(product.isActive ? const Text('Active') : const _InactiveBadge()),
+                    DataCell(
+                      product.isActive ? const Text('Active') : const StatusBadge('Inactive'),
+                    ),
                   ],
                 ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _InactiveBadge extends StatelessWidget {
-  const _InactiveBadge();
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      margin: const EdgeInsets.only(top: 2),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text('Inactive', style: Theme.of(context).textTheme.labelSmall),
-    );
-  }
-}
-
-/// A centred icon, title, message and optional button for empty and error states.
-class _MessageView extends StatelessWidget {
-  const _MessageView({required this.icon, required this.title, required this.message, this.action});
-
-  final IconData icon;
-  final String title;
-  final String message;
-  final Widget? action;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 48, color: theme.colorScheme.outline),
-            const SizedBox(height: 16),
-            Text(title, style: theme.textTheme.titleMedium, textAlign: TextAlign.center),
-            const SizedBox(height: 8),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            if (action != null) ...[const SizedBox(height: 16), action!],
-          ],
         ),
       ),
     );

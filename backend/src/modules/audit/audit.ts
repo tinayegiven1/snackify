@@ -9,7 +9,9 @@ export type AuditAction =
   | 'user.updated'
   | 'user.password_reset'
   | 'product.created'
-  | 'product.updated';
+  | 'product.updated'
+  | 'stock.opening_balance'
+  | 'stock.adjusted';
 
 export interface AuditEntry {
   /** The signed-in user who acted, or null for setup commands and unknown users. */

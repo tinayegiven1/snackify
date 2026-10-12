@@ -6,11 +6,13 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:snackify/app.dart';
 import 'package:snackify/core/app_services.dart';
+import 'package:snackify/core/formatting/dates.dart';
 import 'package:snackify/core/network/api_client.dart';
 import 'package:snackify/features/auth/data/auth_repository.dart';
 import 'package:snackify/features/auth/data/token_store.dart';
 import 'package:snackify/features/auth/presentation/auth_controller.dart';
 import 'package:snackify/features/products/data/products_repository.dart';
+import 'package:snackify/features/stock/data/stock_repository.dart';
 
 const phoneSize = Size(390, 844);
 const desktopSize = Size(1280, 800);
@@ -19,7 +21,8 @@ const testUsername = 'tendai';
 const testPassword = 'correct horse battery';
 
 /// A pretend Snackify backend that follows the real API's rules for signing in and out,
-/// and for viewing and changing products (only admins may change them).
+/// products (only admins may change them) and stock (storekeepers and admins receive stock;
+/// only admins record opening balances and adjustments; stock never goes below zero).
 class FakeBackend {
   FakeBackend({this.role = 'storekeeper'});
 
@@ -29,6 +32,10 @@ class FakeBackend {
   bool reachable = true;
   final Set<String> validTokens = {};
   final List<Map<String, Object?>> products = [];
+  final List<Map<String, Object?>> receipts = [];
+
+  /// The stock ledger, oldest first.
+  final List<Map<String, Object?>> movements = [];
 
   /// Every request received, as "METHOD /path" (plus "?query" when there is one).
   final List<String> requests = [];
@@ -56,6 +63,7 @@ class FakeBackend {
     String size,
     String price, {
     String? barcode,
+    int? reorderLevel,
     bool isActive = true,
   }) {
     products.add({
@@ -66,9 +74,23 @@ class FakeBackend {
       'size': size,
       'barcode': barcode,
       'defaultPrice': price,
+      'reorderLevel': reorderLevel,
       'isActive': isActive,
     });
   }
+
+  /// Records stock already received for the product with [sku].
+  void addStock(String sku, int quantity, {String? receivedDate}) {
+    final product = products.firstWhere((p) => p['sku'] == sku);
+    _recordReceipt(product, {
+      'quantity': quantity,
+      'receivedDate': receivedDate ?? toApiDate(today()),
+    });
+  }
+
+  int onHand(Object? productId) => movements
+      .where((m) => m['productId'] == productId)
+      .fold(0, (sum, m) => sum + (m['quantityDelta'] as int));
 
   late final http.Client client = MockClient(_handle);
 
@@ -95,6 +117,147 @@ class FakeBackend {
       }
       final body = jsonDecode(request.body) as Map<String, dynamic>;
       return request.method == 'POST' ? _createProduct(body) : _updateProduct(path, body);
+    }
+    if (path.startsWith('/api/v1/stock')) return _stock(request);
+    return _error(404, 'NOT_FOUND', 'Not found');
+  }
+
+  Map<String, Object?> _summary(Map<String, Object?> product) => {
+    for (final key in ['id', 'sku', 'name', 'flavour', 'size']) key: product[key],
+  };
+
+  Map<String, Object?> _recordReceipt(Map<String, Object?> product, Map<String, dynamic> body) {
+    final receipt = <String, Object?>{
+      'id': 'receipt-${receipts.length + 1}',
+      'product': _summary(product),
+      'quantity': body['quantity'],
+      'receivedDate': body['receivedDate'],
+      'batchNumber': body['batchNumber'],
+      'expiryDate': body['expiryDate'],
+      'supplierReference': body['supplierReference'],
+      'isOpeningBalance': body['isOpeningBalance'] ?? false,
+      'receivedBy': {'id': 'user-1', 'fullName': 'Tendai Moyo'},
+    };
+    receipts.add(receipt);
+    _addMovement(
+      product['id'],
+      receipt['isOpeningBalance'] == true ? 'opening_balance' : 'receipt',
+      body['quantity'] as int,
+      body['receivedDate'] as String,
+      reference: body['supplierReference'] as String?,
+    );
+    return receipt;
+  }
+
+  void _addMovement(
+    Object? productId,
+    String type,
+    int delta,
+    String date, {
+    String? reference,
+    String? reason,
+  }) {
+    movements.add({
+      'id': 'movement-${movements.length + 1}',
+      'productId': productId,
+      'type': type,
+      'quantityDelta': delta,
+      'businessDate': date,
+      'reference': reference,
+      'reason': reason,
+      'batchNumber': null,
+      'createdBy': {'id': 'user-1', 'fullName': 'Tendai Moyo'},
+      'balanceAfter': onHand(productId) + delta,
+    });
+  }
+
+  http.Response _stock(http.Request request) {
+    final query = request.url.queryParameters;
+    final route = '${request.method} ${request.url.path}';
+    final forbidden = _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
+
+    switch (route) {
+      case 'GET /api/v1/stock/balance':
+        final q = (query['q'] ?? '').toLowerCase();
+        final balances = [
+          for (final p in products.where((p) => p['isActive'] == true))
+            {
+              'product': {..._summary(p), 'isActive': true},
+              'quantityOnHand': onHand(p['id']),
+              'reorderLevel': p['reorderLevel'],
+              'isLowStock':
+                  p['reorderLevel'] != null && onHand(p['id']) <= (p['reorderLevel'] as int),
+            },
+        ];
+        return _json(200, {
+          'balances': balances
+              .where((b) => q.isEmpty || '${b['product']}'.toLowerCase().contains(q))
+              .where((b) => query['lowStockOnly'] != 'true' || b['isLowStock'] == true)
+              .toList(),
+        });
+
+      case 'GET /api/v1/stock/receipts':
+        final matching = receipts.reversed.where((r) {
+          final date = r['receivedDate'] as String;
+          return date.compareTo(query['from']!) >= 0 && date.compareTo(query['to']!) <= 0;
+        }).toList();
+        return _json(200, {
+          'from': query['from'],
+          'to': query['to'],
+          'receipts': matching,
+          'totalQuantity': matching.fold<int>(0, (sum, r) => sum + (r['quantity'] as int)),
+        });
+
+      case 'GET /api/v1/stock/movements':
+        final history = movements.reversed
+            .where((m) => m['productId'] == query['productId'])
+            .toList();
+        return _json(200, {
+          'movements': [
+            for (final m in history)
+              {...m, 'product': _summary(products.firstWhere((p) => p['id'] == m['productId']))},
+          ],
+          'total': history.length,
+        });
+
+      case 'POST /api/v1/stock/receipts':
+        if (role != 'admin' && role != 'storekeeper') return forbidden;
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        final product = products.firstWhere((p) => p['id'] == body['productId']);
+        if (body['isOpeningBalance'] == true) {
+          if (role != 'admin') return forbidden;
+          if (movements.any((m) => m['productId'] == product['id'])) {
+            return _error(
+              409,
+              'OPENING_BALANCE_NOT_ALLOWED',
+              'This product already has stock records. Use a stock adjustment to correct its '
+                  'balance.',
+            );
+          }
+        }
+        final receipt = _recordReceipt(product, body);
+        return _json(201, {'receipt': receipt, 'quantityOnHand': onHand(product['id'])});
+
+      case 'POST /api/v1/stock/adjustments':
+        if (role != 'admin') return forbidden;
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        final delta = body['quantityDelta'] as int;
+        final before = onHand(body['productId']);
+        if (before + delta < 0) {
+          return _error(
+            409,
+            'INSUFFICIENT_STOCK',
+            'Only $before in stock, so ${-delta} cannot be removed.',
+          );
+        }
+        _addMovement(
+          body['productId'],
+          body['type'] as String,
+          delta,
+          toApiDate(today()),
+          reason: body['reason'] as String?,
+        );
+        return _json(201, {'movement': movements.last, 'quantityOnHand': before + delta});
     }
     return _error(404, 'NOT_FOUND', 'Not found');
   }
@@ -206,6 +369,7 @@ Future<TestApp> pumpSnackify(
   final services = AppServices(
     checkBackendHealth: () async => apiHealthy,
     products: ProductsRepository(api),
+    stock: StockRepository(api),
   );
 
   await tester.pumpWidget(SnackifyApp(auth: auth, services: services));

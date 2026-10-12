@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { createTestPools, PG, pgErrorOf } from './db-test-helpers.js';
+import { createTestPools, PG, pgErrorOf, resetDatabase } from './db-test-helpers.js';
 
 const pools = createTestPools();
 
@@ -36,7 +36,7 @@ function insertProduct(overrides: Partial<typeof potatoCrispsBbqSmall> = {}) {
 }
 
 describe('products table', () => {
-  beforeEach(() => pools.owner.query('DELETE FROM products'));
+  beforeEach(() => resetDatabase(pools.owner));
   afterAll(() => pools.close());
 
   it('stores a product variation with safe defaults', async () => {
