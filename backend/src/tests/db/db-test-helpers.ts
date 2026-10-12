@@ -1,6 +1,12 @@
+import type { Express } from 'express';
 import pg from 'pg';
+import request from 'supertest';
+import { createApp } from '../../app.js';
 import { loadDotEnv, readDatabaseUrl } from '../../config/env.js';
 import { runMigrations } from '../../database/migrations.js';
+import type { Role } from '../../modules/auth/roles.js';
+import { createUser, type StaffUser } from '../../modules/users/users.service.js';
+import { testConfig } from '../test-config.js';
 
 loadDotEnv();
 
@@ -41,6 +47,48 @@ export async function pgErrorOf(query: Promise<unknown>): Promise<pg.DatabaseErr
     return error as pg.DatabaseError;
   }
   throw new Error('Expected the query to fail, but it succeeded.');
+}
+
+/** The full app on the real test database. Create a new one per test for a fresh rate limiter. */
+export function createDbTestApp(appPool: pg.Pool): Express {
+  return createApp(testConfig, { db: appPool, checkDatabase: async () => true });
+}
+
+/** Removes all staff accounts, sessions and audit entries (as the owner, who may delete). */
+export async function resetAuthTables(ownerPool: pg.Pool): Promise<void> {
+  await ownerPool.query('DELETE FROM audit_logs; DELETE FROM sessions; DELETE FROM users;');
+}
+
+export function createTestUser(
+  appPool: pg.Pool,
+  user: { username: string; fullName?: string; role: Role; password: string },
+): Promise<StaffUser> {
+  return createUser(
+    appPool,
+    { fullName: `Test ${user.username}`, ...user },
+    { actorUserId: null, via: 'cli' },
+  );
+}
+
+/** Signs in through the API and returns the session token. */
+export async function signIn(app: Express, username: string, password: string): Promise<string> {
+  const response = await request(app).post('/api/v1/auth/login').send({ username, password });
+  if (response.status !== 200) {
+    throw new Error(`Sign-in failed: ${response.status} ${JSON.stringify(response.body)}`);
+  }
+  return response.body.token as string;
+}
+
+export async function auditEntries(ownerPool: pg.Pool, action: string) {
+  const { rows } = await ownerPool.query<{
+    actor_user_id: string | null;
+    entity_id: string | null;
+    details: Record<string, unknown>;
+  }>(
+    'SELECT actor_user_id, entity_id, details FROM audit_logs WHERE action = $1 ORDER BY occurred_at',
+    [action],
+  );
+  return rows;
 }
 
 /** PostgreSQL error codes used in assertions. */

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/routing/app_destinations.dart';
 import '../../core/theme/app_theme.dart';
+import '../../features/auth/domain/app_user.dart';
 import '../../features/dashboard/presentation/dashboard_screen.dart';
 import 'api_status_indicator.dart';
 import 'coming_soon_view.dart';
@@ -12,8 +13,15 @@ const double kWideLayoutBreakpoint = 840;
 
 /// App frame: top bar, navigation, and the selected section.
 class AppShell extends StatefulWidget {
-  const AppShell({super.key, required this.checkBackendHealth});
+  const AppShell({
+    super.key,
+    required this.user,
+    required this.onSignOut,
+    required this.checkBackendHealth,
+  });
 
+  final AppUser user;
+  final Future<void> Function() onSignOut;
   final Future<bool> Function() checkBackendHealth;
 
   @override
@@ -36,6 +44,11 @@ class _AppShellState extends State<AppShell> {
     final navigation = _NavigationList(
       selectedIndex: _selectedIndex,
       onSelected: _onDestinationSelected,
+      user: widget.user,
+      onSignOut: () {
+        _scaffoldKey.currentState?.closeDrawer();
+        widget.onSignOut();
+      },
     );
     final page = _selectedIndex == 0
         ? const DashboardScreen()
@@ -66,10 +79,17 @@ class _AppShellState extends State<AppShell> {
 }
 
 class _NavigationList extends StatelessWidget {
-  const _NavigationList({required this.selectedIndex, required this.onSelected});
+  const _NavigationList({
+    required this.selectedIndex,
+    required this.onSelected,
+    required this.user,
+    required this.onSignOut,
+  });
 
   final int selectedIndex;
   final ValueChanged<int> onSelected;
+  final AppUser user;
+  final VoidCallback onSignOut;
 
   @override
   Widget build(BuildContext context) {
@@ -104,6 +124,17 @@ class _NavigationList extends StatelessWidget {
               onTap: () => onSelected(i),
             ),
           ),
+        const Divider(height: 24),
+        ListTile(
+          leading: CircleAvatar(child: Text(user.initials)),
+          title: Text(user.fullName, overflow: TextOverflow.ellipsis),
+          subtitle: Text(user.role.label),
+        ),
+        ListTile(
+          leading: const Icon(Icons.logout),
+          title: const Text('Sign out'),
+          onTap: onSignOut,
+        ),
       ],
     );
   }

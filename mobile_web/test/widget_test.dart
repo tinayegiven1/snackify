@@ -1,22 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:snackify/app.dart';
 
-const _phone = Size(390, 844);
-const _desktop = Size(1280, 800);
-
-Future<void> _pumpApp(WidgetTester tester, {required Size size, bool apiHealthy = true}) async {
-  tester.view.physicalSize = size;
-  tester.view.devicePixelRatio = 1.0;
-  addTearDown(tester.view.reset);
-
-  await tester.pumpWidget(SnackifyApp(checkBackendHealth: () async => apiHealthy));
-  await tester.pumpAndSettle();
-}
+import 'helpers/test_app.dart';
 
 void main() {
   testWidgets('shows the dashboard with a clear sample-data notice', (tester) async {
-    await _pumpApp(tester, size: _phone);
+    await pumpSnackify(tester, signedIn: true);
 
     expect(find.widgetWithText(AppBar, 'Dashboard'), findsOneWidget);
     expect(find.textContaining('Sample data only'), findsOneWidget);
@@ -26,7 +15,7 @@ void main() {
   });
 
   testWidgets('phone layout uses a drawer and a low-stock list', (tester) async {
-    await _pumpApp(tester, size: _phone);
+    await pumpSnackify(tester, signedIn: true);
 
     expect(find.byType(DataTable), findsNothing);
     expect(find.text('Customers'), findsNothing);
@@ -42,10 +31,11 @@ void main() {
   });
 
   testWidgets('wide layout uses a permanent sidebar and a low-stock table', (tester) async {
-    await _pumpApp(tester, size: _desktop);
+    await pumpSnackify(tester, signedIn: true, size: desktopSize);
 
     expect(find.byTooltip('Open navigation menu'), findsNothing);
     expect(find.byType(DataTable), findsOneWidget);
+    expect(find.text('Tendai Moyo'), findsOneWidget);
 
     await tester.tap(find.text('Invoices'));
     await tester.pumpAndSettle();
@@ -55,14 +45,39 @@ void main() {
   });
 
   testWidgets('shows API online when the backend health check passes', (tester) async {
-    await _pumpApp(tester, size: _phone, apiHealthy: true);
+    await pumpSnackify(tester, signedIn: true, apiHealthy: true);
 
     expect(find.text('API online'), findsOneWidget);
   });
 
   testWidgets('shows API offline when the backend cannot be reached', (tester) async {
-    await _pumpApp(tester, size: _phone, apiHealthy: false);
+    await pumpSnackify(tester, signedIn: true, apiHealthy: false);
 
     expect(find.text('API offline'), findsOneWidget);
+  });
+
+  testWidgets('login screen fits a small phone without overflowing', (tester) async {
+    await pumpSnackify(tester, size: const Size(320, 568));
+
+    expect(find.text('Sign in to Snackify'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  // Layout overflows are reported as test failures, so this checks every signed-in screen.
+  testWidgets('signed-in screens fit a small phone without overflowing', (tester) async {
+    await pumpSnackify(tester, signedIn: true, size: const Size(320, 568));
+    expect(find.widgetWithText(AppBar, 'Dashboard'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Open navigation menu'));
+    await tester.pumpAndSettle();
+    // On a short screen the menu scrolls; "Sign out" must still be reachable.
+    final menu = find.descendant(of: find.byType(Drawer), matching: find.byType(Scrollable));
+    await tester.scrollUntilVisible(find.text('Sign out'), 100, scrollable: menu);
+    expect(find.text('Sign out'), findsOneWidget);
+
+    await tester.scrollUntilVisible(find.text('Customers'), -100, scrollable: menu);
+    await tester.tap(find.text('Customers'));
+    await tester.pumpAndSettle();
+    expect(find.text('Customers is coming soon'), findsOneWidget);
   });
 }

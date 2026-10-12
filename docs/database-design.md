@@ -55,11 +55,55 @@ API role cannot delete products; they are deactivated instead.
 Transactions (dispatch lines, invoice lines) will store their own price and currency snapshot, so
 changing `default_price` never rewrites history.
 
+### `users`: staff accounts (spec 5 and 6.1)
+
+| Column          | Type          | Rules                                                          |
+| --------------- | ------------- | -------------------------------------------------------------- |
+| `id`            | `uuid`        | Primary key                                                    |
+| `username`      | `text`        | Required, unique, lower case: `a-z 0-9 . _ -`, 3–32 chars      |
+| `full_name`     | `text`        | Required, trimmed, 1–100 chars                                 |
+| `role`          | `text`        | `admin`, `storekeeper`, `salesperson` or `accounts`            |
+| `password_hash` | `text`        | Must be an Argon2id hash (`$argon2id$...`); plain text is rejected |
+| `is_active`     | `boolean`     | Defaults to `true`. Inactive accounts cannot sign in           |
+| `created_at`    | `timestamptz` | Set on insert                                                  |
+| `updated_at`    | `timestamptz` | Updated automatically on every change                          |
+
+The API role cannot delete accounts; they are deactivated instead, so the audit log always
+points at a real person. Each user has one role.
+
+### `sessions`: signed-in devices
+
+| Column       | Type          | Rules                                                    |
+| ------------ | ------------- | -------------------------------------------------------- |
+| `id`         | `uuid`        | Primary key                                              |
+| `user_id`    | `uuid`        | References `users`                                       |
+| `token_hash` | `bytea`       | SHA-256 of the session token (32 bytes), unique          |
+| `created_at` | `timestamptz` | When the user signed in                                  |
+| `expires_at` | `timestamptz` | 12 hours after sign-in; must be after `created_at`       |
+| `revoked_at` | `timestamptz` | Set on sign-out, password change/reset or deactivation   |
+
+The token itself is never stored, so a copy of the database cannot be used to sign in.
+
+### `audit_logs`: who did what, and when (append-only)
+
+| Column          | Type          | Rules                                                          |
+| --------------- | ------------- | -------------------------------------------------------------- |
+| `id`            | `uuid`        | Primary key                                                    |
+| `occurred_at`   | `timestamptz` | When it happened                                               |
+| `actor_user_id` | `uuid`        | Who did it; `NULL` for the setup command or unknown usernames  |
+| `action`        | `text`        | e.g. `auth.login`, `auth.login_failed`, `user.created`         |
+| `entity_type`   | `text`        | What was affected, e.g. `user`                                 |
+| `entity_id`     | `uuid`        | Which record was affected                                      |
+| `details`       | `jsonb`       | Extra facts, e.g. `{"changes": {"role": {"from": "accounts", "to": "admin"}}}` |
+
+The API role can add entries but cannot change or delete them. Passwords and tokens are never
+written to the log.
+
 ## Planned tables
 
-Added by later stages, each with its own migration: `users`, `audit_logs`, `customers`,
-`stock_batches`, `stock_movements` (append-only ledger), `dispatches`, `dispatch_items`,
-`invoices`, `invoice_items`, `payments`, `payment_allocations`, `forecasts`.
+Added by later stages, each with its own migration: `customers`, `stock_batches`,
+`stock_movements` (append-only ledger), `dispatches`, `dispatch_items`, `invoices`,
+`invoice_items`, `payments`, `payment_allocations`, `forecasts`.
 
 ## Migrations
 

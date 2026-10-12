@@ -15,7 +15,7 @@ try {
 
 const pool = createPool(config.databaseUrl);
 const checkDatabase = databaseHealthCheck(pool);
-const app = createApp(config, { checkDatabase });
+const app = createApp(config, { db: pool, checkDatabase });
 
 const server = app.listen(config.port, async (error?: Error) => {
   if (error) {

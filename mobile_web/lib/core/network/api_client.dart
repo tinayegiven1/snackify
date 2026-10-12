@@ -1,20 +1,29 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 /// Thrown when the API cannot be reached or returns an error response.
 class ApiException implements Exception {
-  ApiException(this.message, {this.statusCode});
+  ApiException(this.message, {this.statusCode, this.code = 'UNKNOWN'});
 
+  /// Shown to the user. The backend writes these in plain language.
   final String message;
   final int? statusCode;
 
+  /// The backend's error code, e.g. INVALID_CREDENTIALS, or NETWORK_ERROR when unreachable.
+  final String code;
+
+  bool get isNetworkError => code == networkErrorCode;
+
+  static const networkErrorCode = 'NETWORK_ERROR';
+
   @override
-  String toString() => 'ApiException($statusCode): $message';
+  String toString() => 'ApiException($statusCode, $code): $message';
 }
 
 /// Thin wrapper around HTTP calls to the Snackify backend.
-/// UI widgets should not call this directly; use a feature service instead.
+/// UI widgets should not call this directly; use a feature repository or service instead.
 class ApiClient {
   ApiClient({required String baseUrl, http.Client? httpClient})
     : _baseUrl = baseUrl,
@@ -23,45 +32,82 @@ class ApiClient {
   final String _baseUrl;
   final http.Client _http;
 
-  static const _timeout = Duration(seconds: 5);
+  static const _timeout = Duration(seconds: 10);
 
-  Future<Map<String, dynamic>> getJson(String path) async {
-    final http.Response response;
-    try {
-      response = await _http
-          .get(Uri.parse('$_baseUrl$path'), headers: {'Accept': 'application/json'})
-          .timeout(_timeout);
-    } on Exception catch (error) {
-      throw ApiException('Could not reach the Snackify API: $error');
+  /// Session token sent as "Authorization: Bearer ..." while signed in.
+  String? authToken;
+
+  /// Called when a signed-in request is rejected with 401 (session expired, signed out
+  /// elsewhere, or account deactivated).
+  VoidCallback? onSessionExpired;
+
+  Future<Map<String, dynamic>> getJson(String path) => _send('GET', path);
+
+  Future<Map<String, dynamic>> postJson(String path, [Map<String, Object?>? body]) =>
+      _send('POST', path, body);
+
+  Future<Map<String, dynamic>> _send(String method, String path, [Object? body]) async {
+    final request = http.Request(method, Uri.parse('$_baseUrl$path'))
+      ..headers['Accept'] = 'application/json';
+    if (body != null) {
+      request.headers['Content-Type'] = 'application/json';
+      request.body = jsonEncode(body);
+    }
+    final token = authToken;
+    if (token != null) {
+      request.headers['Authorization'] = 'Bearer $token';
     }
 
-    final Object? body;
+    final http.Response response;
     try {
-      body = jsonDecode(response.body);
+      response = await _http.send(request).then(http.Response.fromStream).timeout(_timeout);
+    } on Exception {
+      throw ApiException(
+        'Cannot reach the Snackify server. Check your connection and try again.',
+        code: ApiException.networkErrorCode,
+      );
+    }
+
+    if (response.statusCode == 401 && token != null) {
+      onSessionExpired?.call();
+    }
+
+    // 204 No Content and other empty successes.
+    if (response.body.isEmpty && response.statusCode < 300) {
+      return const {};
+    }
+
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(response.body);
     } on FormatException {
-      throw ApiException('The API returned an invalid response.', statusCode: response.statusCode);
+      throw ApiException('The server sent an invalid response.', statusCode: response.statusCode);
     }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(_errorMessage(body), statusCode: response.statusCode);
+      throw _errorFrom(decoded, response.statusCode);
     }
-    if (body is! Map<String, dynamic>) {
+    if (decoded is! Map<String, dynamic>) {
       throw ApiException(
-        'The API returned an unexpected response.',
+        'The server sent an unexpected response.',
         statusCode: response.statusCode,
       );
     }
-    return body;
+    return decoded;
   }
 
   /// Reads the backend's standard error shape: { "error": { "code", "message" } }.
-  String _errorMessage(Object? body) {
+  ApiException _errorFrom(Object? body, int statusCode) {
     if (body is Map<String, dynamic>) {
       final error = body['error'];
       if (error is Map<String, dynamic> && error['message'] is String) {
-        return error['message'] as String;
+        return ApiException(
+          error['message'] as String,
+          statusCode: statusCode,
+          code: error['code'] is String ? error['code'] as String : 'UNKNOWN',
+        );
       }
     }
-    return 'The API request failed.';
+    return ApiException('The request failed (HTTP $statusCode).', statusCode: statusCode);
   }
 }

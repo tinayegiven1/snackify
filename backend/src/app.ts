@@ -1,13 +1,17 @@
 import cors from 'cors';
 import express, { type Express } from 'express';
 import helmet from 'helmet';
+import type pg from 'pg';
 import type { AppConfig } from './config/env.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { notFoundHandler } from './middleware/not-found.js';
+import { authRouter } from './modules/auth/auth.routes.js';
 import { healthRouter, type DatabaseCheck } from './modules/health/health.routes.js';
+import { usersRouter } from './modules/users/users.routes.js';
 
 /** Things the app needs from outside, passed in so tests can replace them. */
 export interface AppDependencies {
+  db: pg.Pool;
   checkDatabase: DatabaseCheck;
 }
 
@@ -20,6 +24,8 @@ export function createApp(config: AppConfig, deps: AppDependencies): Express {
   app.use(express.json({ limit: '100kb' }));
 
   app.use('/api/v1/health', healthRouter(config, deps.checkDatabase));
+  app.use('/api/v1/auth', authRouter(deps.db));
+  app.use('/api/v1/users', usersRouter(deps.db));
 
   app.use(notFoundHandler);
   app.use(errorHandler);

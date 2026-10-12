@@ -26,6 +26,36 @@ describe('API database role (least privilege)', () => {
     expect(error.code).toBe(PG.insufficientPrivilege);
   });
 
+  it('can add audit log entries but never change or delete them', async () => {
+    await pools.app.query(`INSERT INTO audit_logs (action) VALUES ('auth.login_failed')`);
+
+    expect(
+      (await pgErrorOf(pools.app.query(`UPDATE audit_logs SET action = 'auth.login'`))).code,
+    ).toBe(PG.insufficientPrivilege);
+    expect((await pgErrorOf(pools.app.query('DELETE FROM audit_logs'))).code).toBe(
+      PG.insufficientPrivilege,
+    );
+  });
+
+  it('cannot delete staff accounts (they are deactivated instead)', async () => {
+    expect((await pgErrorOf(pools.app.query('DELETE FROM users'))).code).toBe(
+      PG.insufficientPrivilege,
+    );
+  });
+
+  it('cannot store a password that is not an Argon2id hash', async () => {
+    const error = await pgErrorOf(
+      pools.app.query(
+        `INSERT INTO users (username, full_name, role, password_hash)
+         VALUES ('plain', 'Plain Text', 'admin', 'my-password')`,
+      ),
+    );
+    expect(error).toMatchObject({
+      code: PG.checkViolation,
+      constraint: 'users_password_hash_argon2id',
+    });
+  });
+
   it('uses UTC for timestamps', async () => {
     const { rows } = await pools.app.query<{ TimeZone: string }>('SHOW timezone');
     expect(rows[0]?.TimeZone).toBe('UTC');

@@ -5,15 +5,16 @@ snacks business. One backend API and database serve a Flutter web app and a Flut
 
 The full product specification is in [Snackify_Claude_Code_Spec.md](Snackify_Claude_Code_Spec.md).
 
-## Current status: Stage 2 (database)
+## Current status: Stage 3 (sign-in and staff accounts)
 
-| Part                                   | Status                                                              |
-| -------------------------------------- | ------------------------------------------------------------------- |
-| Backend (Node.js, Express, TypeScript) | Health endpoint with database check, config validation, tests       |
-| PostgreSQL                             | Local dev + test databases, least-privilege roles, migrations, seed |
-| Database tables                        | `products` (first migration). More tables arrive with each feature  |
-| Flutter app (web + Android)            | Responsive dashboard shell with **sample data only**                |
-| Login, stock, dispatches, billing      | Not started (navigation shows "coming soon" pages)                  |
+| Part                                   | Status                                                                  |
+| -------------------------------------- | ----------------------------------------------------------------------- |
+| Backend (Node.js, Express, TypeScript) | Health check, sign-in/out, roles, staff account API, audit log, tests   |
+| PostgreSQL                             | Dev + test databases, least-privilege roles, migrations, seed           |
+| Database tables                        | `products`, `users`, `sessions`, `audit_logs`                           |
+| Flutter app (web + Android)            | Login screen, session restore, sign-out; dashboard with **sample data** |
+| Staff management screens               | Not yet: use the API or `npm run user:create`                           |
+| Stock, dispatches, billing             | Not started (navigation shows "coming soon" pages)                      |
 
 ## Project structure
 
@@ -24,11 +25,11 @@ snackify/
 │   │   ├── app.ts           Builds the Express app (used by server and tests)
 │   │   ├── server.ts        Starts the HTTP server and database pool
 │   │   ├── config/          Environment variable validation
-│   │   ├── database/        Connection pool, health check, migration runner
-│   │   ├── middleware/      404 and error handlers
-│   │   ├── modules/health/  GET /api/v1/health
-│   │   ├── scripts/         db:migrate and db:seed commands
-│   │   ├── utils/           AppError, JSON logger
+│   │   ├── database/        Connection pool, transactions, migration runner
+│   │   ├── middleware/      Sign-in and role checks, 404 and error handlers
+│   │   ├── modules/         auth, users, audit, health
+│   │   ├── scripts/         db:migrate, db:seed and user:create commands
+│   │   ├── utils/           AppError, validation, JSON logger
 │   │   └── tests/           Unit tests; tests/db/ = tests against PostgreSQL
 │   └── .env.example
 ├── database/
@@ -39,7 +40,7 @@ snackify/
 │   ├── lib/
 │   │   ├── core/            config, network (API client), routing, theme
 │   │   ├── shared/widgets/  app shell, API status chip, logo
-│   │   └── features/dashboard/
+│   │   └── features/        auth (login, session), dashboard
 │   ├── test/
 │   └── assets/images/
 └── docs/                    api-documentation.md, database-design.md
@@ -124,6 +125,37 @@ npm install
 npm run db:migrate
 npm run db:seed
 ```
+
+### Create the first admin account
+
+Run this once in a terminal, with your own username and name. It asks for the password twice
+and does not show it while you type (the password is never accepted on the command line, so
+it cannot end up in your shell history):
+
+```powershell
+npm run user:create -- --username your.name --name "Your Full Name" --role admin
+```
+
+The same command creates other staff accounts, with `--role storekeeper`, `salesperson` or
+`accounts`. Once signed in, an admin can also manage staff through the API (see
+[docs/api-documentation.md](docs/api-documentation.md#staff-accounts-admins-only)); screens for
+this come in a later stage.
+
+### Roles and sign-in rules
+
+| Role          | Intended for (spec section 5)                                   |
+| ------------- | --------------------------------------------------------------- |
+| `admin`       | Everything, including staff accounts. Allowed on every endpoint |
+| `storekeeper` | Receiving stock, viewing stock, barcodes, preparing dispatches  |
+| `salesperson` | Customers and creating dispatches                               |
+| `accounts`    | Invoices, payments, balances and financial reports              |
+
+- Passwords: at least 10 characters (a short sentence is ideal), stored as Argon2id hashes.
+- A sign-in lasts 12 hours. After 10 wrong passwords from one network address in 15 minutes,
+  sign-in is paused for 15 minutes.
+- Deactivating an account or resetting its password signs that person out everywhere at once.
+- Sign-ins, failed attempts, sign-outs and every staff-account change are recorded in the
+  `audit_logs` table.
 
 ### Run in development (auto-restarts on file changes)
 
@@ -236,9 +268,13 @@ start takes about a minute while Flutter compiles; later starts are faster.
 
 ### Verify it is working
 
-The chip in the top-right corner shows **API online** when the app can reach the backend and
-**API offline** when it cannot. Tap it to check again. Resize the browser window: below 840 px
-wide, navigation moves into a menu drawer; wider screens show a permanent sidebar.
+1. The app opens on the **Sign in to Snackify** screen. Sign in with the admin account you
+   created. A wrong password shows "Incorrect username or password."
+2. The dashboard opens. Your name and role are at the bottom of the menu, with **Sign out**.
+3. Reload the page (or restart the app): you stay signed in until you sign out or 12 hours pass.
+4. The chip in the top-right corner shows **API online** when the app can reach the backend.
+5. Resize the browser window: below 840 px wide, navigation moves into a menu drawer; wider
+   screens show a permanent sidebar.
 
 ### Checks
 
@@ -250,12 +286,19 @@ dart format .
 
 ---
 
-## Known limitations (Stage 2)
+## Known limitations (Stage 3)
 
 - The Flutter dashboard still shows **sample data only**; it does not read the database yet.
+- There are no staff-management screens yet; use `npm run user:create` or the API.
+- Users are not forced to change a password an admin has reset.
+- The sign-in attempt counter is kept in memory: it resets when the backend restarts and
+  assumes a single backend server (fine for now; revisit before scaling out).
+- On the web, the session token is kept in the browser's storage, which cannot be fully
+  protected from malicious scripts. Sessions expire after 12 hours and can be ended from the
+  server at any time.
 - If the database is down, the app's status chip shows **API offline**, because the health
   endpoint then answers 503.
-- No login or role permissions yet. Do not deploy this stage to the internet.
+- Not ready to deploy to the internet yet (needs HTTPS and production hosting).
 - The backend allows browser requests only from the origins in `CORS_ORIGINS`.
 - Plain HTTP is only for local development. Production must use HTTPS.
 - **Keep the project out of OneDrive and other sync folders.** Sync tools lock files in

@@ -10,7 +10,7 @@ describe('database health check (real PostgreSQL)', () => {
   afterAll(() => pool.end());
 
   it('reports the database as up through GET /api/v1/health', async () => {
-    const app = createApp(testConfig, { checkDatabase: databaseHealthCheck(pool) });
+    const app = createApp(testConfig, { db: pool, checkDatabase: databaseHealthCheck(pool) });
     const response = await request(app).get('/api/v1/health');
 
     expect(response.status).toBe(200);
