@@ -10,6 +10,12 @@ export interface AppConfig {
   databaseUrl: string;
   /** IANA time zone that decides what "today" is for business dates, e.g. Africa/Harare. */
   businessTimezone: string;
+  /** First day of the billing week (1 = Monday ... 7 = Sunday). */
+  billingWeekStartsOn: number;
+  /** ISO 4217 code of the currency prices are in, stored on every invoice, e.g. USD. */
+  baseCurrency: string;
+  /** Printed at the top of invoices. */
+  business: { name: string; contact: string | null };
 }
 
 /** Loads backend/.env for local development. Real environment variables take precedence. */
@@ -63,7 +69,20 @@ const envSchema = z.object({
       }
     }, 'Must be a time zone name such as Africa/Harare')
     .default('Africa/Harare'),
+  BILLING_WEEK_STARTS_ON: z
+    .enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'], {
+      error: 'Must be a day of the week, e.g. monday',
+    })
+    .default('monday'),
+  BASE_CURRENCY: z
+    .string()
+    .regex(/^[A-Z]{3}$/, 'Must be a 3-letter currency code such as USD')
+    .default('USD'),
+  BUSINESS_NAME: z.string().trim().min(1).max(100).default('Snackify'),
+  BUSINESS_CONTACT: z.string().trim().max(200).optional(),
 });
+
+const WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
 function invalidConfig(error: z.ZodError, path: string[] = []): Error {
   const problems = error.issues
@@ -89,6 +108,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     corsOrigins: result.data.CORS_ORIGINS,
     databaseUrl: result.data.DATABASE_URL,
     businessTimezone: result.data.BUSINESS_TIMEZONE,
+    billingWeekStartsOn: WEEKDAYS.indexOf(result.data.BILLING_WEEK_STARTS_ON) + 1,
+    baseCurrency: result.data.BASE_CURRENCY,
+    business: { name: result.data.BUSINESS_NAME, contact: result.data.BUSINESS_CONTACT || null },
   };
 }
 

@@ -55,9 +55,41 @@ class ApiClient {
   Future<Map<String, dynamic>> putJson(String path, Map<String, Object?> body) =>
       _send('PUT', path, body);
 
+  /// Downloads a file, e.g. an invoice PDF. Errors are reported like those of JSON requests.
+  Future<Uint8List> getBytes(String path, {String accept = 'application/octet-stream'}) async {
+    final response = await _request('GET', path, accept: accept);
+    return response.bodyBytes;
+  }
+
   Future<Map<String, dynamic>> _send(String method, String path, [Object? body]) async {
-    final request = http.Request(method, Uri.parse('$_baseUrl$path'))
-      ..headers['Accept'] = 'application/json';
+    final response = await _request(method, path, body: body);
+
+    // 204 No Content and other empty successes.
+    if (response.body.isEmpty) return const {};
+
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(response.body);
+    } on FormatException {
+      throw ApiException('The server sent an invalid response.', statusCode: response.statusCode);
+    }
+    if (decoded is! Map<String, dynamic>) {
+      throw ApiException(
+        'The server sent an unexpected response.',
+        statusCode: response.statusCode,
+      );
+    }
+    return decoded;
+  }
+
+  /// Sends a request and returns the successful response; throws [ApiException] otherwise.
+  Future<http.Response> _request(
+    String method,
+    String path, {
+    Object? body,
+    String accept = 'application/json',
+  }) async {
+    final request = http.Request(method, Uri.parse('$_baseUrl$path'))..headers['Accept'] = accept;
     if (body != null) {
       request.headers['Content-Type'] = 'application/json';
       request.body = jsonEncode(body);
@@ -81,28 +113,16 @@ class ApiClient {
       onSessionExpired?.call();
     }
 
-    // 204 No Content and other empty successes.
-    if (response.body.isEmpty && response.statusCode < 300) {
-      return const {};
-    }
-
-    final Object? decoded;
-    try {
-      decoded = jsonDecode(response.body);
-    } on FormatException {
-      throw ApiException('The server sent an invalid response.', statusCode: response.statusCode);
-    }
-
     if (response.statusCode < 200 || response.statusCode >= 300) {
+      Object? decoded;
+      try {
+        decoded = jsonDecode(response.body);
+      } on FormatException {
+        decoded = null; // Not the backend's JSON error shape; report the HTTP status instead.
+      }
       throw _errorFrom(decoded, response.statusCode);
     }
-    if (decoded is! Map<String, dynamic>) {
-      throw ApiException(
-        'The server sent an unexpected response.',
-        statusCode: response.statusCode,
-      );
-    }
-    return decoded;
+    return response;
   }
 
   /// Reads the backend's standard error shape:

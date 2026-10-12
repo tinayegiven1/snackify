@@ -31,3 +31,13 @@ DateTime today() {
   final now = DateTime.now();
   return DateTime(now.year, now.month, now.day);
 }
+
+/// A period with both dates included -> "5 Oct – 11 Oct 2026" (the year once when both
+/// dates share it), or "12 Oct 2026" for a single day.
+String formatApiPeriod(String from, String to) {
+  if (from == to) return formatApiDate(from);
+  final start = DateTime.parse(from);
+  final end = formatApiDate(to);
+  if (start.year != DateTime.parse(to).year) return '${formatApiDate(from)} – $end';
+  return '${start.day} ${_months[start.month - 1]} – $end';
+}

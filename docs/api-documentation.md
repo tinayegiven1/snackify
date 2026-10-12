@@ -622,6 +622,9 @@ cannot be confirmed (**409** `DISPATCH_DATE_IN_FUTURE`).
 { "reason": "Delivered to the wrong shop" }
 ```
 
+A dispatch that is on an invoice cannot be reversed (**409** `DISPATCH_INVOICED`): void the draft
+invoice first; an issued invoice will be corrected with a credit note (a later stage).
+
 ### `GET /api/v1/dispatches`
 
 Query: optional `status` (`draft`, `confirmed`, `cancelled`, `reversed`), `customerId`, `from`,
@@ -650,3 +653,176 @@ default 50), `offset`. Newest first.
 ### `GET /api/v1/dispatches/:id`
 
 **200 OK** with `{ "dispatch": { … } }` as above.
+
+## Invoices
+
+Invoices bill customers for confirmed dispatches (spec 6.8): **draft → issued**, or
+**draft → voided**. Accounts staff and admins only; everyone else gets **403**.
+
+**Billing period.** Every endpoint below that takes `from` and `to` (dates, both included)
+defaults to the **last complete billing week** in the business time zone (`BUSINESS_TIMEZONE`,
+default `Africa/Harare`). Weeks start on `BILLING_WEEK_STARTS_ON` (default `monday`), so on any
+day the default period is the previous Monday to Sunday. Give only `from` for a single day.
+A period may be at most 92 days, `to` must not be before `from`, and it cannot end in the future
+(**400** `VALIDATION_ERROR` with the field).
+
+Rules:
+
+- **What is billed.** A draft contains every line of the customer's **confirmed** dispatches
+  dated in the period that is not on another invoice yet. Draft, cancelled and reversed
+  dispatches are never billed.
+- **Nothing is billed twice.** A dispatch line can be on only one invoice (enforced by a unique
+  constraint), and creating a draft locks the customer and the dispatches, so two people
+  invoicing at the same moment get one draft between them. The other gets **409**
+  `NOTHING_TO_INVOICE` (or, rarely, `ALREADY_INVOICED`); refresh and try again.
+- **A dispatch on an invoice cannot be reversed** (**409** `DISPATCH_INVOICED`).
+- **Issuing** gives the invoice the next number (`INV-000001`, …; voided drafts never use a
+  number, so there are no gaps), today's date as the issue date, and freezes the customer's
+  name, code, phone and address as printed. Issuing again changes nothing.
+- **Issued invoices never change** and cannot be voided (**409** `INVOICE_ISSUED`); the database
+  itself refuses changes. Mistakes will be corrected with credit notes (a later stage).
+- **Voiding a draft** (with a reason) releases its dispatch lines so they can be invoiced again.
+- **Totals.** `total` equals `subtotal`, the sum of the lines (no discounts yet; the database
+  checks this when issuing). `amountPaid` is `"0.00"` and `balanceDue` equals `total` until
+  payments are recorded in a later stage. All amounts are in `currency` (`BASE_CURRENCY`,
+  default `USD`).
+
+Changes are recorded in the audit log: `invoice.issued`, `invoice.voided`.
+
+### `GET /api/v1/invoices/unbilled`
+
+Who still has dispatches to invoice. Query: optional `from`, `to`.
+
+```json
+{
+  "from": "2026-10-05",
+  "to": "2026-10-11",
+  "customers": [
+    {
+      "customer": { "id": "…", "code": "C0001", "name": "Avondale Tuckshop" },
+      "dispatchCount": 2,
+      "lineCount": 3,
+      "subtotal": "7.50"
+    }
+  ]
+}
+```
+
+### `GET /api/v1/invoices/preview`
+
+What a draft for one customer would contain. Changes nothing. Query: `customerId`, optional
+`from`, `to`.
+
+```json
+{
+  "preview": {
+    "customer": { "id": "…", "code": "C0001", "name": "Avondale Tuckshop", "phone": null, "address": "1 Example Road" },
+    "periodFrom": "2026-10-05",
+    "periodTo": "2026-10-11",
+    "currency": "USD",
+    "lines": [
+      {
+        "dispatchItemId": "…",
+        "dispatchNumber": "D000001",
+        "dispatchDate": "2026-10-06",
+        "product": { "id": "…", "sku": "PC-BBQ-S", "description": "Potato Crisps — BBQ — Small" },
+        "quantity": 12,
+        "unitPrice": "0.50",
+        "lineTotal": "6.00"
+      }
+    ],
+    "subtotal": "6.00"
+  }
+}
+```
+
+### `POST /api/v1/invoices` (create a draft for one customer)
+
+```json
+{ "customerId": "…", "from": "2026-10-05", "to": "2026-10-11" }
+```
+
+`from` and `to` are optional. **201 Created** with `{ "invoice": { … } }`:
+
+```json
+{
+  "invoice": {
+    "id": "…",
+    "invoiceNumber": null,
+    "status": "draft",
+    "customer": { "id": "…", "code": "C0001", "name": "Avondale Tuckshop", "phone": null, "address": "1 Example Road" },
+    "periodFrom": "2026-10-05",
+    "periodTo": "2026-10-11",
+    "issueDate": null,
+    "currency": "USD",
+    "lines": [ { "…": "as in the preview" } ],
+    "subtotal": "6.00",
+    "total": "6.00",
+    "amountPaid": "0.00",
+    "balanceDue": "6.00",
+    "createdBy": "Rudo Accounts",
+    "createdAt": "2026-10-12T08:30:00.000Z",
+    "issuedBy": null,
+    "issuedAt": null,
+    "voidReason": null
+  }
+}
+```
+
+For a draft, `customer` shows the customer's current details; for an issued invoice, the details
+printed on it. **409** `NOTHING_TO_INVOICE` when there is nothing left to bill.
+
+### `POST /api/v1/invoices/generate` (the weekly run)
+
+Body (optional): `{ "from": "…", "to": "…" }`. Creates a draft for every customer with unbilled
+dispatches in the period, each in its own transaction. **201 Created** with
+`{ "from", "to", "invoices": [ … ] }`; running it again creates nothing new.
+
+### `POST /api/v1/invoices/:id/issue`
+
+**200 OK** with `{ "invoice": { … } }`, now `issued` with its number and issue date. **409**
+`INVOICE_VOIDED` for a voided draft.
+
+### `POST /api/v1/invoices/:id/void` (drafts only)
+
+```json
+{ "reason": "Wrong period chosen" }
+```
+
+### `GET /api/v1/invoices`
+
+Query: optional `status` (`draft`, `issued`, `voided`), `customerId`, `q` (part of the invoice
+number or customer name), `limit` (1–200, default 50), `offset`. Newest first.
+
+```json
+{
+  "invoices": [
+    {
+      "id": "…",
+      "invoiceNumber": "INV-000001",
+      "status": "issued",
+      "customer": { "id": "…", "code": "C0001", "name": "Avondale Tuckshop" },
+      "periodFrom": "2026-10-05",
+      "periodTo": "2026-10-11",
+      "issueDate": "2026-10-12",
+      "total": "7.50",
+      "currency": "USD",
+      "lineCount": 2
+    }
+  ],
+  "total": 1
+}
+```
+
+### `GET /api/v1/invoices/:id`
+
+**200 OK** with `{ "invoice": { … } }` as above.
+
+### `GET /api/v1/invoices/:id/pdf`
+
+The invoice as an A4 PDF (`Content-Type: application/pdf`, file name `INV-000001.pdf`, or
+`draft-C0001-2026-10-05.pdf` for a draft). It shows the business name and contact line
+(`BUSINESS_NAME`, `BUSINESS_CONTACT`), invoice number, issue date, period, the customer, every
+line (dispatch date and number, product with flavour and size, quantity, unit price, amount),
+subtotal, total, amount paid and balance due. Drafts are headed **DRAFT INVOICE** and say they
+are not a valid invoice; voided drafts are headed **VOIDED DRAFT**.

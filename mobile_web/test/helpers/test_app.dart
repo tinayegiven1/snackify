@@ -14,6 +14,7 @@ import 'package:snackify/features/auth/data/token_store.dart';
 import 'package:snackify/features/auth/presentation/auth_controller.dart';
 import 'package:snackify/features/customers/data/customers_repository.dart';
 import 'package:snackify/features/dispatches/data/dispatches_repository.dart';
+import 'package:snackify/features/invoices/data/invoices_repository.dart';
 import 'package:snackify/features/products/data/products_repository.dart';
 import 'package:snackify/features/stock/data/stock_repository.dart';
 
@@ -174,6 +175,7 @@ class FakeBackend {
     if (path.startsWith('/api/v1/stock')) return _stock(request);
     if (path.startsWith('/api/v1/customers')) return _customers(request);
     if (path.startsWith('/api/v1/dispatches')) return _dispatches(request);
+    if (path.startsWith('/api/v1/invoices')) return _invoices(request);
     return _error(404, 'NOT_FOUND', 'Not found');
   }
 
@@ -609,6 +611,13 @@ class FakeBackend {
 
       case 'reverse':
         if (role != 'admin') return forbidden;
+        if (_billedLineIds.any((lineId) => lineId.startsWith('${d['id']}#'))) {
+          return _error(
+            409,
+            'DISPATCH_INVOICED',
+            'This dispatch is on a draft invoice. Void the draft invoice first, then reverse it.',
+          );
+        }
         for (final line in lines) {
           _addMovement(
             line['productId'],
@@ -621,6 +630,248 @@ class FakeBackend {
         }
         d.addAll({'status': 'reversed', 'reversalReason': body['reason']});
         return _json(200, {'dispatch': _dispatchJson(d)});
+    }
+    return _error(404, 'NOT_FOUND', 'Not found');
+  }
+
+  // ------------------------------------------------------------------ Invoices
+
+  /// Invoices, oldest first.
+  final List<Map<String, Object?>> invoices = [];
+  int _invoiceNumbers = 0;
+
+  /// The last complete Monday-to-Sunday week, the server's default billing period.
+  ({String from, String to}) get lastWeek {
+    final monday = today().subtract(Duration(days: today().weekday - 1));
+    return (
+      from: toApiDate(monday.subtract(const Duration(days: 7))),
+      to: toApiDate(monday.subtract(const Duration(days: 1))),
+    );
+  }
+
+  /// Adds a confirmed dispatch, dated on the Tuesday of [lastWeek] unless [date] is given.
+  /// Stock is not touched.
+  Map<String, Object?> addConfirmedDispatch(
+    String customerCode,
+    Map<String, int> quantities, {
+    String? date,
+  }) => addDraft(customerCode, quantities)
+    ..addAll({
+      'status': 'confirmed',
+      'dispatchDate': date ?? toApiDate(DateTime.parse(lastWeek.from).add(const Duration(days: 1))),
+      'confirmedBy': {'id': 'user-1', 'fullName': 'Tendai Moyo'},
+    });
+
+  /// Every dispatch line already on a draft or issued invoice (voided drafts hold none).
+  Set<String> get _billedLineIds => {
+    for (final invoice in invoices)
+      for (final line in invoice['lines'] as List<Map<String, Object?>>)
+        line['dispatchItemId'] as String,
+  };
+
+  List<Map<String, Object?>> _eligibleLines(Object? customerId, String from, String to) {
+    final billed = _billedLineIds;
+    return [
+      for (final d in dispatches)
+        if (d['customerId'] == customerId &&
+            d['status'] == 'confirmed' &&
+            (d['dispatchDate'] as String).compareTo(from) >= 0 &&
+            (d['dispatchDate'] as String).compareTo(to) <= 0)
+          for (final (index, line) in (d['lines'] as List<Map<String, Object?>>).indexed)
+            if (!billed.contains('${d['id']}#$index')) _invoiceLine(d, index, line),
+    ];
+  }
+
+  Map<String, Object?> _invoiceLine(Map<String, Object?> d, int index, Map<String, Object?> line) {
+    final product = products.firstWhere((p) => p['id'] == line['productId']);
+    return {
+      'dispatchItemId': '${d['id']}#$index',
+      'dispatchNumber': d['dispatchNumber'],
+      'dispatchDate': d['dispatchDate'],
+      'product': {
+        'id': product['id'],
+        'sku': product['sku'],
+        'description': '${product['name']} — ${product['flavour']} — ${product['size']}',
+      },
+      'quantity': line['quantity'],
+      'unitPrice': line['unitPrice'],
+      'lineTotal': formatCents(_lineCents(line)),
+    };
+  }
+
+  String _sumOf(List<Map<String, Object?>> lines) =>
+      formatCents(lines.fold(0, (sum, l) => sum + parseCents(l['lineTotal'] as String)!));
+
+  Map<String, Object?> _customerJson(Object? id) {
+    final c = customers.firstWhere((c) => c['id'] == id);
+    return {
+      'id': c['id'],
+      'code': c['code'],
+      'name': c['name'],
+      'phone': c['phone'],
+      'address': c['address'],
+    };
+  }
+
+  Map<String, Object?> _invoiceJson(Map<String, Object?> v) {
+    final total = v['total'] as String;
+    return {
+      'id': v['id'],
+      'invoiceNumber': v['invoiceNumber'],
+      'status': v['status'],
+      'customer': v['customerSnapshot'] ?? _customerJson(v['customerId']),
+      'periodFrom': v['periodFrom'],
+      'periodTo': v['periodTo'],
+      'issueDate': v['issueDate'],
+      'currency': 'USD',
+      'lines': v['lines'],
+      'subtotal': total,
+      'total': total,
+      'amountPaid': '0.00',
+      'balanceDue': v['status'] == 'voided' ? '0.00' : total,
+      'createdBy': 'Tendai Moyo',
+      'issuedBy': v['status'] == 'issued' ? 'Tendai Moyo' : null,
+      'voidReason': v['voidReason'],
+    };
+  }
+
+  Map<String, Object?> _invoiceSummaryJson(Map<String, Object?> v) {
+    final json = _invoiceJson(v);
+    final customer = json['customer'] as Map<String, Object?>;
+    return {
+      ...json,
+      'customer': {'id': customer['id'], 'code': customer['code'], 'name': customer['name']},
+      'lineCount': (v['lines'] as List).length,
+    };
+  }
+
+  Map<String, Object?>? _createInvoice(Object? customerId, String from, String to) {
+    final lines = _eligibleLines(customerId, from, to);
+    if (lines.isEmpty) return null;
+    final invoice = <String, Object?>{
+      'id': 'invoice-${invoices.length + 1}',
+      'invoiceNumber': null,
+      'status': 'draft',
+      'customerId': customerId,
+      'periodFrom': from,
+      'periodTo': to,
+      'issueDate': null,
+      'lines': lines,
+      'total': _sumOf(lines),
+      'voidReason': null,
+    };
+    invoices.add(invoice);
+    return invoice;
+  }
+
+  http.Response _invoices(http.Request request) {
+    if (role != 'admin' && role != 'accounts') {
+      return _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
+    }
+    final segments = request.url.pathSegments; // api, v1, invoices, [id or word], [action]
+    final id = segments.length > 3 ? segments[3] : null;
+    final action = segments.length > 4 ? segments[4] : null;
+    final query = request.url.queryParameters;
+    final body = request.body.isEmpty
+        ? const <String, dynamic>{}
+        : jsonDecode(request.body) as Map<String, dynamic>;
+    final input = request.method == 'GET' ? query : body;
+    final from = input['from'] as String? ?? lastWeek.from;
+    final to = input['to'] as String? ?? (input['from'] as String? ?? lastWeek.to);
+
+    switch ((request.method, id)) {
+      case ('GET', null):
+        final status = query['status'];
+        final search = (query['q'] ?? '').toLowerCase();
+        final matching = invoices.reversed
+            .where((v) => status == null || v['status'] == status)
+            .map(_invoiceSummaryJson)
+            .where((v) {
+              final name = (v['customer'] as Map<String, Object?>)['name'] as String;
+              return search.isEmpty ||
+                  '${v['invoiceNumber'] ?? ''}'.toLowerCase().contains(search) ||
+                  name.toLowerCase().contains(search);
+            })
+            .toList();
+        return _json(200, {'invoices': matching, 'total': matching.length});
+      case ('GET', 'unbilled'):
+        final unbilled = <Map<String, Object?>>[];
+        for (final c in customers) {
+          final lines = _eligibleLines(c['id'], from, to);
+          if (lines.isEmpty) continue;
+          unbilled.add({
+            'customer': {'id': c['id'], 'code': c['code'], 'name': c['name']},
+            'dispatchCount': lines.map((l) => l['dispatchNumber']).toSet().length,
+            'lineCount': lines.length,
+            'subtotal': _sumOf(lines),
+          });
+        }
+        return _json(200, {'from': from, 'to': to, 'customers': unbilled});
+      case ('GET', 'preview'):
+        final lines = _eligibleLines(query['customerId'], from, to);
+        return _json(200, {
+          'preview': {
+            'customer': _customerJson(query['customerId']),
+            'periodFrom': from,
+            'periodTo': to,
+            'currency': 'USD',
+            'lines': lines,
+            'subtotal': _sumOf(lines),
+          },
+        });
+      case ('POST', null):
+        final invoice = _createInvoice(body['customerId'], from, to);
+        if (invoice == null) {
+          return _error(
+            409,
+            'NOTHING_TO_INVOICE',
+            'This customer has no confirmed, unbilled dispatches in that period.',
+          );
+        }
+        return _json(201, {'invoice': _invoiceJson(invoice)});
+      case ('POST', 'generate'):
+        final created = <Map<String, Object?>>[];
+        for (final c in customers) {
+          final invoice = _createInvoice(c['id'], from, to);
+          if (invoice != null) created.add(_invoiceJson(invoice));
+        }
+        return _json(201, {'from': from, 'to': to, 'invoices': created});
+    }
+
+    final invoice = invoices.firstWhere((v) => v['id'] == id);
+    switch ((request.method, action)) {
+      case ('GET', null):
+        return _json(200, {'invoice': _invoiceJson(invoice)});
+      case ('GET', 'pdf'):
+        return http.Response.bytes(
+          utf8.encode('%PDF-1.3 ${invoice['invoiceNumber'] ?? 'draft'}'),
+          200,
+          headers: {'content-type': 'application/pdf'},
+        );
+      case ('POST', 'issue'):
+        if (invoice['status'] == 'draft') {
+          invoice.addAll({
+            'status': 'issued',
+            'invoiceNumber': 'INV-${(++_invoiceNumbers).toString().padLeft(6, '0')}',
+            'issueDate': toApiDate(today()),
+            'customerSnapshot': _customerJson(invoice['customerId']),
+          });
+        }
+        return _json(200, {'invoice': _invoiceJson(invoice)});
+      case ('POST', 'void'):
+        if (invoice['status'] == 'issued') {
+          return _error(
+            409,
+            'INVOICE_ISSUED',
+            'An issued invoice cannot be voided. Corrections will be made with credit notes.',
+          );
+        }
+        invoice.addAll({
+          'status': 'voided',
+          'voidReason': body['reason'],
+          'lines': <Map<String, Object?>>[],
+        });
+        return _json(200, {'invoice': _invoiceJson(invoice)});
     }
     return _error(404, 'NOT_FOUND', 'Not found');
   }
@@ -647,12 +898,15 @@ class FakeBackend {
 }
 
 class TestApp {
-  TestApp(this.backend, this.api, this.tokenStore, this.auth);
+  TestApp(this.backend, this.api, this.tokenStore, this.auth, this.sharedPdfs);
 
   final FakeBackend backend;
   final ApiClient api;
   final MemoryTokenStore tokenStore;
   final AuthController auth;
+
+  /// PDFs handed to the device to share or download, as (file name, contents).
+  final List<(String, String)> sharedPdfs;
 }
 
 /// Starts the whole app against [FakeBackend]. With [signedIn], a valid session is
@@ -673,18 +927,21 @@ Future<TestApp> pumpSnackify(
   final api = ApiClient(baseUrl: 'http://api.test', httpClient: server.client);
   final store = MemoryTokenStore(signedIn ? server.issueToken() : savedToken);
   final auth = AuthController(AuthRepository(api: api, tokenStore: store));
+  final sharedPdfs = <(String, String)>[];
   final services = AppServices(
     checkBackendHealth: () async => apiHealthy,
     products: ProductsRepository(api),
     stock: StockRepository(api),
     customers: CustomersRepository(api),
     dispatches: DispatchesRepository(api),
+    invoices: InvoicesRepository(api),
+    sharePdf: (bytes, filename) async => sharedPdfs.add((filename, utf8.decode(bytes))),
   );
 
   await tester.pumpWidget(SnackifyApp(auth: auth, services: services));
   auth.restore();
   await tester.pumpAndSettle();
-  return TestApp(server, api, store, auth);
+  return TestApp(server, api, store, auth, sharedPdfs);
 }
 
 /// Fills in the login form and presses "Sign in".

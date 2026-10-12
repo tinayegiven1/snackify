@@ -5,16 +5,16 @@ snacks business. One backend API and database serve a Flutter web app and a Flut
 
 The full product specification is in [Snackify_Claude_Code_Spec.md](Snackify_Claude_Code_Spec.md).
 
-## Current status: Stage 7 (dispatches)
+## Current status: Stage 8 (weekly invoices)
 
 | Part                                   | Status                                                                     |
 | -------------------------------------- | -------------------------------------------------------------------------- |
-| Backend (Node.js, Express, TypeScript) | Health, sign-in, roles, staff, products, stock ledger, customers, dispatches, audit log, tests |
+| Backend (Node.js, Express, TypeScript) | Health, sign-in, roles, staff, products, stock ledger, customers, dispatches, invoices with PDFs, audit log, tests |
 | PostgreSQL                             | Dev + test databases, least-privilege roles, migrations, seed              |
-| Database tables                        | `products`, `users`, `sessions`, `audit_logs`, `stock_batches`, `stock_movements`, `customers`, `dispatches`, `dispatch_items` |
-| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**, **Dispatches** (drafts, confirm, cancel, reverse, credit warnings); dashboard with **sample data** |
+| Database tables                        | `products`, `users`, `sessions`, `audit_logs`, `stock_batches`, `stock_movements`, `customers`, `dispatches`, `dispatch_items`, `invoices`, `invoice_items` |
+| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**, **Dispatches** (drafts, confirm, cancel, reverse, credit warnings), **Invoices** (weekly run, preview, drafts, issue, void, PDF); dashboard with **sample data** |
 | Staff management screens               | Not yet: use the API or `npm run user:create`                              |
-| Invoices, payments, reports            | Not started (navigation shows "coming soon" pages)                         |
+| Payments, reports                      | Not started (navigation shows "coming soon" pages)                         |
 
 ## Project structure
 
@@ -27,7 +27,7 @@ snackify/
 │   │   ├── config/          Environment variable validation
 │   │   ├── database/        Connection pool, transactions, migration runner
 │   │   ├── middleware/      Sign-in and role checks, 404 and error handlers
-│   │   ├── modules/         auth, users, products, stock, customers, dispatches, audit, health
+│   │   ├── modules/         auth, users, products, stock, customers, dispatches, invoices (+ PDF), audit, health
 │   │   ├── scripts/         db:migrate, db:seed and user:create commands
 │   │   ├── utils/           AppError, validation, JSON logger
 │   │   └── tests/           Unit tests; tests/db/ = tests against PostgreSQL
@@ -38,9 +38,9 @@ snackify/
 │   └── seeds/               Sample data for local development (no real data)
 ├── mobile_web/              Flutter app for web and Android
 │   ├── lib/
-│   │   ├── core/            config, network (API client), routing, theme
+│   │   ├── core/            config, network (API client), files (PDF sharing), routing, theme
 │   │   ├── shared/widgets/  app shell, API status chip, logo
-│   │   └── features/        auth, dashboard, products, stock, customers, dispatches
+│   │   └── features/        auth, dashboard, products, stock, customers, dispatches, invoices
 │   ├── test/
 │   └── assets/images/
 └── docs/                    api-documentation.md, database-design.md
@@ -204,6 +204,13 @@ npm start
 | `TEST_DATABASE_URL`           | (required for `test:db`) | `snackify_app` connection to `snackify_test`           |
 | `TEST_MIGRATION_DATABASE_URL` | (required for `test:db`) | `snackify_owner` connection to `snackify_test`         |
 | `BUSINESS_TIMEZONE`           | `Africa/Harare`         | Time zone that decides "today" for business dates       |
+| `BILLING_WEEK_STARTS_ON`      | `monday`                | First day of the billing week (`monday` … `sunday`)     |
+| `BASE_CURRENCY`               | `USD`                   | Currency of prices and invoices (three letters)         |
+| `BUSINESS_NAME`               | `Snackify`              | Printed at the top of invoice PDFs                      |
+| `BUSINESS_CONTACT`            | (none)                  | Optional contact line on invoice PDFs (address, phone)  |
+
+**Billing week:** by default an invoice covers the last complete Monday-to-Sunday week, with
+"today" decided in the `BUSINESS_TIMEZONE` (Africa/Harare). Staff can choose other dates.
 
 Invalid values stop the server at startup with a message naming the variable. Database URLs
 contain passwords, so they are never printed.
@@ -299,7 +306,16 @@ start takes about a minute while Flutter compiles; later starts are faster.
    stock is deducted and the dispatch can no longer be edited. Over the credit limit, the app
    asks first and offers **Confirm anyway**. Admins can **Reverse** a confirmed dispatch (the
    stock comes back); drafts can be cancelled with a reason.
-10. Resize the browser window: below 840 px wide, navigation moves into a menu drawer and
+10. Sign in as an admin or accounts user and open **Invoices**. Use **Weekly invoicing**: it
+   shows last week (Monday to Sunday) and every customer with confirmed dispatches not yet
+   invoiced, with their totals; the arrows and calendar choose another period. Tap a
+   customer to **preview** their invoice (nothing is saved), then **Create draft invoice**,
+   or create drafts for everyone at once. Open a draft to check it, then **Issue invoice**:
+   it gets the next number (INV-000001, …) and today's date and can no longer be changed.
+   A draft can be voided with a reason, which frees its dispatches. **Share PDF** (on a
+   phone) or **Download PDF** (on the web) produces the printable invoice. A dispatch on an
+   invoice can no longer be reversed. Storekeepers and salespeople cannot open invoices.
+11. Resize the browser window: below 840 px wide, navigation moves into a menu drawer and
    products are shown as a list; wider screens show a permanent sidebar and a table.
 
 ### Checks
@@ -312,13 +328,22 @@ dart format .
 
 ---
 
-## Known limitations (Stage 7)
+## Known limitations (Stage 8)
 
 - **Credit warnings count every confirmed dispatch as unpaid**, because payments are not
   recorded yet (a later stage). Warnings will therefore appear earlier than they should once
   customers have paid; the app lets you confirm anyway and records it.
-- No printable dispatch note yet, and the customer history (dispatches, invoices, payments,
-  balance) comes with invoicing.
+- **Invoices show amount paid 0.00** and the full total as balance due until payments are
+  recorded (next stage). There are no discounts or adjustments yet.
+- **Issued invoices cannot be corrected yet.** They are final by design; credit notes, the
+  controlled way to correct them (spec 6.8), come in a later stage. Check drafts before
+  issuing, and void a wrong draft instead.
+- Invoice PDFs use the plain built-in Helvetica font and no logo yet; set `BUSINESS_NAME`
+  and `BUSINESS_CONTACT` in `backend/.env` for the heading.
+- The PDF package used by the app (`printing`) downloads a PDF library from GitHub when
+  building the **Windows desktop** app. Web and Android builds do not need it.
+- No printable dispatch note yet, and no customer history screen (dispatches, invoices,
+  payments, balance) yet.
 - The Flutter dashboard still shows **sample data only**; it does not read the database yet.
 - **Expiry warnings** are not shown yet. Expiry dates are recorded with each receipt, but
   dispatches do not yet record which batch they took stock from, so it is not known which

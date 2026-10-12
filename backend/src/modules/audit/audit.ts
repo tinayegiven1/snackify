@@ -16,13 +16,15 @@ export type AuditAction =
   | 'customer.updated'
   | 'dispatch.confirmed'
   | 'dispatch.cancelled'
-  | 'dispatch.reversed';
+  | 'dispatch.reversed'
+  | 'invoice.issued'
+  | 'invoice.voided';
 
 export interface AuditEntry {
   /** The signed-in user who acted, or null for setup commands and unknown users. */
   actorUserId: string | null;
   action: AuditAction;
-  entityType?: 'user' | 'product' | 'customer' | 'dispatch';
+  entityType?: 'user' | 'product' | 'customer' | 'dispatch' | 'invoice';
   entityId?: string;
   /** Extra facts about the action. Never include passwords, tokens or other secrets. */
   details?: Record<string, unknown>;

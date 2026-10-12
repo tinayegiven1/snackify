@@ -192,9 +192,46 @@ Reversing writes matching `reversal` movements (`reverses_movement_id` → the o
 nothing is reversed twice). Confirming locks the dispatch, the customer and every product on it
 (always in the same order, so two confirmations cannot deadlock) before checking stock.
 
+### `invoices` and `invoice_items` (spec 6.8)
+
+`invoices` is the header: `customer_id`, `status` (`draft`, `issued`, `voided`), the billing
+period (`period_from`, `period_to`, both included), `currency` (three letters, from
+`BASE_CURRENCY`), `subtotal` and `total` (`numeric(14,2)`; `total = subtotal` until discounts
+exist), and who/when for each step: `created_by/at`, `issued_by/at`, `voided_by/at` +
+`void_reason`. `invoice_number` (unique, `INV-000001`… from `invoice_number_seq`) and
+`issue_date` are set when the invoice is issued, so voided drafts never leave gaps in the
+numbering. Issuing also copies the customer's code, name, phone and address into `customer_*`
+columns: the details printed on the invoice, which later customer changes never alter. Check
+constraints require the number, date, snapshot and who/when for issued invoices, and the
+who/when and a reason for voided ones.
+
+`invoice_items` holds one row per billed dispatch line, as a snapshot: `dispatch_item_id`,
+`dispatch_number`, `dispatch_date`, `product_id`, `sku`, `description` (product — flavour —
+size), `quantity`, `unit_price` and `line_total` (checked to equal quantity × unit price).
+
+Indexed by customer and period, by status and issue date, and by invoice (for the lines).
+
+**Never billed twice:** `UNIQUE (dispatch_item_id)` on `invoice_items` means a dispatch line can
+be on only one invoice. Creating a draft also locks the customer (`FOR UPDATE`) and the
+dispatches being billed (`FOR SHARE`, so they cannot be reversed at the same moment). Voiding a
+draft deletes its lines, which releases those dispatch lines to be invoiced again.
+
+**Issued invoices never change, enforced by the database:**
+
+- A trigger on `invoices` refuses any change to an issued or voided invoice. When a draft is
+  issued, it also checks that the subtotal equals the sum of the lines and is above zero
+  (spec 11: invoice totals equal the sum of the lines).
+- A trigger on `invoice_items` refuses inserting, changing or deleting lines unless the invoice
+  is still a draft.
+- The API role has no `DELETE` on `invoices`.
+
+**Billing week:** the API's default period is the last complete week in the business time zone
+(`BUSINESS_TIMEZONE`, default `Africa/Harare`), with weeks starting on `BILLING_WEEK_STARTS_ON`
+(default Monday). Dates are calendar dates (`date`), so no time-zone conversion applies to them.
+
 ## Planned tables
 
-Added by later stages, each with its own migration: `invoices`, `invoice_items`, `payments`,
+Added by later stages, each with its own migration: `credit_notes`, `payments`,
 `payment_allocations`, `forecasts`.
 
 ## Migrations

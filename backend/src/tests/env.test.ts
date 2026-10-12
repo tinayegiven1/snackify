@@ -11,6 +11,9 @@ describe('loadConfig', () => {
       corsOrigins: ['http://localhost:8080'],
       databaseUrl: DATABASE_URL,
       businessTimezone: 'Africa/Harare',
+      billingWeekStartsOn: 1,
+      baseCurrency: 'USD',
+      business: { name: 'Snackify', contact: null },
     });
   });
 

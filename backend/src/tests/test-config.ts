@@ -9,6 +9,9 @@ export const testConfig: AppConfig = {
   // Never connected to by unit tests.
   databaseUrl: 'postgres://unused:unused@localhost:5432/unused',
   businessTimezone: 'Africa/Harare',
+  billingWeekStartsOn: 1,
+  baseCurrency: 'USD',
+  business: { name: 'Snackify Test Foods', contact: '12 Example Road, Harare' },
 };
 
 /**

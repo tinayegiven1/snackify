@@ -9,10 +9,13 @@ import '../../features/customers/presentation/customers_screen.dart';
 import '../../features/dashboard/presentation/dashboard_screen.dart';
 import '../../features/dispatches/domain/dispatch_models.dart';
 import '../../features/dispatches/presentation/dispatches_screen.dart';
+import '../../features/invoices/domain/invoice_models.dart';
+import '../../features/invoices/presentation/invoices_screen.dart';
 import '../../features/products/presentation/products_screen.dart';
 import '../../features/stock/presentation/stock_screen.dart';
 import 'api_status_indicator.dart';
 import 'coming_soon_view.dart';
+import 'message_view.dart';
 import 'snackify_logo.dart';
 
 /// Screen width at which navigation moves from a drawer (phones) to a permanent sidebar.
@@ -73,6 +76,15 @@ class _AppShellState extends State<AppShell> {
         customers: widget.services.customers,
         products: widget.services.products,
         permissions: DispatchPermissions.forRole(widget.user.role),
+      ),
+      'Invoices' when canUseInvoices(widget.user.role) => InvoicesScreen(
+        invoices: widget.services.invoices,
+        sharePdf: widget.services.sharePdf,
+      ),
+      'Invoices' => const MessageView(
+        icon: Icons.lock_outline,
+        title: 'Invoices are for accounts staff',
+        message: 'Ask an administrator or a member of the accounts team for invoice details.',
       ),
       _ => ComingSoonView(title: destination.label),
     };

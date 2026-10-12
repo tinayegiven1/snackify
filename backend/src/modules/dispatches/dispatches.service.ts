@@ -647,6 +647,30 @@ export async function reverseDispatch(
       );
     }
 
+    // A dispatch that has been invoiced cannot simply be reversed: the bill would disagree.
+    const { rows: invoiced } = await client.query<{
+      invoice_number: string | null;
+      status: string;
+    }>(
+      `SELECT v.invoice_number, v.status
+       FROM invoice_items ii
+       JOIN invoices v ON v.id = ii.invoice_id
+       JOIN dispatch_items i ON i.id = ii.dispatch_item_id
+       WHERE i.dispatch_id = $1
+       LIMIT 1`,
+      [id],
+    );
+    if (invoiced[0]) {
+      throw new AppError(
+        409,
+        'DISPATCH_INVOICED',
+        invoiced[0].status === 'issued'
+          ? `This dispatch is on invoice ${invoiced[0].invoice_number}, so it cannot be reversed. ` +
+              'Corrections to issued invoices will be made with credit notes.'
+          : 'This dispatch is on a draft invoice. Void the draft invoice first, then reverse it.',
+      );
+    }
+
     const { rows: movements } = await client.query<{
       id: string;
       product_id: string;

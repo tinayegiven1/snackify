@@ -37,11 +37,11 @@ void main() {
     expect(find.byType(DataTable), findsOneWidget);
     expect(find.text('Tendai Moyo'), findsOneWidget);
 
-    await tester.tap(find.text('Invoices'));
+    await tester.tap(find.text('Payments'));
     await tester.pumpAndSettle();
 
-    expect(find.widgetWithText(AppBar, 'Invoices'), findsOneWidget);
-    expect(find.text('Invoices is coming soon'), findsOneWidget);
+    expect(find.widgetWithText(AppBar, 'Payments'), findsOneWidget);
+    expect(find.text('Payments is coming soon'), findsOneWidget);
   });
 
   testWidgets('shows API online when the backend health check passes', (tester) async {
