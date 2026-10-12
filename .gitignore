@@ -1,0 +1,35 @@
+# --- Secrets: never commit ---
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+key.properties
+
+# --- Backend (Node.js) ---
+node_modules/
+backend/dist/
+coverage/
+*.log
+
+# --- Flutter / Dart ---
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+build/
+mobile_web/android/.gradle/
+mobile_web/android/.kotlin/
+mobile_web/android/local.properties
+mobile_web/android/app/debug/
+mobile_web/android/app/profile/
+mobile_web/android/app/release/
+
+# --- Editors / OS ---
+.claude/settings.local.json
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+desktop.ini

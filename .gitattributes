@@ -1,0 +1,7 @@
+# Keep LF line endings in the repository so formatters agree on Windows and Linux.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.png binary
+*.jpg binary
+*.ico binary

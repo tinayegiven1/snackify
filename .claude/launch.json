@@ -1,0 +1,20 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "backend"],
+      "port": 3000
+    },
+    {
+      "name": "flutter-web",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "cd mobile_web && C:\\src\\flutter\\bin\\flutter.bat run -d web-server --web-port 8080 --web-hostname localhost"
+      ],
+      "port": 8080
+    }
+  ]
+}
