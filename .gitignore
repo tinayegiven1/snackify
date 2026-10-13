@@ -12,6 +12,9 @@ backups/
 *.dump.json
 *.dump.partial
 
+# --- Release builds for staff (APKs): shared directly, not through Git ---
+releases/
+
 # --- Backend (Node.js) ---
 node_modules/
 backend/dist/
