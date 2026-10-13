@@ -39,6 +39,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   late final _barcode = TextEditingController(text: widget.product?.barcode);
   late final _price = TextEditingController(text: widget.product?.defaultPrice);
   late final _reorderLevel = TextEditingController(text: widget.product?.reorderLevel?.toString());
+  late final _safetyStock = TextEditingController(text: '${widget.product?.safetyStock ?? 0}');
   late bool _isActive = widget.product?.isActive ?? true;
 
   bool _saving = false;
@@ -86,7 +87,16 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
 
   @override
   void dispose() {
-    for (final controller in [_name, _flavour, _size, _sku, _barcode, _price, _reorderLevel]) {
+    for (final controller in [
+      _name,
+      _flavour,
+      _size,
+      _sku,
+      _barcode,
+      _price,
+      _reorderLevel,
+      _safetyStock,
+    ]) {
       controller.dispose();
     }
     super.dispose();
@@ -107,6 +117,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       barcode: _barcode.text.trim().isEmpty ? null : _barcode.text.trim(),
       defaultPrice: _price.text.trim(),
       reorderLevel: int.tryParse(_reorderLevel.text.trim()),
+      safetyStock: int.tryParse(_safetyStock.text.trim()) ?? 0,
       isActive: _isActive,
     );
 
@@ -214,6 +225,20 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                       'Reorder level (optional)',
                       helper:
                           'Warn when stock falls to this many packs. Leave empty for no warning.',
+                      required: false,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      validator: (value) => (int.tryParse(value) ?? 1000001) <= 1000000
+                          ? null
+                          : 'Use a whole number up to 1,000,000',
+                    ),
+                    _textField(
+                      'safetyStock',
+                      _safetyStock,
+                      'Safety stock (packs)',
+                      helper:
+                          'Extra packs to keep on top of the forecast when Forecasts suggests how '
+                          'much to receive. 0 for none.',
                       required: false,
                       keyboardType: TextInputType.number,
                       inputFormatters: [FilteringTextInputFormatter.digitsOnly],

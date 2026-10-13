@@ -5,16 +5,15 @@ snacks business. One backend API and database serve a Flutter web app and a Flut
 
 The full product specification is in [Snackify_Claude_Code_Spec.md](Snackify_Claude_Code_Spec.md).
 
-## Current status: Stage 11 (reports)
+## Current status: Stage 12 (sales forecasting)
 
 | Part                                   | Status                                                                     |
 | -------------------------------------- | -------------------------------------------------------------------------- |
-| Backend (Node.js, Express, TypeScript) | Health, sign-in, roles, staff, products, stock ledger, customers, dispatches, invoices with PDFs, payments, balances and statements, barcode lookup and label PDFs, reports (dashboard, sales trends, best sellers, customers, stock received, expiring stock), audit log, tests |
+| Backend (Node.js, Express, TypeScript) | Health, sign-in, roles, staff, products, stock ledger, customers, dispatches, invoices with PDFs, payments, balances and statements, barcode lookup and label PDFs, reports (dashboard, sales trends, best sellers, customers, stock received, expiring stock), sales forecasts with accuracy and restocking suggestions, audit log, tests |
 | PostgreSQL                             | Dev + test databases, least-privilege roles, migrations, seed              |
-| Database tables                        | `products`, `users`, `sessions`, `audit_logs`, `stock_batches`, `stock_movements`, `customers`, `dispatches`, `dispatch_items`, `invoices`, `invoice_items`, `payments`, `payment_allocations` |
-| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**, **Dispatches** (drafts, confirm, cancel, reverse, credit warnings), **Invoices** (weekly run, preview, drafts, issue, void, PDF, paid/overdue), **Payments** (record and allocate payments, balances, account statements), **barcode scanning** (camera on Android; typed or USB scanner on the web) and **barcode labels**, a live **Dashboard** and **Reports** (daily/weekly/monthly sales, best sellers, customer summaries, stock received, expiring stock) |
+| Database tables                        | `products`, `users`, `sessions`, `audit_logs`, `stock_batches`, `stock_movements`, `customers`, `dispatches`, `dispatch_items`, `invoices`, `invoice_items`, `payments`, `payment_allocations`, `forecast_runs`, `forecasts` |
+| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**, **Dispatches** (drafts, confirm, cancel, reverse, credit warnings), **Invoices** (weekly run, preview, drafts, issue, void, PDF, paid/overdue), **Payments** (record and allocate payments, balances, account statements), **barcode scanning** (camera on Android; typed or USB scanner on the web) and **barcode labels**, a live **Dashboard** and **Reports** (daily/weekly/monthly sales, best sellers, customer summaries, stock received, expiring stock), **Forecasts** (next 7 and 30 days per product, how much to receive, accuracy) |
 | Staff management screens               | Not yet: use the API or `npm run user:create`                              |
-| Sales forecasts                        | Not started (next stage)                                                   |
 
 ## Project structure
 
@@ -27,7 +26,7 @@ snackify/
 │   │   ├── config/          Environment variable validation
 │   │   ├── database/        Connection pool, transactions, migration runner
 │   │   ├── middleware/      Sign-in and role checks, 404 and error handlers
-│   │   ├── modules/         auth, users, products, stock, customers, dispatches, invoices (+ PDF), payments, reports, audit, health
+│   │   ├── modules/         auth, users, products, stock, customers, dispatches, invoices (+ PDF), payments, reports, forecasts, audit, health
 │   │   ├── scripts/         db:migrate, db:seed and user:create commands
 │   │   ├── utils/           AppError, validation, JSON logger
 │   │   └── tests/           Unit tests; tests/db/ = tests against PostgreSQL
@@ -40,7 +39,7 @@ snackify/
 │   ├── lib/
 │   │   ├── core/            config, network (API client), files (PDF sharing), scanning (camera/typed barcodes), routing, theme
 │   │   ├── shared/widgets/  app shell, API status chip, logo
-│   │   └── features/        auth, dashboard, products, stock, customers, dispatches, invoices, payments, reports
+│   │   └── features/        auth, dashboard, products, stock, customers, dispatches, invoices, payments, reports, forecasts
 │   ├── test/
 │   └── assets/images/
 └── docs/                    api-documentation.md, database-design.md
@@ -349,7 +348,15 @@ start takes about a minute while Flutter compiles; later starts are faster.
    in the period, and what each owes now) and **Stock**; storekeepers see **Stock** (deliveries
    received, and stock expiring within 30, 60 or 90 days). Reports are worked out from the
    records each time, so they always agree with them.
-14. Resize the browser window: below 840 px wide, navigation moves into a menu drawer and
+14. **Forecasts** (admins, accounts staff, storekeepers). Press **Make the first forecast**: each
+   active product gets an estimate for the next 7 and next 30 days, from the average of its
+   confirmed dispatches on the same weekday over the last 8 weeks, with a likely range.
+   Products dispatched for less than 4 weeks say "not enough history yet" instead of a number.
+   **Receive N** shows how much to order so stock covers the next 7 days plus the product's
+   **safety stock** (admins set it in the product form). Tap a product for the working and,
+   after 3 forecast weeks have passed, how far off past forecasts were (mean absolute error).
+   Make a new forecast whenever you plan a delivery, for example each Monday.
+15. Resize the browser window: below 840 px wide, navigation moves into a menu drawer and
    products are shown as a list; wider screens show a permanent sidebar and a table.
 
 ### Checks
@@ -362,7 +369,7 @@ dart format .
 
 ---
 
-## Known limitations (Stage 11)
+## Known limitations (Stage 12)
 
 - **Payments are in USD only.** Every payment is recorded in the base currency; there is no way
   to record a ZiG payment yet, because mixing currencies needs a documented exchange-rate rule
@@ -387,6 +394,12 @@ dart format .
   from, so the oldest stock is assumed to go first; the app says so wherever it shows expiry.
   Recording batches on dispatches would make it exact.
 - Reports are shown in the app only; there is no CSV or PDF export yet.
+- **Forecasts are a simple baseline** (weekday average of the last 8 weeks, as spec 6.11 asks to
+  start with). They do not know about holidays, school terms, promotions or new customers, and
+  a product needs 4 weeks of dispatches before it gets a forecast. Treat them as a starting
+  point for ordering, not a promise.
+- Forecasts are made when someone presses the button; they are not scheduled. Accuracy is
+  measured for the 7-day forecasts only, once their week is over.
 - A dispatch reversed later also disappears from the sales of the day it was dispatched (the
   goods came back), so an old report can change after a reversal.
 - A wrong receipt is corrected with an adjustment (with a reason), not by editing or deleting

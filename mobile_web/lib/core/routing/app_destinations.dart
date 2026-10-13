@@ -8,7 +8,7 @@ class AppDestination {
   final IconData selectedIcon;
 }
 
-/// Main navigation sections. Only the dashboard has content in Stage 1.
+/// Main navigation sections.
 const appDestinations = <AppDestination>[
   AppDestination(label: 'Dashboard', icon: Icons.dashboard_outlined, selectedIcon: Icons.dashboard),
   AppDestination(
@@ -30,4 +30,9 @@ const appDestinations = <AppDestination>[
   ),
   AppDestination(label: 'Payments', icon: Icons.payments_outlined, selectedIcon: Icons.payments),
   AppDestination(label: 'Reports', icon: Icons.insights_outlined, selectedIcon: Icons.insights),
+  AppDestination(
+    label: 'Forecasts',
+    icon: Icons.trending_up_outlined,
+    selectedIcon: Icons.trending_up,
+  ),
 ];

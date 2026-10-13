@@ -1,5 +1,6 @@
 import '../features/customers/data/customers_repository.dart';
 import '../features/dispatches/data/dispatches_repository.dart';
+import '../features/forecasts/data/forecasts_repository.dart';
 import '../features/invoices/data/invoices_repository.dart';
 import '../features/payments/data/payments_repository.dart';
 import '../features/products/data/products_repository.dart';
@@ -19,6 +20,7 @@ class AppServices {
     required this.invoices,
     required this.payments,
     required this.reports,
+    required this.forecasts,
     required this.sharePdf,
     required this.readBarcode,
   });
@@ -32,6 +34,7 @@ class AppServices {
   final InvoicesRepository invoices;
   final PaymentsRepository payments;
   final ReportsRepository reports;
+  final ForecastsRepository forecasts;
 
   /// Downloads (web) or shares (phones) a PDF such as an invoice.
   final PdfSharer sharePdf;

@@ -12,6 +12,7 @@ import 'features/auth/data/token_store.dart';
 import 'features/auth/presentation/auth_controller.dart';
 import 'features/customers/data/customers_repository.dart';
 import 'features/dispatches/data/dispatches_repository.dart';
+import 'features/forecasts/data/forecasts_repository.dart';
 import 'features/invoices/data/invoices_repository.dart';
 import 'features/payments/data/payments_repository.dart';
 import 'features/products/data/products_repository.dart';
@@ -30,6 +31,7 @@ void main() {
     invoices: InvoicesRepository(api),
     payments: PaymentsRepository(api),
     reports: ReportsRepository(api),
+    forecasts: ForecastsRepository(api),
     sharePdf: sharePdfWithDevice,
     readBarcode: readBarcodeWithDevice,
   );

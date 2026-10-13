@@ -9,6 +9,8 @@ import '../../features/customers/presentation/customers_screen.dart';
 import '../../features/dashboard/presentation/dashboard_screen.dart';
 import '../../features/dispatches/domain/dispatch_models.dart';
 import '../../features/dispatches/presentation/dispatches_screen.dart';
+import '../../features/forecasts/domain/forecast_models.dart';
+import '../../features/forecasts/presentation/forecasts_screen.dart';
 import '../../features/invoices/domain/invoice_models.dart';
 import '../../features/invoices/presentation/invoices_screen.dart';
 import '../../features/payments/domain/payment_models.dart';
@@ -113,6 +115,14 @@ class _AppShellState extends State<AppShell> {
         icon: Icons.lock_outline,
         title: 'Reports are for managers',
         message: 'Admins, accounts staff and storekeepers can open reports.',
+      ),
+      'Forecasts' when canUseForecasts(widget.user.role) => ForecastsScreen(
+        forecasts: widget.services.forecasts,
+      ),
+      'Forecasts' => const MessageView(
+        icon: Icons.lock_outline,
+        title: 'Forecasts are for managers',
+        message: 'Admins, accounts staff and storekeepers can see forecasts.',
       ),
       _ => throw StateError('No screen for ${destination.label}'),
     };

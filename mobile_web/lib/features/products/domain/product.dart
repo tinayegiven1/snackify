@@ -11,6 +11,7 @@ class Product {
     required this.barcode,
     required this.defaultPrice,
     required this.reorderLevel,
+    this.safetyStock = 0,
     required this.isActive,
   });
 
@@ -23,6 +24,7 @@ class Product {
     barcode: json['barcode'] as String?,
     defaultPrice: json['defaultPrice'] as String,
     reorderLevel: json['reorderLevel'] as int?,
+    safetyStock: json['safetyStock'] as int? ?? 0,
     isActive: json['isActive'] as bool,
   );
 
@@ -38,6 +40,9 @@ class Product {
 
   /// Stock level (in packs) at or below which the product counts as low; null for no alert.
   final int? reorderLevel;
+
+  /// Packs to keep on top of forecast demand when suggesting how much to receive.
+  final int safetyStock;
   final bool isActive;
 
   String get description => '$name — $flavour — $size';
@@ -55,6 +60,7 @@ class ProductInput {
     required this.barcode,
     required this.defaultPrice,
     this.reorderLevel,
+    this.safetyStock = 0,
     this.isActive = true,
   });
 
@@ -67,6 +73,7 @@ class ProductInput {
   final String? barcode;
   final String defaultPrice;
   final int? reorderLevel;
+  final int safetyStock;
   final bool isActive;
 
   Map<String, Object?> toJson() => {
@@ -77,5 +84,6 @@ class ProductInput {
     'barcode': barcode,
     'defaultPrice': defaultPrice,
     'reorderLevel': reorderLevel,
+    'safetyStock': safetyStock,
   };
 }

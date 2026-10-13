@@ -52,6 +52,13 @@ const reorderLevelSchema = z
   .max(1_000_000, 'Must be at most 1,000,000')
   .nullable();
 
+/** Packs to keep on top of forecast demand (spec 6.11). */
+const safetyStockSchema = z
+  .number({ error: 'Must be a whole number' })
+  .int('Must be a whole number')
+  .min(0, 'Must be 0 or more')
+  .max(1_000_000, 'Must be at most 1,000,000');
+
 const createProductSchema = z.object({
   sku: skuSchema,
   name: text(100),
@@ -60,6 +67,7 @@ const createProductSchema = z.object({
   barcode: barcodeSchema.optional().transform((value) => value ?? null),
   defaultPrice: moneySchema,
   reorderLevel: reorderLevelSchema.optional().transform((value) => value ?? null),
+  safetyStock: safetyStockSchema.default(0),
 });
 
 const updateProductSchema = z
@@ -72,6 +80,7 @@ const updateProductSchema = z
       barcode: barcodeSchema.optional(),
       defaultPrice: moneySchema.optional(),
       reorderLevel: reorderLevelSchema.optional(),
+      safetyStock: safetyStockSchema.optional(),
       isActive: z.boolean({ error: 'Must be true or false' }).optional(),
     },
     { error: 'This field cannot be changed' },

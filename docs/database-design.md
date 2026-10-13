@@ -46,6 +46,7 @@ Example: "Potato Crisps — BBQ — Small" and "Potato Crisps — BBQ — Large"
 | `barcode`       | `text`          | Optional; unique when present; letters, digits, `-`, 4–48 chars |
 | `default_price` | `numeric(12,2)` | Required, `>= 0`, in the business's base currency            |
 | `reorder_level` | `integer`       | Optional, `>= 0`. Stock at or below it is "low"              |
+| `safety_stock`  | `integer`       | `>= 0`, default 0. Kept on top of forecast demand (spec 6.11) |
 | `is_active`     | `boolean`       | Defaults to `true`                                           |
 | `created_at`    | `timestamptz`   | Set on insert                                                |
 | `updated_at`    | `timestamptz`   | Updated automatically on every change                        |
@@ -274,9 +275,25 @@ invoice, plus what is unpaid on issued invoices, less unallocated credit. This e
 of confirmed dispatches less payments received, which is also the balance used for credit-limit
 warnings.
 
+### `forecast_runs` and `forecasts` (spec 6.11)
+
+`forecast_runs` records each time a forecast was made: `forecast_start` (the first day forecast,
+the business day it was made), `method` (`weekday-average`), `created_by` and `created_at`.
+
+`forecasts` holds one row per product and horizon in a run: `product_id`, `forecast_start`,
+`horizon_days` (7 or 30), `method`, `status` (`ok`, `insufficient_history`, `no_history`),
+`predicted_quantity` (`numeric(12,1)`), `lower_quantity` and `upper_quantity` (a rough 80%
+range), and the history it had (`history_days`, `weeks_used`). Check constraints require a
+prediction and range exactly when the status is `ok`, with lower <= predicted <= upper.
+`UNIQUE (run_id, product_id, horizon_days)`; indexed by product, horizon and start date for
+comparing past forecasts with what was dispatched.
+
+Both are append-only: the API role has no `UPDATE` or `DELETE` on them, so a forecast is
+always kept as it was made. Demand itself is not stored: it is read from confirmed dispatches.
+
 ## Planned tables
 
-Added by later stages, each with its own migration: `credit_notes`, `forecasts`.
+A later stage may add `credit_notes` (corrections to issued invoices).
 
 ## Migrations
 

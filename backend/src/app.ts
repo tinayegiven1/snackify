@@ -9,6 +9,7 @@ import { notFoundHandler } from './middleware/not-found.js';
 import { authRouter } from './modules/auth/auth.routes.js';
 import { customersRouter } from './modules/customers/customers.routes.js';
 import { dispatchesRouter } from './modules/dispatches/dispatches.routes.js';
+import { forecastsRouter } from './modules/forecasts/forecasts.routes.js';
 import { healthRouter, type DatabaseCheck } from './modules/health/health.routes.js';
 import { invoicesRouter } from './modules/invoices/invoices.routes.js';
 import { balancesRouter, paymentsRouter } from './modules/payments/payments.routes.js';
@@ -43,6 +44,7 @@ export function createApp(config: AppConfig, deps: AppDependencies): Express {
   app.use('/api/v1/payments', paymentsRouter(deps.db, config));
   app.use('/api/v1/balances', balancesRouter(deps.db, config));
   app.use('/api/v1/reports', reportsRouter(deps.db, config));
+  app.use('/api/v1/forecasts', forecastsRouter(deps.db, config));
 
   app.use(notFoundHandler);
   app.use(errorHandler);

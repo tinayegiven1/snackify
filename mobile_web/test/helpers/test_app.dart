@@ -14,6 +14,7 @@ import 'package:snackify/features/auth/data/token_store.dart';
 import 'package:snackify/features/auth/presentation/auth_controller.dart';
 import 'package:snackify/features/customers/data/customers_repository.dart';
 import 'package:snackify/features/dispatches/data/dispatches_repository.dart';
+import 'package:snackify/features/forecasts/data/forecasts_repository.dart';
 import 'package:snackify/features/invoices/data/invoices_repository.dart';
 import 'package:snackify/features/payments/data/payments_repository.dart';
 import 'package:snackify/features/products/data/products_repository.dart';
@@ -199,6 +200,7 @@ class FakeBackend {
     if (path.startsWith('/api/v1/payments')) return _payments(request);
     if (path.startsWith('/api/v1/balances')) return _balances(request);
     if (path.startsWith('/api/v1/reports')) return _reports(request);
+    if (path.startsWith('/api/v1/forecasts')) return _forecasts(request);
     return _error(404, 'NOT_FOUND', 'Not found');
   }
 
@@ -1512,6 +1514,37 @@ class FakeBackend {
     };
   }
 
+  // ------------------------------------------------------------------ Forecasts
+
+  /// What GET /forecasts answers. Making a forecast replaces it with [forecastAfterRun] (or an
+  /// empty run). The forecasting itself is tested against PostgreSQL in the backend.
+  Map<String, Object?> forecastAnswer = {'run': null, 'products': <Object>[]};
+  Map<String, Object?>? forecastAfterRun;
+  int forecastRuns = 0;
+
+  http.Response _forecasts(http.Request request) {
+    if (role != 'admin' && role != 'accounts' && role != 'storekeeper') {
+      return _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
+    }
+    if (request.method == 'POST') {
+      forecastRuns++;
+      forecastAnswer =
+          forecastAfterRun ??
+          {
+            'run': {
+              'id': 'run-$forecastRuns',
+              'forecastStart': toApiDate(today()),
+              'method': 'weekday-average',
+              'createdAt': DateTime.now().toUtc().toIso8601String(),
+              'createdBy': 'Tendai Moyo',
+            },
+            'products': <Object>[],
+          };
+      return _json(201, {'forecast': forecastAnswer});
+    }
+    return _json(200, {'forecast': forecastAnswer});
+  }
+
   http.Response _skuTaken(Object? sku) => _json(409, {
     'error': {
       'code': 'SKU_TAKEN',
@@ -1577,6 +1610,7 @@ Future<TestApp> pumpSnackify(
     invoices: InvoicesRepository(api),
     payments: PaymentsRepository(api),
     reports: ReportsRepository(api),
+    forecasts: ForecastsRepository(api),
     sharePdf: (bytes, filename) async => sharedPdfs.add((filename, utf8.decode(bytes))),
     readBarcode: scanner.read,
   );

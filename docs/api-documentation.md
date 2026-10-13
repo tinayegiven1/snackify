@@ -225,6 +225,7 @@ JSON number (`0.5`) is accepted; it must be 0 or more with at most 2 decimal pla
 | `barcode`      | Optional; `null` or `""` for none. Unique when set; 4–48 letters, digits or `-` |
 | `defaultPrice` | Required, see above                                                   |
 | `reorderLevel` | Optional whole number (packs); stock at or below it counts as low. `null` for no alert |
+| `safetyStock`  | Optional whole number (packs), default 0: kept on top of forecast demand when suggesting how much to receive |
 | `isActive`     | Changes only; `false` hides the product from normal lists             |
 
 The same name + flavour + size cannot be registered twice (letter case is ignored).
@@ -1213,3 +1214,79 @@ days, or have already expired, and probably still have packs on the shelf, soone
 **`estimatedPacksLeft` is an estimate.** Dispatches do not record which delivery they took stock
 from, so stock is assumed to leave oldest first: each product's stock on hand is assigned to its
 most recent deliveries. `daysToExpiry` is negative once a batch has expired.
+
+## Forecasts
+
+Estimates of demand for each active product over the **next 7 days** and the **next 30 days**
+(spec 6.11), for admins, accounts staff and storekeepers. They are estimates, not guaranteed
+sales, and every screen says so.
+
+**Demand** is the packs on **confirmed dispatches**, by dispatch date. Draft, cancelled and
+reversed dispatches, returns, damage and stock corrections are not demand.
+
+**Method (`weekday-average`).** The demand expected on a day is the average of the packs
+dispatched on the same weekday over the last 8 weeks (fewer if there is less history, but at
+least 4). A period's forecast is the sum of its days. Only days **before** the forecast start
+are used. The range (`lower`–`upper`) is a rough 80% range from how much the weekly totals have
+varied, widened for the 30-day horizon.
+
+**Too little history is reported, not guessed:** a product first dispatched less than 28 days
+before the forecast start gets `status: "insufficient_history"` (with `historyDays`), and one
+never dispatched gets `"no_history"`; neither has a prediction.
+
+**Restocking:** `suggestedReorder` = forecast (rounded up) + the product's `safetyStock` − stock
+on hand, never below 0.
+
+**Accuracy:** once a 7-day forecast's week is over, it is compared with the packs actually
+dispatched that week (the latest forecast made for each start date counts once). The mean
+absolute error (`mae`, in packs) of the last 8 such weeks is given once at least 3 weeks are
+available.
+
+Forecasts are stored as they were made (`forecast_runs`, `forecasts`) and never changed.
+Making one is recorded in the audit log as `forecast.run`.
+
+### `POST /api/v1/forecasts/run`
+
+Forecasts every active product from today (business time zone). **201 Created** with
+`{ "forecast": { … } }` as below.
+
+### `GET /api/v1/forecasts`
+
+The latest run. Before the first run: `{ "forecast": { "run": null, "products": [] } }`.
+
+```json
+{
+  "forecast": {
+    "run": {
+      "id": "…",
+      "forecastStart": "2026-10-13",
+      "method": "weekday-average",
+      "createdAt": "2026-10-13T06:15:00.000Z",
+      "createdBy": "Tendai Moyo"
+    },
+    "products": [
+      {
+        "product": { "id": "…", "sku": "PC-BBQ-S", "description": "Potato Crisps — BBQ — Small" },
+        "onHand": 15,
+        "safetyStock": 15,
+        "week": {
+          "horizonDays": 7, "status": "ok", "predicted": 10, "lower": 8, "upper": 12,
+          "historyDays": 56, "weeksUsed": 8, "suggestedReorder": 10
+        },
+        "month": {
+          "horizonDays": 30, "status": "ok", "predicted": 50, "lower": 40, "upper": 60,
+          "historyDays": 56, "weeksUsed": 8, "suggestedReorder": 50
+        },
+        "accuracy": {
+          "mae": 1.3,
+          "weeksCompared": 3,
+          "needed": 3,
+          "recent": [{ "forecastStart": "2026-09-29", "predicted": 10, "actual": 10 }]
+        }
+      }
+    ]
+  }
+}
+```
+
+Products that need restocking come first, then those with the most demand.
