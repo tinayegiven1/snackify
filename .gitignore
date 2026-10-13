@@ -39,3 +39,6 @@ mobile_web/android/app/release/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Claude Code MCP servers (local only)
+.mcp.json
