@@ -35,3 +35,52 @@ export function lastCompleteBillingWeek(
   const thisWeekStart = addDays(today, -daysSinceWeekStart);
   return { from: addDays(thisWeekStart, -7), to: addDays(thisWeekStart, -1) };
 }
+
+export type GroupBy = 'day' | 'week' | 'month';
+
+/** ISO weekday of a YYYY-MM-DD date: 1 = Monday ... 7 = Sunday. */
+function isoWeekday(date: string): number {
+  return ((new Date(`${date}T00:00:00Z`).getUTCDay() + 6) % 7) + 1;
+}
+
+/**
+ * The first day of the day, week or month that `date` falls in. Weeks start on `weekStartsOn`
+ * (1 = Monday ... 7 = Sunday), like the billing week.
+ */
+export function periodStart(date: string, groupBy: GroupBy, weekStartsOn: number): string {
+  if (groupBy === 'day') return date;
+  if (groupBy === 'month') return `${date.slice(0, 7)}-01`;
+  return addDays(date, -((isoWeekday(date) - weekStartsOn + 7) % 7));
+}
+
+/** The last day of the period that starts on `start`. */
+function periodEnd(start: string, groupBy: GroupBy): string {
+  if (groupBy === 'day') return start;
+  if (groupBy === 'week') return addDays(start, 6);
+  const [year, month] = start.split('-').map(Number) as [number, number];
+  return addDays(
+    month === 12 ? `${year + 1}-01-01` : `${year}-${String(month + 1).padStart(2, '0')}-01`,
+    -1,
+  );
+}
+
+/**
+ * Every day, week or month from `from` to `to`, in order. `key` is the period's real first day
+ * (what a database groups by); `start` and `end` are clipped to the requested dates, so a report
+ * from the 10th shows its first week as starting on the 10th.
+ */
+export function periods(
+  from: string,
+  to: string,
+  groupBy: GroupBy,
+  weekStartsOn: number,
+): { key: string; start: string; end: string }[] {
+  const result: { key: string; start: string; end: string }[] = [];
+  let key = periodStart(from, groupBy, weekStartsOn);
+  while (key <= to) {
+    const end = periodEnd(key, groupBy);
+    result.push({ key, start: key < from ? from : key, end: end > to ? to : end });
+    key = addDays(end, 1);
+  }
+  return result;
+}

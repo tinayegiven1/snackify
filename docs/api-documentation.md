@@ -1082,3 +1082,134 @@ lists issued invoices (debits, on their issue date) and payments (credits, on th
 with a running balance; the opening balance carries in everything before `from`. Voided payments
 and draft invoices are not on a statement, and dispatches not yet invoiced appear only in the
 summary (`notYetInvoiced`).
+
+## Reports
+
+Read-only reports (spec 6.10), calculated from the stored records each time, so they always
+reconcile with them. Each measure is defined once and labelled separately; they are never added
+together:
+
+| Measure             | What it counts                                                              |
+| ------------------- | --------------------------------------------------------------------------- |
+| Sales value         | Confirmed dispatches (quantity × agreed price) by **dispatch date**. Drafts, cancelled and reversed dispatches do not count |
+| Packs dispatched    | The quantities on those confirmed dispatches                                 |
+| Invoiced            | Issued invoices by **issue date**                                            |
+| Payments received   | Payments that have not been voided, by the **date received**                |
+| Owed by customers   | Today's balance: confirmed dispatches less payments (as on the Payments screen) |
+
+A dispatch reversed later disappears from the sales of the day it was dispatched, because the
+goods came back.
+
+| Report           | Who                                  |
+| ---------------- | ------------------------------------ |
+| `dashboard`      | Everyone signed in (money only for admins and accounts staff) |
+| `sales`, `products`, `customers` | Admins and accounts staff |
+| `stock-received`, `expiring` | Admins, accounts staff and storekeepers |
+
+**Dates.** Reports that take `from` and `to` (both included) default to the last 30 days up to
+today in the business time zone. `to` cannot be in the future or before `from`, and a report
+covers at most two years (**400** `VALIDATION_ERROR` with the field).
+
+### `GET /api/v1/reports/dashboard`
+
+```json
+{
+  "dashboard": {
+    "today": "2026-10-13",
+    "dispatchesToday": { "dispatches": 3, "packs": 25, "salesValue": "9.80" },
+    "dispatchesThisWeek": { "dispatches": 11, "packs": 140, "salesValue": "64.10" },
+    "receivedToday": { "receipts": 1, "packs": 48 },
+    "lowStock": {
+      "count": 1,
+      "products": [{ "product": { "id": "…", "sku": "PC-BBQ-S", "description": "Potato Crisps — BBQ — Small" }, "quantityOnHand": 12, "reorderLevel": 50 }]
+    },
+    "expiring": { "withinDays": 30, "count": 1, "batches": [ { "…": "as in /expiring" } ] },
+    "money": {
+      "currency": "USD",
+      "salesThisMonth": "219.80",
+      "invoicedThisMonth": "163.50",
+      "paymentsThisMonth": "97.50",
+      "owedByCustomers": "122.30",
+      "overdue": "16.00"
+    },
+    "trend": [{ "date": "2026-09-30", "packs": 25, "salesValue": "12.50" }]
+  }
+}
+```
+
+"This week" is the billing week (`BILLING_WEEK_STARTS_ON`) up to today; "this month" is the
+calendar month up to today; `trend` is the last 14 days, oldest first. For storekeepers and
+salespeople `money` is `null` and every `salesValue` is `null`. At most 8 low-stock products and
+5 expiring batches are listed (`count` gives the full number).
+
+### `GET /api/v1/reports/sales` (admins, accounts staff)
+
+Query: `from`, `to`, `groupBy` (`day`, `week` or `month`; default `day`). Weeks start on the
+billing day; months are calendar months. The first and last periods are cut to the requested
+dates. Every period in the range is listed, including quiet ones.
+
+```json
+{
+  "from": "2026-10-01",
+  "to": "2026-10-13",
+  "groupBy": "week",
+  "currency": "USD",
+  "totals": { "dispatches": 4, "packs": 45, "salesValue": "19.80", "invoiced": "13.50", "paymentsReceived": "7.50" },
+  "periods": [
+    { "start": "2026-10-01", "end": "2026-10-04", "dispatches": 1, "packs": 20, "salesValue": "10.00", "invoiced": "0.00", "paymentsReceived": "4.00" }
+  ]
+}
+```
+
+The periods always add up to the totals.
+
+### `GET /api/v1/reports/products` (admins, accounts staff)
+
+Best-selling products. Query: `from`, `to`, `sortBy` (`value` or `packs`; default `value`).
+
+```json
+{
+  "from": "…", "to": "…", "currency": "USD",
+  "products": [
+    { "product": { "id": "…", "sku": "PC-BBQ-S", "description": "Potato Crisps — BBQ — Small" }, "dispatches": 3, "packs": 30, "salesValue": "15.30" }
+  ],
+  "totals": { "packs": 45, "salesValue": "19.80" }
+}
+```
+
+### `GET /api/v1/reports/customers` (admins, accounts staff)
+
+Each customer with dispatches, invoices or payments in the period, highest sales value first:
+`dispatches`, `packs`, `salesValue`, `invoiced` and `paymentsReceived` in the period, and
+`balanceNow`: what they owe today, whatever the period (negative when in credit).
+
+### `GET /api/v1/reports/stock-received` (admins, accounts staff, storekeepers)
+
+Deliveries in the period per product (`receipts`, `packs`) with `totals`. Opening balances are
+not deliveries and are left out.
+
+### `GET /api/v1/reports/expiring` (admins, accounts staff, storekeepers)
+
+Query: `days` (1–365, default 30). Deliveries of active products that expire within that many
+days, or have already expired, and probably still have packs on the shelf, soonest first:
+
+```json
+{
+  "today": "2026-10-13",
+  "withinDays": 30,
+  "batches": [
+    {
+      "product": { "id": "…", "sku": "MP-CH-S", "description": "Maize Puffs — Cheese — Small" },
+      "batchNumber": "B-114",
+      "receivedDate": "2026-10-03",
+      "expiryDate": "2026-10-16",
+      "daysToExpiry": 3,
+      "estimatedPacksLeft": 5
+    }
+  ]
+}
+```
+
+**`estimatedPacksLeft` is an estimate.** Dispatches do not record which delivery they took stock
+from, so stock is assumed to leave oldest first: each product's stock on hand is assigned to its
+most recent deliveries. `daysToExpiry` is negative once a batch has expired.

@@ -9,6 +9,10 @@ class SnackifyColors {
   static const Color orange = Color(0xFFFF9800);
   static const Color red = Color(0xFFE64A19);
   static const Color success = Color(0xFF2E7D32);
+
+  /// Chart marks: one step lighter than [brandBlue], which is too dark for bars. Checked with
+  /// the data-visualisation palette validator (lightness band and 3:1 contrast on the surface).
+  static const Color chart = Color(0xFF1565C0);
 }
 
 class AppTheme {

@@ -13,6 +13,7 @@ import { healthRouter, type DatabaseCheck } from './modules/health/health.routes
 import { invoicesRouter } from './modules/invoices/invoices.routes.js';
 import { balancesRouter, paymentsRouter } from './modules/payments/payments.routes.js';
 import { productsRouter } from './modules/products/products.routes.js';
+import { reportsRouter } from './modules/reports/reports.routes.js';
 import { stockRouter } from './modules/stock/stock.routes.js';
 import { usersRouter } from './modules/users/users.routes.js';
 
@@ -41,6 +42,7 @@ export function createApp(config: AppConfig, deps: AppDependencies): Express {
   app.use('/api/v1/invoices', invoicesRouter(deps.db, config));
   app.use('/api/v1/payments', paymentsRouter(deps.db, config));
   app.use('/api/v1/balances', balancesRouter(deps.db, config));
+  app.use('/api/v1/reports', reportsRouter(deps.db, config));
 
   app.use(notFoundHandler);
   app.use(errorHandler);

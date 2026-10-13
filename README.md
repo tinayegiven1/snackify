@@ -5,16 +5,16 @@ snacks business. One backend API and database serve a Flutter web app and a Flut
 
 The full product specification is in [Snackify_Claude_Code_Spec.md](Snackify_Claude_Code_Spec.md).
 
-## Current status: Stage 10 (barcode scanning)
+## Current status: Stage 11 (reports)
 
 | Part                                   | Status                                                                     |
 | -------------------------------------- | -------------------------------------------------------------------------- |
-| Backend (Node.js, Express, TypeScript) | Health, sign-in, roles, staff, products, stock ledger, customers, dispatches, invoices with PDFs, payments, balances and statements, barcode lookup and label PDFs, audit log, tests |
+| Backend (Node.js, Express, TypeScript) | Health, sign-in, roles, staff, products, stock ledger, customers, dispatches, invoices with PDFs, payments, balances and statements, barcode lookup and label PDFs, reports (dashboard, sales trends, best sellers, customers, stock received, expiring stock), audit log, tests |
 | PostgreSQL                             | Dev + test databases, least-privilege roles, migrations, seed              |
 | Database tables                        | `products`, `users`, `sessions`, `audit_logs`, `stock_batches`, `stock_movements`, `customers`, `dispatches`, `dispatch_items`, `invoices`, `invoice_items`, `payments`, `payment_allocations` |
-| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**, **Dispatches** (drafts, confirm, cancel, reverse, credit warnings), **Invoices** (weekly run, preview, drafts, issue, void, PDF, paid/overdue), **Payments** (record and allocate payments, balances, account statements), **barcode scanning** (camera on Android; typed or USB scanner on the web) and **barcode labels**; dashboard with **sample data** |
+| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**, **Dispatches** (drafts, confirm, cancel, reverse, credit warnings), **Invoices** (weekly run, preview, drafts, issue, void, PDF, paid/overdue), **Payments** (record and allocate payments, balances, account statements), **barcode scanning** (camera on Android; typed or USB scanner on the web) and **barcode labels**, a live **Dashboard** and **Reports** (daily/weekly/monthly sales, best sellers, customer summaries, stock received, expiring stock) |
 | Staff management screens               | Not yet: use the API or `npm run user:create`                              |
-| Reports, forecasts                     | Not started (navigation shows "coming soon" pages)                         |
+| Sales forecasts                        | Not started (next stage)                                                   |
 
 ## Project structure
 
@@ -27,7 +27,7 @@ snackify/
 │   │   ├── config/          Environment variable validation
 │   │   ├── database/        Connection pool, transactions, migration runner
 │   │   ├── middleware/      Sign-in and role checks, 404 and error handlers
-│   │   ├── modules/         auth, users, products, stock, customers, dispatches, invoices (+ PDF), payments, audit, health
+│   │   ├── modules/         auth, users, products, stock, customers, dispatches, invoices (+ PDF), payments, reports, audit, health
 │   │   ├── scripts/         db:migrate, db:seed and user:create commands
 │   │   ├── utils/           AppError, validation, JSON logger
 │   │   └── tests/           Unit tests; tests/db/ = tests against PostgreSQL
@@ -40,7 +40,7 @@ snackify/
 │   ├── lib/
 │   │   ├── core/            config, network (API client), files (PDF sharing), scanning (camera/typed barcodes), routing, theme
 │   │   ├── shared/widgets/  app shell, API status chip, logo
-│   │   └── features/        auth, dashboard, products, stock, customers, dispatches, invoices, payments
+│   │   └── features/        auth, dashboard, products, stock, customers, dispatches, invoices, payments, reports
 │   ├── test/
 │   └── assets/images/
 └── docs/                    api-documentation.md, database-design.md
@@ -284,7 +284,10 @@ start takes about a minute while Flutter compiles; later starts are faster.
 
 1. The app opens on the **Sign in to Snackify** screen. Sign in with the admin account you
    created. A wrong password shows "Incorrect username or password."
-2. The dashboard opens. Your name and role are at the bottom of the menu, with **Sign out**.
+2. The dashboard opens with today's figures from the database: packs dispatched today and this
+   week, deliveries received, low and expiring stock, and a 14-day chart. Admins and accounts
+   staff also see money (sales value, invoiced, payments received, owed and overdue), each
+   labelled separately. Your name and role are at the bottom of the menu, with **Sign out**.
 3. Reload the page (or restart the app): you stay signed in until you sign out or 12 hours pass.
 4. The chip in the top-right corner shows **API online** when the app can reach the backend.
 5. Open **Products**. With the sample data loaded (`npm run db:seed`) you see six products.
@@ -339,7 +342,14 @@ start takes about a minute while Flutter compiles; later starts are faster.
    lists every quantity. Admins can open a product without a barcode and use **Generate one**
    (Snackify's own EAN-13, 20…); storekeepers and admins print labels from **Stock → product →
    label icon** (A4, 24 per sheet, choose how many and how many on the sheet are already used).
-13. Resize the browser window: below 840 px wide, navigation moves into a menu drawer and
+13. **Reports.** Choose a period (last 7 or 30 days, this or last month, last 3 months, this
+   year, or your own dates). Admins and accounts staff see **Sales** (sales value, packs,
+   invoiced and payments received, with a chart by day, week or month and the same figures as a
+   table), **Products** (best sellers by value or packs), **Customers** (sales, invoiced and paid
+   in the period, and what each owes now) and **Stock**; storekeepers see **Stock** (deliveries
+   received, and stock expiring within 30, 60 or 90 days). Reports are worked out from the
+   records each time, so they always agree with them.
+14. Resize the browser window: below 840 px wide, navigation moves into a menu drawer and
    products are shown as a list; wider screens show a permanent sidebar and a table.
 
 ### Checks
@@ -352,7 +362,7 @@ dart format .
 
 ---
 
-## Known limitations (Stage 10)
+## Known limitations (Stage 11)
 
 - **Payments are in USD only.** Every payment is recorded in the base currency; there is no way
   to record a ZiG payment yet, because mixing currencies needs a documented exchange-rate rule
@@ -373,10 +383,12 @@ dart format .
   building the **Windows desktop** app. Web and Android builds do not need it.
 - No printable dispatch note yet. A customer's account (Payments → Balances) shows their
   invoices, payments and balance; their dispatches are in Dispatches.
-- The Flutter dashboard still shows **sample data only**; it does not read the database yet.
-- **Expiry warnings** are not shown yet. Expiry dates are recorded with each receipt, but
-  dispatches do not yet record which batch they took stock from, so it is not known which
-  batches are still on the shelf.
+- **Expiring stock is an estimate.** Dispatches do not record which delivery the packs came
+  from, so the oldest stock is assumed to go first; the app says so wherever it shows expiry.
+  Recording batches on dispatches would make it exact.
+- Reports are shown in the app only; there is no CSV or PDF export yet.
+- A dispatch reversed later also disappears from the sales of the day it was dispatched (the
+  goods came back), so an old report can change after a reversal.
 - A wrong receipt is corrected with an adjustment (with a reason), not by editing or deleting
   it, so the history stays complete.
 - **Camera scanning has not been tried on a real phone yet.** This computer cannot build the

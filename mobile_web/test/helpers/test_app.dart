@@ -17,6 +17,7 @@ import 'package:snackify/features/dispatches/data/dispatches_repository.dart';
 import 'package:snackify/features/invoices/data/invoices_repository.dart';
 import 'package:snackify/features/payments/data/payments_repository.dart';
 import 'package:snackify/features/products/data/products_repository.dart';
+import 'package:snackify/features/reports/data/reports_repository.dart';
 import 'package:snackify/features/stock/data/stock_repository.dart';
 
 const phoneSize = Size(390, 844);
@@ -197,6 +198,7 @@ class FakeBackend {
     if (path.startsWith('/api/v1/invoices')) return _invoices(request);
     if (path.startsWith('/api/v1/payments')) return _payments(request);
     if (path.startsWith('/api/v1/balances')) return _balances(request);
+    if (path.startsWith('/api/v1/reports')) return _reports(request);
     return _error(404, 'NOT_FOUND', 'Not found');
   }
 
@@ -1407,6 +1409,109 @@ class FakeBackend {
     );
   }
 
+  // ------------------------------------------------------------------ Reports
+
+  /// Canned answers by report name (dashboard, sales, products, customers, stock-received,
+  /// expiring). Reports without one answer as empty; the dashboard is built from the fake's own
+  /// products. The real calculations are tested against PostgreSQL in the backend.
+  final Map<String, Map<String, Object?>> reportAnswers = {};
+
+  http.Response _reports(http.Request request) {
+    final name = request.url.pathSegments[3];
+    final money = role == 'admin' || role == 'accounts';
+    final allowed = switch (name) {
+      'dashboard' => true,
+      'stock-received' || 'expiring' => money || role == 'storekeeper',
+      _ => money,
+    };
+    if (!allowed) return _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
+    if (reportAnswers[name] case final answer?) return _json(200, answer);
+
+    final query = request.url.queryParameters;
+    final range = {
+      'from': query['from'] ?? toApiDate(today().subtract(const Duration(days: 29))),
+      'to': query['to'] ?? toApiDate(today()),
+    };
+    return _json(200, switch (name) {
+      'dashboard' => {'dashboard': _dashboard(money)},
+      'sales' => {
+        ...range,
+        'groupBy': query['groupBy'] ?? 'day',
+        'currency': 'USD',
+        'totals': {
+          'dispatches': 0,
+          'packs': 0,
+          'salesValue': '0.00',
+          'invoiced': '0.00',
+          'paymentsReceived': '0.00',
+        },
+        'periods': <Object>[],
+      },
+      'products' => {
+        ...range,
+        'currency': 'USD',
+        'products': <Object>[],
+        'totals': {'packs': 0, 'salesValue': '0.00'},
+      },
+      'customers' => {...range, 'currency': 'USD', 'customers': <Object>[]},
+      'stock-received' => {
+        ...range,
+        'products': <Object>[],
+        'totals': {'receipts': 0, 'packs': 0},
+      },
+      _ => {
+        'today': toApiDate(today()),
+        'withinDays': int.parse(query['days'] ?? '30'),
+        'batches': <Object>[],
+      },
+    });
+  }
+
+  Map<String, Object?> _dashboard(bool money) {
+    final low = [
+      for (final p in products)
+        if (p['isActive'] == true &&
+            p['reorderLevel'] != null &&
+            onHand(p['id']) <= (p['reorderLevel'] as int))
+          {
+            'product': {
+              'id': p['id'],
+              'sku': p['sku'],
+              'description': '${p['name']} — ${p['flavour']} — ${p['size']}',
+            },
+            'quantityOnHand': onHand(p['id']),
+            'reorderLevel': p['reorderLevel'],
+          },
+    ];
+    final none = {'dispatches': 0, 'packs': 0, 'salesValue': money ? '0.00' : null};
+    return {
+      'today': toApiDate(today()),
+      'dispatchesToday': none,
+      'dispatchesThisWeek': none,
+      'receivedToday': {'receipts': 0, 'packs': 0},
+      'lowStock': {'count': low.length, 'products': low},
+      'expiring': {'withinDays': 30, 'count': 0, 'batches': <Object>[]},
+      'money': money
+          ? {
+              'currency': 'USD',
+              'salesThisMonth': '0.00',
+              'invoicedThisMonth': '0.00',
+              'paymentsThisMonth': '0.00',
+              'owedByCustomers': '0.00',
+              'overdue': '0.00',
+            }
+          : null,
+      'trend': [
+        for (var i = 13; i >= 0; i--)
+          {
+            'date': toApiDate(today().subtract(Duration(days: i))),
+            'packs': 0,
+            'salesValue': money ? '0.00' : null,
+          },
+      ],
+    };
+  }
+
   http.Response _skuTaken(Object? sku) => _json(409, {
     'error': {
       'code': 'SKU_TAKEN',
@@ -1471,6 +1576,7 @@ Future<TestApp> pumpSnackify(
     dispatches: DispatchesRepository(api),
     invoices: InvoicesRepository(api),
     payments: PaymentsRepository(api),
+    reports: ReportsRepository(api),
     sharePdf: (bytes, filename) async => sharedPdfs.add((filename, utf8.decode(bytes))),
     readBarcode: scanner.read,
   );

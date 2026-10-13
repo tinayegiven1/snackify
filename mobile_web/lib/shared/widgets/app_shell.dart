@@ -14,9 +14,10 @@ import '../../features/invoices/presentation/invoices_screen.dart';
 import '../../features/payments/domain/payment_models.dart';
 import '../../features/payments/presentation/payments_screen.dart';
 import '../../features/products/presentation/products_screen.dart';
+import '../../features/reports/domain/report_models.dart';
+import '../../features/reports/presentation/reports_screen.dart';
 import '../../features/stock/presentation/stock_screen.dart';
 import 'api_status_indicator.dart';
-import 'coming_soon_view.dart';
 import 'message_view.dart';
 import 'snackify_logo.dart';
 
@@ -58,7 +59,7 @@ class _AppShellState extends State<AppShell> {
       },
     );
     final page = switch (destination.label) {
-      'Dashboard' => const DashboardScreen(),
+      'Dashboard' => DashboardScreen(reports: widget.services.reports),
       // Only admins manage products (spec section 5); the server enforces this too.
       'Products' => ProductsScreen(
         repository: widget.services.products,
@@ -104,7 +105,16 @@ class _AppShellState extends State<AppShell> {
         title: 'Payments are for accounts staff',
         message: 'Ask an administrator or a member of the accounts team about payments.',
       ),
-      _ => ComingSoonView(title: destination.label),
+      'Reports' when canSeeStockReports(widget.user.role) => ReportsScreen(
+        reports: widget.services.reports,
+        financial: canSeeFinancialReports(widget.user.role),
+      ),
+      'Reports' => const MessageView(
+        icon: Icons.lock_outline,
+        title: 'Reports are for managers',
+        message: 'Admins, accounts staff and storekeepers can open reports.',
+      ),
+      _ => throw StateError('No screen for ${destination.label}'),
     };
 
     return Scaffold(

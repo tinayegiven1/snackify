@@ -3,45 +3,58 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'helpers/test_app.dart';
 
+/// BBQ (12 packs) is below its reorder level of 50; Cheese (40) is above its level of 5.
+FakeBackend backendWithLowStock() => FakeBackend()
+  ..addProduct('PC-BBQ-S', 'Potato Crisps', 'BBQ', 'Small', '0.50', reorderLevel: 50)
+  ..addProduct('MP-CH-S', 'Maize Puffs', 'Cheese', 'Small', '0.30', reorderLevel: 5)
+  ..addStock('PC-BBQ-S', 12)
+  ..addStock('MP-CH-S', 40);
+
 void main() {
-  testWidgets('shows the dashboard with a clear sample-data notice', (tester) async {
-    await pumpSnackify(tester, signedIn: true);
+  testWidgets('the dashboard shows today at a glance from the server', (tester) async {
+    final app = await pumpSnackify(tester, signedIn: true, backend: backendWithLowStock());
 
     expect(find.widgetWithText(AppBar, 'Dashboard'), findsOneWidget);
-    expect(find.textContaining('Sample data only'), findsOneWidget);
-    expect(find.text('Dispatch value (confirmed)'), findsOneWidget);
-    expect(find.text('Invoiced this week'), findsOneWidget);
-    expect(find.text('Payments received this week'), findsOneWidget);
+    expect(app.backend.requests, contains('GET /api/v1/reports/dashboard'));
+    expect(find.text('Today at a glance'), findsOneWidget);
+    expect(find.text('Dispatched today'), findsOneWidget);
+    expect(find.text('1 product'), findsOneWidget); // low stock
+    // Storekeepers do not see money.
+    expect(find.text('Money'), findsNothing);
   });
 
   testWidgets('phone layout uses a drawer and a low-stock list', (tester) async {
-    await pumpSnackify(tester, signedIn: true);
+    await pumpSnackify(tester, signedIn: true, backend: backendWithLowStock());
 
     expect(find.byType(DataTable), findsNothing);
+    await tester.dragUntilVisible(
+      find.text('12 left'),
+      find.byType(SingleChildScrollView).first,
+      const Offset(0, -300),
+    );
+    expect(find.text('Potato Crisps — BBQ — Small'), findsOneWidget);
     expect(find.text('Payments'), findsNothing);
 
     await tester.tap(find.byTooltip('Open navigation menu'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Reports'));
+    await tester.tap(find.text('Customers'));
     await tester.pumpAndSettle();
 
     expect(find.byType(Drawer), findsNothing);
-    expect(find.widgetWithText(AppBar, 'Reports'), findsOneWidget);
-    expect(find.text('Reports is coming soon'), findsOneWidget);
+    expect(find.widgetWithText(AppBar, 'Customers'), findsOneWidget);
   });
 
   testWidgets('wide layout uses a permanent sidebar and a low-stock table', (tester) async {
-    await pumpSnackify(tester, signedIn: true, size: desktopSize);
+    await pumpSnackify(tester, signedIn: true, size: desktopSize, backend: backendWithLowStock());
 
     expect(find.byTooltip('Open navigation menu'), findsNothing);
     expect(find.byType(DataTable), findsOneWidget);
     expect(find.text('Tendai Moyo'), findsOneWidget);
 
-    await tester.tap(find.text('Reports'));
+    await tester.tap(find.text('Customers'));
     await tester.pumpAndSettle();
 
-    expect(find.widgetWithText(AppBar, 'Reports'), findsOneWidget);
-    expect(find.text('Reports is coming soon'), findsOneWidget);
+    expect(find.widgetWithText(AppBar, 'Customers'), findsOneWidget);
   });
 
   testWidgets('shows API online when the backend health check passes', (tester) async {
