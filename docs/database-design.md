@@ -28,7 +28,9 @@ New tables created by migrations are automatically readable and writable by `sna
 (default privileges set in `database/setup/setup-database.sql`). A migration removes privileges
 where a rule demands it, for example `products` has no `DELETE`.
 
-Databases: `snackify_dev` (development) and `snackify_test` (automated tests; wiped by them).
+Databases: `snackify_dev` (development), `snackify_test` (automated tests; wiped by them) and
+`snackify_restore_check` (empty; backups are test-restored into it and it is wiped again, see
+[backup-and-restore.md](backup-and-restore.md)).
 
 ## Tables
 

@@ -6,6 +6,12 @@
 *.keystore
 key.properties
 
+# --- Database backups: they hold real business data, never commit ---
+backups/
+*.dump
+*.dump.json
+*.dump.partial
+
 # --- Backend (Node.js) ---
 node_modules/
 backend/dist/

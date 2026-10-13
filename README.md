@@ -5,7 +5,7 @@ snacks business. One backend API and database serve a Flutter web app and a Flut
 
 The full product specification is in [Snackify_Claude_Code_Spec.md](Snackify_Claude_Code_Spec.md).
 
-## Current status: Stage 12 (sales forecasting)
+## Current status: all feature stages built, plus backups
 
 | Part                                   | Status                                                                     |
 | -------------------------------------- | -------------------------------------------------------------------------- |
@@ -13,6 +13,7 @@ The full product specification is in [Snackify_Claude_Code_Spec.md](Snackify_Cla
 | PostgreSQL                             | Dev + test databases, least-privilege roles, migrations, seed              |
 | Database tables                        | `products`, `users`, `sessions`, `audit_logs`, `stock_batches`, `stock_movements`, `customers`, `dispatches`, `dispatch_items`, `invoices`, `invoice_items`, `payments`, `payment_allocations`, `forecast_runs`, `forecasts` |
 | Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**, **Dispatches** (drafts, confirm, cancel, reverse, credit warnings), **Invoices** (weekly run, preview, drafts, issue, void, PDF, paid/overdue), **Payments** (record and allocate payments, balances, account statements), **barcode scanning** (camera on Android; typed or USB scanner on the web) and **barcode labels**, a live **Dashboard** and **Reports** (daily/weekly/monthly sales, best sellers, customer summaries, stock received, expiring stock), **Forecasts** (next 7 and 30 days per product, how much to receive, accuracy) |
+| Backups                                | Daily-ready `npm run db:backup` with an automatic, verified test restore; guarded emergency restore ([docs/backup-and-restore.md](docs/backup-and-restore.md)) |
 | Staff management screens               | Not yet: use the API or `npm run user:create`                              |
 
 ## Project structure
@@ -24,10 +25,11 @@ snackify/
 │   │   ├── app.ts           Builds the Express app (used by server and tests)
 │   │   ├── server.ts        Starts the HTTP server and database pool
 │   │   ├── config/          Environment variable validation
+│   │   ├── backup/          Backups, restore checks and restores (pg_dump / pg_restore)
 │   │   ├── database/        Connection pool, transactions, migration runner
 │   │   ├── middleware/      Sign-in and role checks, 404 and error handlers
 │   │   ├── modules/         auth, users, products, stock, customers, dispatches, invoices (+ PDF), payments, reports, forecasts, audit, health
-│   │   ├── scripts/         db:migrate, db:seed and user:create commands
+│   │   ├── scripts/         db:migrate, db:seed, db:backup, db:restore-check, db:restore and user:create commands
 │   │   ├── utils/           AppError, validation, JSON logger
 │   │   └── tests/           Unit tests; tests/db/ = tests against PostgreSQL
 │   └── .env.example
@@ -42,7 +44,7 @@ snackify/
 │   │   └── features/        auth, dashboard, products, stock, customers, dispatches, invoices, payments, reports, forecasts
 │   ├── test/
 │   └── assets/images/
-└── docs/                    api-documentation.md, database-design.md
+└── docs/                    api-documentation.md, database-design.md, backup-and-restore.md
 ```
 
 ## Prerequisites
@@ -78,7 +80,8 @@ The design, conventions and roles are described in
    ```
 
    This creates `snackify_owner` (runs migrations), `snackify_app` (used by the API), and the
-   databases `snackify_dev` and `snackify_test`. It is safe to run again, for example to change
+   databases `snackify_dev`, `snackify_test` and `snackify_restore_check` (an empty database that
+   backups are test-restored into). It is safe to run again, for example to change
    the passwords.
 3. Copy `backend/.env.example` to `backend/.env` and replace the `CHANGE_ME_...` placeholders
    with the two passwords.
@@ -107,6 +110,16 @@ npm run db:seed                        # load sample products and customers (saf
 npm run db:rollback                    # undo the most recent migration (not in production)
 npm run db:new-migration -- add-customers   # create a new, empty SQL migration file
 ```
+
+### Backups
+
+```powershell
+npm run db:backup                      # back up to ..\backups, prove it restores, keep the newest 30
+npm run db:restore-check               # prove the newest backup restores (real data untouched)
+```
+
+How backups are checked, how to restore in an emergency, how to schedule them daily and where
+to keep copies: [docs/backup-and-restore.md](docs/backup-and-restore.md).
 
 ---
 
@@ -208,6 +221,7 @@ npm start
 | `PAYMENT_TERMS_DAYS`          | `7`                     | Days after the issue date that an invoice is due        |
 | `BUSINESS_NAME`               | `Snackify`              | Printed at the top of invoice PDFs                      |
 | `BUSINESS_CONTACT`            | (none)                  | Optional contact line on invoice PDFs (address, phone)  |
+| `BACKUP_DIR`, `BACKUP_KEEP`, `PG_BIN_DIR`, `RESTORE_CHECK_DATABASE_URL` | see [backups](docs/backup-and-restore.md#settings-backendenv-all-optional) | Where backups go, how many to keep, where `pg_dump` is |
 
 **Billing week:** by default an invoice covers the last complete Monday-to-Sunday week, with
 "today" decided in the `BUSINESS_TIMEZONE` (Africa/Harare). Staff can choose other dates.
@@ -369,7 +383,7 @@ dart format .
 
 ---
 
-## Known limitations (Stage 12)
+## Known limitations
 
 - **Payments are in USD only.** Every payment is recorded in the base currency; there is no way
   to record a ZiG payment yet, because mixing currencies needs a documented exchange-rate rule
@@ -404,10 +418,13 @@ dart format .
   goods came back), so an old report can change after a reversal.
 - A wrong receipt is corrected with an adjustment (with a reason), not by editing or deleting
   it, so the history stays complete.
-- **Camera scanning has not been tried on a real phone yet.** This computer cannot build the
-  Android app until the Android SDK command-line tools are installed and the SDK licences are
-  accepted (`flutter doctor --android-licenses`). The scanning flow itself is tested; the
-  camera screen needs a check on a real device (spec 6.7).
+- **Camera scanning has not been tried on a real phone yet.** The Android app builds (see
+  "Run on Android"), and the scanning flow itself is tested, but the camera screen still needs
+  a check on a real device (spec 6.7).
+- **Backups do not run on their own yet.** `npm run db:backup` works and checks itself, but
+  nothing runs it daily until a scheduled task is set up
+  ([how](docs/backup-and-restore.md#running-backups-automatically)), and copies are not yet
+  kept anywhere but this PC.
 - **The web app does not use the computer's camera.** Laptop webcams read barcodes poorly, and
   Chrome on Windows has no built-in barcode reader, so on the web the barcode is typed or
   scanned with a USB or Bluetooth scanner (which types like a keyboard).

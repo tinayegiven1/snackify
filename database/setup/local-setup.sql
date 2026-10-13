@@ -50,10 +50,13 @@ ALTER ROLE snackify_app WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICA
 ALTER ROLE snackify_owner SET timezone TO 'UTC';
 ALTER ROLE snackify_app SET timezone TO 'UTC';
 
--- Databases: one for development, one for automated tests.
+-- Databases: one for development, one for automated tests, and an empty one that backups are
+-- restored into to prove they work (npm run db:restore-check).
 \set dbname snackify_dev
 \ir setup-database.sql
 \set dbname snackify_test
+\ir setup-database.sql
+\set dbname snackify_restore_check
 \ir setup-database.sql
 
 \echo 'Snackify roles and databases are ready.'

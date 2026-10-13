@@ -23,6 +23,9 @@
     "db:rollback": "tsx src/scripts/migrate.ts down",
     "db:seed": "tsx src/scripts/seed.ts",
     "user:create": "tsx src/scripts/create-user.ts",
+    "db:backup": "tsx src/scripts/backup.ts",
+    "db:restore-check": "tsx src/scripts/restore-check.ts",
+    "db:restore": "tsx src/scripts/restore.ts",
     "db:new-migration": "node-pg-migrate create --migrations-dir ../database/migrations --migration-file-language sql --migration-filename-format utc"
   },
   "dependencies": {
