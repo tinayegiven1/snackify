@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../../../core/network/api_client.dart';
 import '../domain/product.dart';
 
@@ -48,4 +50,24 @@ class ProductsRepository {
     });
     return Product.fromJson(body['product'] as Map<String, dynamic>);
   }
+
+  /// The product with exactly this barcode. Throws [ApiException] with code BARCODE_NOT_FOUND
+  /// when no product has it.
+  Future<Product> findByBarcode(String barcode) async {
+    final body = await _api.getJson('/api/v1/products/barcode/${Uri.encodeComponent(barcode)}');
+    return Product.fromJson(body['product'] as Map<String, dynamic>);
+  }
+
+  /// Gives a product without a barcode one of Snackify's own (admins only).
+  Future<Product> generateBarcode(String id) async {
+    final body = await _api.postJson('/api/v1/products/$id/barcode');
+    return Product.fromJson(body['product'] as Map<String, dynamic>);
+  }
+
+  /// A PDF of [count] barcode labels (A4, 24 per sheet), leaving the first [skip] labels of the
+  /// sheet blank (storekeepers and admins).
+  Future<Uint8List> labelsPdf(String id, {required int count, int skip = 0}) => _api.getBytes(
+    '/api/v1/products/$id/labels?count=$count&skip=$skip',
+    accept: 'application/pdf',
+  );
 }

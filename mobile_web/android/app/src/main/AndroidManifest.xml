@@ -1,6 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Talks to the Snackify API. The camera permission (barcode scanning) comes from the
+         mobile_scanner plugin and is asked for the first time a barcode is scanned. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="snackify"
+        android:label="Snackify"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

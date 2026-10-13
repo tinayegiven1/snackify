@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/formatting/dates.dart';
 import '../../../core/formatting/money.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/scanning/barcode_reader.dart';
 import '../../../shared/widgets/message_view.dart';
 import '../../customers/data/customers_repository.dart';
 import '../../products/data/products_repository.dart';
@@ -19,6 +20,7 @@ class DispatchDetailScreen extends StatefulWidget {
     required this.customers,
     required this.products,
     required this.permissions,
+    required this.readBarcode,
   });
 
   final String dispatchId;
@@ -26,6 +28,7 @@ class DispatchDetailScreen extends StatefulWidget {
   final CustomersRepository customers;
   final ProductsRepository products;
   final DispatchPermissions permissions;
+  final BarcodeReader readBarcode;
 
   @override
   State<DispatchDetailScreen> createState() => _DispatchDetailScreenState();
@@ -78,6 +81,7 @@ class _DispatchDetailScreenState extends State<DispatchDetailScreen> {
           dispatches: widget.dispatches,
           customers: widget.customers,
           products: widget.products,
+          readBarcode: widget.readBarcode,
           existing: dispatch,
         ),
       ),
@@ -131,11 +135,29 @@ class _DispatchDetailScreenState extends State<DispatchDetailScreen> {
       builder: (context) => AlertDialog(
         icon: overLimitMessage == null ? null : const Icon(Icons.warning_amber_rounded),
         title: Text(overLimitMessage == null ? 'Confirm dispatch?' : 'Over credit limit'),
-        content: Text(
-          overLimitMessage == null
-              ? '${dispatch.totalQuantity} packs will be taken out of stock for '
-                    '${dispatch.customerName}. A confirmed dispatch cannot be edited.'
-              : '$overLimitMessage\n\nYou can still confirm; this will be recorded.',
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (overLimitMessage == null) ...[
+                // Quantities are checked once more before stock is taken out (spec 6.7).
+                const Text('Check the quantities:'),
+                const SizedBox(height: 8),
+                for (final line in dispatch.items)
+                  Text(
+                    '${line.quantity} × ${line.description}',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                const SizedBox(height: 12),
+                Text(
+                  '${dispatch.totalQuantity} packs will be taken out of stock for '
+                  '${dispatch.customerName}. A confirmed dispatch cannot be edited.',
+                ),
+              ] else
+                Text('$overLimitMessage\n\nYou can still confirm; this will be recorded.'),
+            ],
+          ),
         ),
         actions: [
           TextButton(

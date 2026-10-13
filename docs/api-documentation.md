@@ -297,6 +297,52 @@ Send only the fields to change. Leaving `barcode` out keeps it; `"barcode": null
 `{"changes": {"defaultPrice": {"from": "0.50", "to": "0.55"}}}`. Earlier sales keep the
 price they were made at; only new transactions use the new default.
 
+### Barcodes (spec 6.7)
+
+A barcode identifies a product variation; it does not prove how many packs are physically
+present. Each product has at most one barcode, and no two products share one.
+
+- **Manufacturer barcodes** (EAN-13, UPC-A, or anything of 4–48 letters, digits or `-`) are
+  typed or scanned into the product by an admin.
+- **Snackify's own barcodes** are for packs without one. They are EAN-13 codes starting with
+  **20**: GS1 reserves prefixes 20–29 for numbers used only inside a business, so they never
+  clash with a manufacturer's barcode. They are numbered from `internal_barcode_seq`; a number
+  already used by another product is skipped.
+
+### `GET /api/v1/products/barcode/:barcode` (everyone signed in)
+
+Finds the product with exactly this barcode, active or not (check `isActive` before using it
+in a transaction). Spaces are ignored (`"6 001234 567890"`). **200 OK** with
+`{ "product": { … } }`.
+
+- **404** `BARCODE_NOT_FOUND`: `No product has the barcode 6009876543210.`
+- **400** `VALIDATION_ERROR` (field `barcode`): anything other than letters, digits and dashes,
+  or more than 48 characters. What was sent is never repeated back.
+
+Only an exact match counts, so part of a barcode (a misread scan) finds nothing.
+
+### `POST /api/v1/products/:id/barcode` (admins)
+
+Gives a product without a barcode one of Snackify's own (`2000000000015`, `2000000000022`, …).
+**200 OK** with `{ "product": { … } }`. **409** `PRODUCT_HAS_BARCODE` if it already has one.
+Recorded in the audit log as `product.barcode_assigned`.
+
+### `GET /api/v1/products/:id/labels` (storekeepers and admins)
+
+Printable barcode labels as a PDF: A4 sheets of 24 labels (3 across, 8 down, 70 × 37 mm, the
+common "24 per sheet" size). Each label shows the product (name, flavour, size), its SKU and
+the EAN-13 barcode at its standard size (0.33 mm bars, about 37 mm wide with margins), with the
+digits underneath.
+
+| Query   | Meaning                                                                       |
+| ------- | ----------------------------------------------------------------------------- |
+| `count` | Number of labels, 1–240 (default 24, one sheet)                               |
+| `skip`  | Labels already used on the first sheet, 0–23 (default 0): printing starts after them |
+
+`Content-Type: application/pdf`, file name `labels-PC-BBQ-S.pdf`. **409**
+`PRODUCT_HAS_NO_BARCODE` when the product has no barcode, and **409** `BARCODE_NOT_PRINTABLE`
+when its barcode is not an EAN-13 (UPC-A barcodes are printed as EAN-13 with a leading 0).
+
 ## Stock
 
 Stock is kept as a **ledger**: every change is a movement with a signed `quantityDelta`

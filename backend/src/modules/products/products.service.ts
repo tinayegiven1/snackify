@@ -2,6 +2,7 @@ import type pg from 'pg';
 import { escapeLike } from '../../database/sql.js';
 import { isUniqueViolation, withTransaction, type Queryable } from '../../database/transaction.js';
 import { AppError } from '../../utils/app-error.js';
+import { internalEan13 } from '../../utils/ean13.js';
 import { changedFields, recordAudit } from '../audit/audit.js';
 
 /** A sellable variation, e.g. "Potato Crisps — BBQ — Small" (spec 6.2). */
@@ -237,5 +238,71 @@ export async function updateProduct(
     });
   } catch (error) {
     throw conflictError(error, changes) ?? error;
+  }
+}
+
+// ---------------------------------------------------------------- Barcodes (spec 6.7)
+
+/** The product with exactly this barcode, active or not. */
+export async function findProductByBarcode(db: Queryable, barcode: string): Promise<Product> {
+  const { rows } = await db.query<ProductRow>(
+    `SELECT ${PRODUCT_COLUMNS} FROM products WHERE barcode = $1`,
+    [barcode],
+  );
+  if (!rows[0]) {
+    throw new AppError(404, 'BARCODE_NOT_FOUND', `No product has the barcode ${barcode}.`);
+  }
+  return toProduct(rows[0]);
+}
+
+/**
+ * Gives a product without a barcode one of Snackify's own EAN-13 barcodes (20...), for packs
+ * without a manufacturer barcode. A number that another product already uses is skipped.
+ */
+export async function assignInternalBarcode(
+  pool: pg.Pool,
+  id: string,
+  actorUserId: string,
+): Promise<Product> {
+  try {
+    return await withTransaction(pool, async (client) => {
+      const { rows } = await client.query<ProductRow>(
+        `SELECT ${PRODUCT_COLUMNS} FROM products WHERE id = $1 FOR UPDATE`,
+        [id],
+      );
+      if (!rows[0]) throw productNotFound();
+      if (rows[0].barcode) {
+        throw new AppError(
+          409,
+          'PRODUCT_HAS_BARCODE',
+          `This product already has the barcode ${rows[0].barcode}.`,
+        );
+      }
+
+      let barcode: string;
+      for (;;) {
+        const { rows: next } = await client.query<{ n: string }>(
+          "SELECT nextval('internal_barcode_seq')::text AS n",
+        );
+        barcode = internalEan13(Number((next[0] as { n: string }).n));
+        const taken = await client.query('SELECT 1 FROM products WHERE barcode = $1', [barcode]);
+        if (taken.rowCount === 0) break;
+      }
+
+      const { rows: updated } = await client.query<ProductRow>(
+        `UPDATE products SET barcode = $2 WHERE id = $1 RETURNING ${PRODUCT_COLUMNS}`,
+        [id, barcode],
+      );
+      await recordAudit(client, {
+        actorUserId,
+        action: 'product.barcode_assigned',
+        entityType: 'product',
+        entityId: id,
+        details: { barcode },
+      });
+      return toProduct(updated[0] as ProductRow);
+    });
+  } catch (error) {
+    throw conflictError(error, {}) ?? error;
   }
 }

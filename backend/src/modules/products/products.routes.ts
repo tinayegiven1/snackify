@@ -5,7 +5,16 @@ import { getAuth, requireAuth, requireRole } from '../../middleware/authenticate
 import { AppError } from '../../utils/app-error.js';
 import { moneySchema, parseIdParam } from '../../utils/schemas.js';
 import { parseBody } from '../../utils/validation.js';
-import { createProduct, getProduct, listProducts, updateProduct } from './products.service.js';
+import { asEan13 } from '../../utils/ean13.js';
+import { LABEL_SHEET, renderLabelsPdf } from './labels-pdf.js';
+import {
+  assignInternalBarcode,
+  createProduct,
+  findProductByBarcode,
+  getProduct,
+  listProducts,
+  updateProduct,
+} from './products.service.js';
 
 // These rules match the database constraints, so most mistakes get a clear field message.
 const text = (max: number) =>
@@ -81,6 +90,35 @@ const listQuerySchema = z.object({
 
 const productNotFound = () => new AppError(404, 'PRODUCT_NOT_FOUND', 'No product has that id.');
 
+const labelsQuerySchema = z.object({
+  count: z.coerce
+    .number({ error: 'Must be a whole number' })
+    .int('Must be a whole number')
+    .min(1, 'Print at least 1 label')
+    .max(240, 'Print at most 240 labels (10 sheets) at once')
+    .default(LABEL_SHEET.perSheet),
+  skip: z.coerce
+    .number({ error: 'Must be a whole number' })
+    .int('Must be a whole number')
+    .min(0, 'Must be 0 or more')
+    .max(LABEL_SHEET.perSheet - 1, `At most ${LABEL_SHEET.perSheet - 1} labels can be skipped`)
+    .default(0),
+});
+
+/**
+ * A scanned or typed barcode: spaces are ignored (people type "6 001234 567890"), and only
+ * letters, digits and dashes can be part of a barcode.
+ */
+function parseScannedBarcode(value: unknown): string {
+  const barcode = String(value ?? '').replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9-]{1,48}$/.test(barcode)) {
+    throw new AppError(400, 'VALIDATION_ERROR', 'Some fields are missing or invalid.', [
+      { field: 'barcode', message: 'A barcode has only letters, digits and dashes' },
+    ]);
+  }
+  return barcode;
+}
+
 /** Product catalogue. Every signed-in user can view it; only admins can change it (spec 5). */
 export function productsRouter(db: pg.Pool): Router {
   const router = Router();
@@ -89,6 +127,11 @@ export function productsRouter(db: pg.Pool): Router {
   router.get('/', async (req, res) => {
     const search = parseBody(listQuerySchema, req.query);
     res.json(await listProducts(db, search));
+  });
+
+  /** Finds the product a scanned barcode belongs to (spec 6.7). */
+  router.get('/barcode/:barcode', async (req, res) => {
+    res.json({ product: await findProductByBarcode(db, parseScannedBarcode(req.params.barcode)) });
   });
 
   router.get('/:id', async (req, res) => {
@@ -106,6 +149,41 @@ export function productsRouter(db: pg.Pool): Router {
     const changes = parseBody(updateProductSchema, req.body);
     const product = await updateProduct(db, id, changes, getAuth(res).user.id);
     res.json({ product });
+  });
+
+  /** Gives a product without a barcode one of Snackify's own EAN-13 barcodes. */
+  router.post('/:id/barcode', requireRole('admin'), async (req, res) => {
+    const id = parseIdParam(req.params.id, productNotFound);
+    res.json({ product: await assignInternalBarcode(db, id, getAuth(res).user.id) });
+  });
+
+  /** Printable barcode labels (A4, 24 per sheet) for storekeepers and admins. */
+  router.get('/:id/labels', requireRole('storekeeper'), async (req, res) => {
+    const id = parseIdParam(req.params.id, productNotFound);
+    const options = parseBody(labelsQuerySchema, req.query);
+    const product = await getProduct(db, id);
+    if (!product.barcode) {
+      throw new AppError(
+        409,
+        'PRODUCT_HAS_NO_BARCODE',
+        'This product has no barcode yet. An admin can generate one in Products.',
+      );
+    }
+    const ean13 = asEan13(product.barcode);
+    if (!ean13) {
+      throw new AppError(
+        409,
+        'BARCODE_NOT_PRINTABLE',
+        `Labels can only be printed for EAN-13 barcodes, and ${product.barcode} is not one. ` +
+          'Use the barcode printed on the pack.',
+      );
+    }
+    const pdf = await renderLabelsPdf(product, ean13, options);
+    res
+      .type('application/pdf')
+      .set('Content-Disposition', `inline; filename="labels-${product.sku}.pdf"`)
+      .set('Cache-Control', 'no-store')
+      .send(pdf);
   });
 
   return router;

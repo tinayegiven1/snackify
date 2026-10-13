@@ -53,6 +53,12 @@ Example: "Potato Crisps — BBQ — Small" and "Potato Crisps — BBQ — Large"
 Also: the same name + flavour + size cannot be registered twice (ignoring letter case), and the
 API role cannot delete products; they are deactivated instead.
 
+**Barcodes (spec 6.7):** a barcode is either the manufacturer's or one of Snackify's own,
+generated for packs without one: EAN-13 codes `20` + a 10-digit number from
+`internal_barcode_seq` + a check digit (prefix 20 is reserved by GS1 for use inside a business,
+so it never clashes with a manufacturer's code). The unique constraint on `barcode` covers both
+kinds; when the next number is already used by another product, it is skipped.
+
 Transactions (dispatch lines, invoice lines) will store their own price and currency snapshot, so
 changing `default_price` never rewrites history.
 

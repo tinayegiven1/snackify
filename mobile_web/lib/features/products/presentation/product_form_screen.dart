@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../../core/config/app_config.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/scanning/barcode_reader.dart';
 import '../data/products_repository.dart';
 import '../domain/product.dart';
 import '../../../shared/widgets/message_view.dart';
@@ -14,9 +15,15 @@ final _priceFormat = RegExp(r'^\d{1,10}(\.\d{1,2})?$');
 
 /// Adds a product, or edits [product] when it is given. Pops with the saved product.
 class ProductFormScreen extends StatefulWidget {
-  const ProductFormScreen({super.key, required this.repository, this.product});
+  const ProductFormScreen({
+    super.key,
+    required this.repository,
+    required this.readBarcode,
+    this.product,
+  });
 
   final ProductsRepository repository;
+  final BarcodeReader readBarcode;
   final Product? product;
 
   @override
@@ -37,10 +44,45 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   bool _saving = false;
   String? _error;
 
+  /// Shown under the barcode once one has been generated.
+  String? _barcodeNote;
+
   /// Messages from the server for individual fields, e.g. a SKU that is already used.
   Map<String, String> _serverErrors = {};
 
   bool get _isNew => widget.product == null;
+
+  /// Fills in the barcode by scanning the pack (or typing it on the web).
+  Future<void> _scanBarcode() async {
+    final barcode = await widget.readBarcode(context);
+    if (barcode == null || !mounted) return;
+    setState(() {
+      _barcode.text = barcode;
+      _serverErrors = {..._serverErrors}..remove('barcode');
+    });
+  }
+
+  /// Gives the product one of Snackify's own barcodes, for packs without one. It is saved
+  /// straight away, so labels can be printed for it.
+  Future<void> _generateBarcode() async {
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final product = await widget.repository.generateBarcode(widget.product!.id);
+      if (!mounted) return;
+      // Said under the field rather than in a snackbar, which would cover buttons on phones.
+      setState(() {
+        _barcode.text = product.barcode ?? '';
+        _barcodeNote = 'Saved. Print labels for it from Stock.';
+      });
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -127,12 +169,34 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                       'barcode',
                       _barcode,
                       'Barcode (optional)',
-                      helper: 'Leave empty if the product has no barcode',
+                      helper: _barcodeNote ?? 'Leave empty if the product has no barcode',
                       required: false,
+                      suffix: IconButton(
+                        tooltip: 'Scan the barcode',
+                        icon: const Icon(Icons.qr_code_scanner),
+                        onPressed: _saving ? null : _scanBarcode,
+                      ),
                       validator: (value) => value.isEmpty || _barcodeFormat.hasMatch(value)
                           ? null
                           : 'Use 4–48 letters, digits or dashes',
                     ),
+                    if (!_isNew && (widget.product!.barcode ?? '').isEmpty)
+                      ListenableBuilder(
+                        listenable: _barcode,
+                        builder: (context, _) => _barcode.text.trim().isNotEmpty
+                            ? const SizedBox.shrink()
+                            : Padding(
+                                padding: const EdgeInsets.only(bottom: 16),
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: TextButton.icon(
+                                    onPressed: _saving ? null : _generateBarcode,
+                                    icon: const Icon(Icons.qr_code_2),
+                                    label: const Text('No barcode on the pack? Generate one'),
+                                  ),
+                                ),
+                              ),
+                      ),
                     _textField(
                       'defaultPrice',
                       _price,
@@ -198,6 +262,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     String? hint,
     String? helper,
     String? prefix,
+    Widget? suffix,
     int? maxLength,
     bool required = true,
     TextCapitalization capitalization = TextCapitalization.sentences,
@@ -219,6 +284,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
           hintText: hint,
           helperText: helper,
           prefixText: prefix,
+          suffixIcon: suffix,
           border: const OutlineInputBorder(),
           errorText: _serverErrors[field],
           counterText: '',

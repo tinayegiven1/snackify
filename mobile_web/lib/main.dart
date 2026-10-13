@@ -5,6 +5,7 @@ import 'core/app_services.dart';
 import 'core/config/app_config.dart';
 import 'core/files/pdf_sharer.dart';
 import 'core/network/api_client.dart';
+import 'core/scanning/barcode_reader.dart';
 import 'core/network/backend_health_service.dart';
 import 'features/auth/data/auth_repository.dart';
 import 'features/auth/data/token_store.dart';
@@ -28,6 +29,7 @@ void main() {
     invoices: InvoicesRepository(api),
     payments: PaymentsRepository(api),
     sharePdf: sharePdfWithDevice,
+    readBarcode: readBarcodeWithDevice,
   );
   runApp(SnackifyApp(auth: auth, services: services));
 }

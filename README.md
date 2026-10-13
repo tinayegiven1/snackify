@@ -5,16 +5,16 @@ snacks business. One backend API and database serve a Flutter web app and a Flut
 
 The full product specification is in [Snackify_Claude_Code_Spec.md](Snackify_Claude_Code_Spec.md).
 
-## Current status: Stage 9 (payments and balances)
+## Current status: Stage 10 (barcode scanning)
 
 | Part                                   | Status                                                                     |
 | -------------------------------------- | -------------------------------------------------------------------------- |
-| Backend (Node.js, Express, TypeScript) | Health, sign-in, roles, staff, products, stock ledger, customers, dispatches, invoices with PDFs, payments, balances and statements, audit log, tests |
+| Backend (Node.js, Express, TypeScript) | Health, sign-in, roles, staff, products, stock ledger, customers, dispatches, invoices with PDFs, payments, balances and statements, barcode lookup and label PDFs, audit log, tests |
 | PostgreSQL                             | Dev + test databases, least-privilege roles, migrations, seed              |
 | Database tables                        | `products`, `users`, `sessions`, `audit_logs`, `stock_batches`, `stock_movements`, `customers`, `dispatches`, `dispatch_items`, `invoices`, `invoice_items`, `payments`, `payment_allocations` |
-| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**, **Dispatches** (drafts, confirm, cancel, reverse, credit warnings), **Invoices** (weekly run, preview, drafts, issue, void, PDF, paid/overdue), **Payments** (record and allocate payments, balances, account statements); dashboard with **sample data** |
+| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**, **Dispatches** (drafts, confirm, cancel, reverse, credit warnings), **Invoices** (weekly run, preview, drafts, issue, void, PDF, paid/overdue), **Payments** (record and allocate payments, balances, account statements), **barcode scanning** (camera on Android; typed or USB scanner on the web) and **barcode labels**; dashboard with **sample data** |
 | Staff management screens               | Not yet: use the API or `npm run user:create`                              |
-| Reports, forecasts, barcode scanning   | Not started (navigation shows "coming soon" pages)                         |
+| Reports, forecasts                     | Not started (navigation shows "coming soon" pages)                         |
 
 ## Project structure
 
@@ -38,7 +38,7 @@ snackify/
 │   └── seeds/               Sample data for local development (no real data)
 ├── mobile_web/              Flutter app for web and Android
 │   ├── lib/
-│   │   ├── core/            config, network (API client), files (PDF sharing), routing, theme
+│   │   ├── core/            config, network (API client), files (PDF sharing), scanning (camera/typed barcodes), routing, theme
 │   │   ├── shared/widgets/  app shell, API status chip, logo
 │   │   └── features/        auth, dashboard, products, stock, customers, dispatches, invoices, payments
 │   ├── test/
@@ -273,7 +273,12 @@ start takes about a minute while Flutter compiles; later starts are faster.
   ```
 
   Replace `192.168.1.50` with your computer's IPv4 address. If Windows Firewall asks, allow
-  Node.js on **private** networks.
+  Node.js on **private** networks. Development builds are allowed to use plain `http://` on the
+  local network; a release build only talks to an `https://` backend.
+- **Camera:** the first time you scan a barcode, Android asks for permission to use the camera.
+  If it was refused, the scan screen explains how to allow it in the phone's settings, and the
+  barcode can always be typed instead. Test scanning on a real phone; emulators have no useful
+  camera.
 
 ### Verify it is working
 
@@ -326,7 +331,15 @@ start takes about a minute while Flutter compiles; later starts are faster.
    running balance; choose the dates with the calendar). Invoices now show **Paid**,
    **Part paid** or **Overdue**, their due date and the payments that paid them. Admins can
    **Void** a payment recorded by mistake (with a reason); its invoices are owed again.
-12. Resize the browser window: below 840 px wide, navigation moves into a menu drawer and
+12. **Barcodes.** In a new dispatch, **Scan barcode** reads a pack (the phone camera, or on the
+   web type the number or use a USB scanner), asks how many packs, and adds the line. Scanning a
+   product that is already on the dispatch only lets you change its quantity, so nothing is added
+   twice. An unknown barcode shows "Barcode not found" with **Scan again**. **Receive stock** and
+   the **Products** search have the same scan button. Before confirming a dispatch, the dialog
+   lists every quantity. Admins can open a product without a barcode and use **Generate one**
+   (Snackify's own EAN-13, 20…); storekeepers and admins print labels from **Stock → product →
+   label icon** (A4, 24 per sheet, choose how many and how many on the sheet are already used).
+13. Resize the browser window: below 840 px wide, navigation moves into a menu drawer and
    products are shown as a list; wider screens show a permanent sidebar and a table.
 
 ### Checks
@@ -339,7 +352,7 @@ dart format .
 
 ---
 
-## Known limitations (Stage 9)
+## Known limitations (Stage 10)
 
 - **Payments are in USD only.** Every payment is recorded in the base currency; there is no way
   to record a ZiG payment yet, because mixing currencies needs a documented exchange-rate rule
@@ -366,8 +379,16 @@ dart format .
   batches are still on the shelf.
 - A wrong receipt is corrected with an adjustment (with a reason), not by editing or deleting
   it, so the history stays complete.
-- Camera barcode scanning comes later; a USB or Bluetooth barcode scanner (which types like a
-  keyboard) already works in the product search when receiving stock.
+- **Camera scanning has not been tried on a real phone yet.** This computer cannot build the
+  Android app until the Android SDK command-line tools are installed and the SDK licences are
+  accepted (`flutter doctor --android-licenses`). The scanning flow itself is tested; the
+  camera screen needs a check on a real device (spec 6.7).
+- **The web app does not use the computer's camera.** Laptop webcams read barcodes poorly, and
+  Chrome on Windows has no built-in barcode reader, so on the web the barcode is typed or
+  scanned with a USB or Bluetooth scanner (which types like a keyboard).
+- The Android app includes Google's ML Kit barcode reader, which adds about 3–10 MB to its size.
+- Labels are laid out for A4 sheets of 24 (70 × 37 mm). Other label sizes are not supported yet,
+  and labels can only be printed for EAN-13 (or UPC-A) barcodes.
 - Product prices are shown in USD (the assumed base currency, set in
   `mobile_web/lib/core/config/app_config.dart`).
 - The products screen loads up to 200 products at a time; use search to find others.

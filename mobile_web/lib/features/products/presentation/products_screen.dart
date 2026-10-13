@@ -3,20 +3,28 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../core/network/api_client.dart';
+import '../../../core/scanning/barcode_reader.dart';
 import '../../../shared/widgets/message_view.dart';
 import '../data/products_repository.dart';
 import '../domain/product.dart';
 import 'product_form_screen.dart';
+import 'scan_product.dart';
 
 /// Content width at which the list becomes a table.
 const double _tableBreakpoint = 720;
 
 /// The product catalogue: everyone can search it; admins can add and edit products.
 class ProductsScreen extends StatefulWidget {
-  const ProductsScreen({super.key, required this.repository, required this.canEdit});
+  const ProductsScreen({
+    super.key,
+    required this.repository,
+    required this.canEdit,
+    required this.readBarcode,
+  });
 
   final ProductsRepository repository;
   final bool canEdit;
+  final BarcodeReader readBarcode;
 
   @override
   State<ProductsScreen> createState() => _ProductsScreenState();
@@ -84,7 +92,11 @@ class _ProductsScreenState extends State<ProductsScreen> {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     final saved = await Navigator.of(context).push<Product>(
       MaterialPageRoute(
-        builder: (_) => ProductFormScreen(repository: widget.repository, product: product),
+        builder: (_) => ProductFormScreen(
+          repository: widget.repository,
+          product: product,
+          readBarcode: widget.readBarcode,
+        ),
       ),
     );
     if (saved == null || !mounted) return;
@@ -92,6 +104,23 @@ class _ProductsScreenState extends State<ProductsScreen> {
       context,
     ).showSnackBar(SnackBar(content: Text('Saved ${saved.description}')));
     _load();
+  }
+
+  /// Finds a product by scanning its pack: admins go straight to it; others see it listed.
+  Future<void> _scan() async {
+    final product = await scanForProduct(
+      context,
+      products: widget.repository,
+      readBarcode: widget.readBarcode,
+    );
+    if (product == null || !mounted) return;
+    if (widget.canEdit) {
+      await _openForm(product);
+      return;
+    }
+    _search.text = product.barcode ?? product.sku;
+    if (!product.isActive) _includeInactive = true;
+    _onSearchChanged(_search.text);
   }
 
   @override
@@ -121,7 +150,11 @@ class _ProductsScreenState extends State<ProductsScreen> {
                       border: const OutlineInputBorder(),
                       isDense: true,
                       suffixIcon: _search.text.isEmpty
-                          ? null
+                          ? IconButton(
+                              tooltip: 'Scan a barcode',
+                              icon: const Icon(Icons.qr_code_scanner),
+                              onPressed: _scan,
+                            )
                           : IconButton(
                               tooltip: 'Clear search',
                               icon: const Icon(Icons.clear),

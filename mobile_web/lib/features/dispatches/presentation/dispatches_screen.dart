@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../core/formatting/dates.dart';
 import '../../../core/formatting/money.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/scanning/barcode_reader.dart';
 import '../../../shared/widgets/message_view.dart';
 import '../../customers/data/customers_repository.dart';
 import '../../products/data/products_repository.dart';
@@ -21,12 +22,14 @@ class DispatchesScreen extends StatefulWidget {
     required this.customers,
     required this.products,
     required this.permissions,
+    required this.readBarcode,
   });
 
   final DispatchesRepository dispatches;
   final CustomersRepository customers;
   final ProductsRepository products;
   final DispatchPermissions permissions;
+  final BarcodeReader readBarcode;
 
   @override
   State<DispatchesScreen> createState() => _DispatchesScreenState();
@@ -85,6 +88,7 @@ class _DispatchesScreenState extends State<DispatchesScreen> {
           customers: widget.customers,
           products: widget.products,
           permissions: widget.permissions,
+          readBarcode: widget.readBarcode,
         ),
       ),
     );
@@ -99,6 +103,7 @@ class _DispatchesScreenState extends State<DispatchesScreen> {
           dispatches: widget.dispatches,
           customers: widget.customers,
           products: widget.products,
+          readBarcode: widget.readBarcode,
         ),
       ),
     );

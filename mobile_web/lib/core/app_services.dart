@@ -5,6 +5,7 @@ import '../features/payments/data/payments_repository.dart';
 import '../features/products/data/products_repository.dart';
 import '../features/stock/data/stock_repository.dart';
 import 'files/pdf_sharer.dart';
+import 'scanning/barcode_reader.dart';
 
 /// The backend services that screens use. Created once in main.dart; tests pass fakes.
 class AppServices {
@@ -17,6 +18,7 @@ class AppServices {
     required this.invoices,
     required this.payments,
     required this.sharePdf,
+    required this.readBarcode,
   });
 
   /// Returns true when the Snackify API is reachable.
@@ -30,4 +32,7 @@ class AppServices {
 
   /// Downloads (web) or shares (phones) a PDF such as an invoice.
   final PdfSharer sharePdf;
+
+  /// Reads a barcode: the camera on phones, typed (or a USB scanner) on the web.
+  final BarcodeReader readBarcode;
 }

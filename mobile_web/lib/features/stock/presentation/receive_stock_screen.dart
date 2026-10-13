@@ -3,9 +3,11 @@ import 'package:flutter/services.dart';
 
 import '../../../core/formatting/dates.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/scanning/barcode_reader.dart';
 import '../../products/data/products_repository.dart';
 import '../../products/domain/product.dart';
 import '../../products/presentation/product_picker.dart';
+import '../../products/presentation/scan_product.dart';
 import '../data/stock_repository.dart';
 import '../domain/stock_models.dart';
 import '../../../shared/widgets/message_view.dart';
@@ -20,6 +22,7 @@ class ReceiveStockScreen extends StatefulWidget {
     required this.stock,
     required this.products,
     required this.canRecordOpeningBalance,
+    required this.readBarcode,
   });
 
   final StockRepository stock;
@@ -27,6 +30,7 @@ class ReceiveStockScreen extends StatefulWidget {
 
   /// Only admins may record opening balances; the server enforces this too.
   final bool canRecordOpeningBalance;
+  final BarcodeReader readBarcode;
 
   @override
   State<ReceiveStockScreen> createState() => _ReceiveStockScreenState();
@@ -62,6 +66,25 @@ class _ReceiveStockScreenState extends State<ReceiveStockScreen> {
         _serverErrors = {..._serverErrors}..remove('productId');
       });
     }
+  }
+
+  Future<void> _scanProduct() async {
+    final product = await scanForProduct(
+      context,
+      products: widget.products,
+      readBarcode: widget.readBarcode,
+    );
+    if (product == null || !mounted) return;
+    if (!product.isActive) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${product.description} is inactive; stock cannot be received.')),
+      );
+      return;
+    }
+    setState(() {
+      _product = product;
+      _serverErrors = {..._serverErrors}..remove('productId');
+    });
   }
 
   Future<void> _chooseReceivedDate() async {
@@ -152,6 +175,14 @@ class _ReceiveStockScreenState extends State<ReceiveStockScreen> {
                       errorText: _serverErrors['productId'],
                       onTap: _saving ? null : _chooseProduct,
                       validator: () => _product == null ? 'Choose a product' : null,
+                    ),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: _saving ? null : _scanProduct,
+                        icon: const Icon(Icons.qr_code_scanner),
+                        label: const Text('Scan barcode'),
+                      ),
                     ),
                     const SizedBox(height: 16),
                     TextFormField(

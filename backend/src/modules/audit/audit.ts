@@ -10,6 +10,7 @@ export type AuditAction =
   | 'user.password_reset'
   | 'product.created'
   | 'product.updated'
+  | 'product.barcode_assigned'
   | 'stock.opening_balance'
   | 'stock.adjusted'
   | 'customer.created'

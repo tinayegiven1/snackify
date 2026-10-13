@@ -63,11 +63,14 @@ class _AppShellState extends State<AppShell> {
       'Products' => ProductsScreen(
         repository: widget.services.products,
         canEdit: widget.user.role == StaffRole.admin,
+        readBarcode: widget.services.readBarcode,
       ),
       'Stock' => StockScreen(
         stock: widget.services.stock,
         products: widget.services.products,
         user: widget.user,
+        readBarcode: widget.services.readBarcode,
+        sharePdf: widget.services.sharePdf,
       ),
       'Customers' => CustomersScreen(
         repository: widget.services.customers,
@@ -78,6 +81,7 @@ class _AppShellState extends State<AppShell> {
         customers: widget.services.customers,
         products: widget.services.products,
         permissions: DispatchPermissions.forRole(widget.user.role),
+        readBarcode: widget.services.readBarcode,
       ),
       'Invoices' when canUseInvoices(widget.user.role) => InvoicesScreen(
         invoices: widget.services.invoices,

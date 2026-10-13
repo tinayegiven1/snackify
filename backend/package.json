@@ -42,6 +42,7 @@
     "@types/pdfkit": "^0.17.6",
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.2.1",
+    "@zxing/library": "^0.23.0",
     "eslint": "^10.12.0",
     "globals": "^17.13.0",
     "node-pg-migrate": "^9.0.0",

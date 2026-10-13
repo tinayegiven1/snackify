@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../core/files/pdf_sharer.dart';
 import '../../../core/formatting/dates.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/scanning/barcode_reader.dart';
 import '../../../shared/widgets/message_view.dart';
 import '../../auth/domain/app_user.dart';
 import '../../products/data/products_repository.dart';
@@ -14,11 +16,20 @@ import 'stock_product_screen.dart';
 
 /// Stock on hand and stock received. Storekeepers and admins can record deliveries.
 class StockScreen extends StatefulWidget {
-  const StockScreen({super.key, required this.stock, required this.products, required this.user});
+  const StockScreen({
+    super.key,
+    required this.stock,
+    required this.products,
+    required this.user,
+    required this.readBarcode,
+    required this.sharePdf,
+  });
 
   final StockRepository stock;
   final ProductsRepository products;
   final AppUser user;
+  final BarcodeReader readBarcode;
+  final PdfSharer sharePdf;
 
   @override
   State<StockScreen> createState() => _StockScreenState();
@@ -40,6 +51,7 @@ class _StockScreenState extends State<StockScreen> {
           stock: widget.stock,
           products: widget.products,
           canRecordOpeningBalance: widget.user.role == StaffRole.admin,
+          readBarcode: widget.readBarcode,
         ),
       ),
     );
@@ -62,6 +74,9 @@ class _StockScreenState extends State<StockScreen> {
           stock: widget.stock,
           balance: balance,
           canAdjust: widget.user.role == StaffRole.admin,
+          products: widget.products,
+          sharePdf: widget.sharePdf,
+          canPrintLabels: _canReceive,
         ),
       ),
     );

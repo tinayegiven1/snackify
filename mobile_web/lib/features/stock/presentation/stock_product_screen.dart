@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../core/files/pdf_sharer.dart';
 import '../../../core/formatting/dates.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/widgets/message_view.dart';
+import '../../products/data/products_repository.dart';
 import '../data/stock_repository.dart';
 import '../domain/stock_models.dart';
 
@@ -15,11 +17,19 @@ class StockProductScreen extends StatefulWidget {
     required this.stock,
     required this.balance,
     required this.canAdjust,
+    required this.products,
+    required this.sharePdf,
+    required this.canPrintLabels,
   });
 
   final StockRepository stock;
   final StockBalance balance;
   final bool canAdjust;
+  final ProductsRepository products;
+  final PdfSharer sharePdf;
+
+  /// Storekeepers and admins print barcode labels.
+  final bool canPrintLabels;
 
   @override
   State<StockProductScreen> createState() => _StockProductScreenState();
@@ -75,6 +85,26 @@ class _StockProductScreenState extends State<StockProductScreen> {
     _load();
   }
 
+  Future<void> _printLabels() async {
+    final choice = await showDialog<({int count, int skip})>(
+      context: context,
+      builder: (_) => const _LabelsDialog(),
+    );
+    if (choice == null || !mounted) return;
+    final product = widget.balance.product;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final pdf = await widget.products.labelsPdf(
+        product.id,
+        count: choice.count,
+        skip: choice.skip,
+      );
+      await widget.sharePdf(pdf, 'labels-${product.sku}.pdf');
+    } on ApiException catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text(error.message)));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -82,7 +112,17 @@ class _StockProductScreenState extends State<StockProductScreen> {
     final isLow = balance.reorderLevel != null && _onHand <= balance.reorderLevel!;
 
     return Scaffold(
-      appBar: AppBar(title: Text(balance.product.description)),
+      appBar: AppBar(
+        title: Text(balance.product.description),
+        actions: [
+          if (widget.canPrintLabels)
+            IconButton(
+              tooltip: 'Print barcode labels',
+              onPressed: _printLabels,
+              icon: const Icon(Icons.qr_code_2),
+            ),
+        ],
+      ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -303,6 +343,86 @@ class _AdjustStockDialogState extends State<_AdjustStockDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(onPressed: _saving ? null : _save, child: const Text('Save')),
+      ],
+    );
+  }
+}
+
+/// How many labels to print, and how many on the sheet are already used.
+class _LabelsDialog extends StatefulWidget {
+  const _LabelsDialog();
+
+  @override
+  State<_LabelsDialog> createState() => _LabelsDialogState();
+}
+
+class _LabelsDialogState extends State<_LabelsDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _count = TextEditingController(text: '24');
+  final _skip = TextEditingController(text: '0');
+
+  @override
+  void dispose() {
+    _count.dispose();
+    _skip.dispose();
+    super.dispose();
+  }
+
+  String? _number(String? value, {required int min, required int max}) {
+    final number = int.tryParse((value ?? '').trim());
+    if (number == null) return 'Enter a number';
+    if (number < min || number > max) return 'From $min to $max';
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Print barcode labels'),
+      content: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('A4 label sheets, 24 labels per sheet (3 across, 8 down, 70 × 37 mm).'),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _count,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(
+                labelText: 'Number of labels',
+                border: OutlineInputBorder(),
+              ),
+              validator: (value) => _number(value, min: 1, max: 240),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _skip,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(
+                labelText: 'Labels already used on the sheet',
+                helperText: 'Printing starts after these.',
+                border: OutlineInputBorder(),
+              ),
+              validator: (value) => _number(value, min: 0, max: 23),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(
+          onPressed: () {
+            if (!_formKey.currentState!.validate()) return;
+            Navigator.of(
+              context,
+            ).pop((count: int.parse(_count.text.trim()), skip: int.parse(_skip.text.trim())));
+          },
+          child: const Text('Make PDF'),
+        ),
       ],
     );
   }

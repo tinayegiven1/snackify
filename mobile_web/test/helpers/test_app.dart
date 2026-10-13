@@ -179,6 +179,11 @@ class FakeBackend {
       return http.Response('', 204);
     }
     if (route == 'GET /api/v1/products') return _listProducts(request.url.queryParameters);
+    if (path.startsWith('/api/v1/products/barcode/') ||
+        path.endsWith('/barcode') ||
+        path.endsWith('/labels')) {
+      return _barcodes(request);
+    }
     if (path.startsWith('/api/v1/products') && request.method != 'GET') {
       if (role != 'admin') {
         return _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
@@ -1342,6 +1347,66 @@ class FakeBackend {
     });
   }
 
+  // ------------------------------------------------------------------ Barcodes
+
+  int _internalBarcodes = 0;
+
+  /// Snackify's own EAN-13 number n: 20, ten digits, and the check digit.
+  static String internalBarcode(int n) {
+    final body = '20${n.toString().padLeft(10, '0')}';
+    var sum = 0;
+    for (var i = 0; i < 12; i++) {
+      sum += int.parse(body[i]) * (i.isEven ? 1 : 3);
+    }
+    return '$body${(10 - sum % 10) % 10}';
+  }
+
+  http.Response _barcodes(http.Request request) {
+    final segments = request.url.pathSegments; // api, v1, products, (barcode, code) | (id, action)
+    if (segments[3] == 'barcode') {
+      final code = segments[4].replaceAll(RegExp(r'\s+'), '');
+      final matches = products.where((p) => p['barcode'] == code);
+      if (matches.isEmpty) {
+        return _error(404, 'BARCODE_NOT_FOUND', 'No product has the barcode $code.');
+      }
+      return _json(200, {'product': matches.first});
+    }
+
+    final product = products.firstWhere((p) => p['id'] == segments[3]);
+    if (segments[4] == 'barcode') {
+      if (role != 'admin') return _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
+      if (product['barcode'] != null) {
+        return _error(
+          409,
+          'PRODUCT_HAS_BARCODE',
+          'This product already has the barcode ${product['barcode']}.',
+        );
+      }
+      product['barcode'] = internalBarcode(++_internalBarcodes);
+      return _json(200, {'product': product});
+    }
+
+    // Labels.
+    if (role != 'admin' && role != 'storekeeper') {
+      return _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
+    }
+    if (product['barcode'] == null) {
+      return _error(
+        409,
+        'PRODUCT_HAS_NO_BARCODE',
+        'This product has no barcode yet. An admin can generate one in Products.',
+      );
+    }
+    final query = request.url.queryParameters;
+    return http.Response.bytes(
+      utf8.encode(
+        '%PDF-1.3 labels ${product['sku']} count=${query['count']} skip=${query['skip']}',
+      ),
+      200,
+      headers: {'content-type': 'application/pdf'},
+    );
+  }
+
   http.Response _skuTaken(Object? sku) => _json(409, {
     'error': {
       'code': 'SKU_TAKEN',
@@ -1364,7 +1429,7 @@ class FakeBackend {
 }
 
 class TestApp {
-  TestApp(this.backend, this.api, this.tokenStore, this.auth, this.sharedPdfs);
+  TestApp(this.backend, this.api, this.tokenStore, this.auth, this.sharedPdfs, this.scanner);
 
   final FakeBackend backend;
   final ApiClient api;
@@ -1373,6 +1438,9 @@ class TestApp {
 
   /// PDFs handed to the device to share or download, as (file name, contents).
   final List<(String, String)> sharedPdfs;
+
+  /// The pretend barcode scanner the app uses.
+  final FakeScanner scanner;
 }
 
 /// Starts the whole app against [FakeBackend]. With [signedIn], a valid session is
@@ -1394,6 +1462,7 @@ Future<TestApp> pumpSnackify(
   final store = MemoryTokenStore(signedIn ? server.issueToken() : savedToken);
   final auth = AuthController(AuthRepository(api: api, tokenStore: store));
   final sharedPdfs = <(String, String)>[];
+  final scanner = FakeScanner();
   final services = AppServices(
     checkBackendHealth: () async => apiHealthy,
     products: ProductsRepository(api),
@@ -1403,12 +1472,13 @@ Future<TestApp> pumpSnackify(
     invoices: InvoicesRepository(api),
     payments: PaymentsRepository(api),
     sharePdf: (bytes, filename) async => sharedPdfs.add((filename, utf8.decode(bytes))),
+    readBarcode: scanner.read,
   );
 
   await tester.pumpWidget(SnackifyApp(auth: auth, services: services));
   auth.restore();
   await tester.pumpAndSettle();
-  return TestApp(server, api, store, auth, sharedPdfs);
+  return TestApp(server, api, store, auth, sharedPdfs, scanner);
 }
 
 /// Fills in the login form and presses "Sign in".
@@ -1428,4 +1498,19 @@ Future<void> openSection(WidgetTester tester, String label) async {
   }
   await tester.tap(find.text(label));
   await tester.pumpAndSettle();
+}
+
+/// Stands in for the camera: each scan returns the next queued barcode, or null (as when the
+/// user closes the scanner) once the queue is empty.
+class FakeScanner {
+  final List<String?> queue = [];
+  int scans = 0;
+
+  /// Queues barcodes for the next scans; a null entry is a scan the user cancels.
+  void willRead(List<String?> barcodes) => queue.addAll(barcodes);
+
+  Future<String?> read(BuildContext context) async {
+    scans++;
+    return queue.isEmpty ? null : queue.removeAt(0);
+  }
 }

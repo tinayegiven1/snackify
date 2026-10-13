@@ -4,11 +4,13 @@ import 'package:flutter/services.dart';
 import '../../../core/formatting/dates.dart';
 import '../../../core/formatting/money.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/scanning/barcode_reader.dart';
 import '../../../shared/widgets/message_view.dart';
 import '../../customers/data/customers_repository.dart';
 import '../../customers/presentation/customer_picker.dart';
 import '../../products/data/products_repository.dart';
 import '../../products/presentation/product_picker.dart';
+import '../../products/presentation/scan_product.dart';
 import '../data/dispatches_repository.dart';
 import '../domain/dispatch_models.dart';
 
@@ -20,12 +22,14 @@ class DispatchEditorScreen extends StatefulWidget {
     required this.dispatches,
     required this.customers,
     required this.products,
+    required this.readBarcode,
     this.existing,
   });
 
   final DispatchesRepository dispatches;
   final CustomersRepository customers;
   final ProductsRepository products;
+  final BarcodeReader readBarcode;
   final Dispatch? existing;
 
   @override
@@ -128,6 +132,97 @@ class _DispatchEditorScreenState extends State<DispatchEditorScreen> {
       );
       _showLineError = false;
     });
+  }
+
+  /// Scans a pack and asks how many are going. Scanning a product that is already on the
+  /// dispatch changes its quantity instead of adding it twice (spec 6.7).
+  Future<void> _scanProduct() async {
+    final product = await scanForProduct(
+      context,
+      products: widget.products,
+      readBarcode: widget.readBarcode,
+    );
+    if (product == null || !mounted) return;
+    if (!product.isActive) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${product.description} is inactive and cannot be dispatched.')),
+      );
+      return;
+    }
+
+    final existing = _lines.where((line) => line.productId == product.id).firstOrNull;
+    final quantity = await _askQuantity(product.description, existing?.quantity.text);
+    if (quantity == null || !mounted) return;
+    setState(() {
+      if (existing != null) {
+        existing.quantity.text = '$quantity';
+      } else {
+        _lines.add(
+          _LineEditor(
+            product.id,
+            product.description,
+            quantity: '$quantity',
+            price: product.defaultPrice,
+          ),
+        );
+      }
+      _showLineError = false;
+    });
+  }
+
+  /// How many packs of a scanned product. [current] is set when it is already on the dispatch.
+  Future<int?> _askQuantity(String description, String? current) {
+    final quantity = TextEditingController(text: current);
+    final formKey = GlobalKey<FormState>();
+    void submit(BuildContext context) {
+      if (formKey.currentState!.validate()) {
+        Navigator.of(context).pop(int.parse(quantity.text.trim()));
+      }
+    }
+
+    return showDialog<int>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(current == null ? 'How many packs?' : 'Already on this dispatch'),
+        content: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(description, style: Theme.of(context).textTheme.titleSmall),
+              if (current != null) ...[
+                const SizedBox(height: 4),
+                Text('It is on this dispatch already: change the number of packs if needed.'),
+              ],
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: quantity,
+                autofocus: true,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                onFieldSubmitted: (_) => submit(context),
+                decoration: const InputDecoration(labelText: 'Packs', border: OutlineInputBorder()),
+                validator: (value) {
+                  final packs = int.tryParse((value ?? '').trim());
+                  if (packs == null) return 'Required';
+                  if (packs < 1) return 'Must be at least 1';
+                  if (packs > 100000) return 'Must be at most 100,000';
+                  return null;
+                },
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () => submit(context),
+            child: Text(current == null ? 'Add' : 'Update'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _removeLine(_LineEditor line) {
@@ -267,10 +362,21 @@ class _DispatchEditorScreenState extends State<DispatchEditorScreen> {
                           style: TextStyle(color: theme.colorScheme.error),
                         ),
                       ),
-                    OutlinedButton.icon(
-                      onPressed: _saving ? null : _addProduct,
-                      icon: const Icon(Icons.add),
-                      label: const Text('Add product'),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: _saving ? null : _addProduct,
+                          icon: const Icon(Icons.add),
+                          label: const Text('Add product'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: _saving ? null : _scanProduct,
+                          icon: const Icon(Icons.qr_code_scanner),
+                          label: const Text('Scan barcode'),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 16),
                     Text(
