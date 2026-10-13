@@ -1,6 +1,7 @@
 import '../features/customers/data/customers_repository.dart';
 import '../features/dispatches/data/dispatches_repository.dart';
 import '../features/invoices/data/invoices_repository.dart';
+import '../features/payments/data/payments_repository.dart';
 import '../features/products/data/products_repository.dart';
 import '../features/stock/data/stock_repository.dart';
 import 'files/pdf_sharer.dart';
@@ -14,6 +15,7 @@ class AppServices {
     required this.customers,
     required this.dispatches,
     required this.invoices,
+    required this.payments,
     required this.sharePdf,
   });
 
@@ -24,6 +26,7 @@ class AppServices {
   final CustomersRepository customers;
   final DispatchesRepository dispatches;
   final InvoicesRepository invoices;
+  final PaymentsRepository payments;
 
   /// Downloads (web) or shares (phones) a PDF such as an invoice.
   final PdfSharer sharePdf;

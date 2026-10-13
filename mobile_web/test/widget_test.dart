@@ -22,12 +22,12 @@ void main() {
 
     await tester.tap(find.byTooltip('Open navigation menu'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Payments'));
+    await tester.tap(find.text('Reports'));
     await tester.pumpAndSettle();
 
     expect(find.byType(Drawer), findsNothing);
-    expect(find.widgetWithText(AppBar, 'Payments'), findsOneWidget);
-    expect(find.text('Payments is coming soon'), findsOneWidget);
+    expect(find.widgetWithText(AppBar, 'Reports'), findsOneWidget);
+    expect(find.text('Reports is coming soon'), findsOneWidget);
   });
 
   testWidgets('wide layout uses a permanent sidebar and a low-stock table', (tester) async {
@@ -37,11 +37,11 @@ void main() {
     expect(find.byType(DataTable), findsOneWidget);
     expect(find.text('Tendai Moyo'), findsOneWidget);
 
-    await tester.tap(find.text('Payments'));
+    await tester.tap(find.text('Reports'));
     await tester.pumpAndSettle();
 
-    expect(find.widgetWithText(AppBar, 'Payments'), findsOneWidget);
-    expect(find.text('Payments is coming soon'), findsOneWidget);
+    expect(find.widgetWithText(AppBar, 'Reports'), findsOneWidget);
+    expect(find.text('Reports is coming soon'), findsOneWidget);
   });
 
   testWidgets('shows API online when the backend health check passes', (tester) async {

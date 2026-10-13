@@ -198,9 +198,9 @@ nothing is reversed twice). Confirming locks the dispatch, the customer and ever
 period (`period_from`, `period_to`, both included), `currency` (three letters, from
 `BASE_CURRENCY`), `subtotal` and `total` (`numeric(14,2)`; `total = subtotal` until discounts
 exist), and who/when for each step: `created_by/at`, `issued_by/at`, `voided_by/at` +
-`void_reason`. `invoice_number` (unique, `INV-000001`… from `invoice_number_seq`) and
-`issue_date` are set when the invoice is issued, so voided drafts never leave gaps in the
-numbering. Issuing also copies the customer's code, name, phone and address into `customer_*`
+`void_reason`. `invoice_number` (unique, `INV-000001`… from `invoice_number_seq`),
+`issue_date` and `due_date` (issue date + `PAYMENT_TERMS_DAYS`, default 7) are set when the
+invoice is issued, so voided drafts never leave gaps in the numbering. Issuing also copies the customer's code, name, phone and address into `customer_*`
 columns: the details printed on the invoice, which later customer changes never alter. Check
 constraints require the number, date, snapshot and who/when for issued invoices, and the
 who/when and a reason for voided ones.
@@ -209,7 +209,8 @@ who/when and a reason for voided ones.
 `dispatch_number`, `dispatch_date`, `product_id`, `sku`, `description` (product — flavour —
 size), `quantity`, `unit_price` and `line_total` (checked to equal quantity × unit price).
 
-Indexed by customer and period, by status and issue date, and by invoice (for the lines).
+Indexed by customer and period, by status and issue date, by customer and due date (issued
+invoices, for overdue balances), and by invoice (for the lines).
 
 **Never billed twice:** `UNIQUE (dispatch_item_id)` on `invoice_items` means a dispatch line can
 be on only one invoice. Creating a draft also locks the customer (`FOR UPDATE`) and the
@@ -229,10 +230,47 @@ draft deletes its lines, which releases those dispatch lines to be invoiced agai
 (`BUSINESS_TIMEZONE`, default `Africa/Harare`), with weeks starting on `BILLING_WEEK_STARTS_ON`
 (default Monday). Dates are calendar dates (`date`), so no time-zone conversion applies to them.
 
+### `payments` and `payment_allocations` (spec 6.9)
+
+`payments` records money received: `payment_number` (unique receipt number `P000001`… from
+`payment_number_seq`), `customer_id`, `payment_date` (the business day it was received),
+`amount` (`numeric(14,2)`, above zero), `currency` (from `BASE_CURRENCY`), `method` (`cash`,
+`bank_transfer`, `mobile_money`, `card`, `cheque`, `other`), optional `reference` and `notes`,
+`recorded_by` and `created_at`. `status` is `recorded` or `voided` (with `voided_by/at` and a
+`void_reason`, required by a check constraint). `idempotency_key` (unique, optional) is chosen by
+the app for each new payment, so a request that arrives twice records one payment.
+
+`payment_allocations` says how much of a payment pays which invoice: `payment_id`,
+`invoice_id`, `amount` (above zero), `created_by/at`. A payment can pay several invoices and an
+invoice can be paid by several payments. Whatever is not allocated is credit on the customer's
+account.
+
+Indexed by customer and date, by date, and allocations by payment and by invoice.
+
+**Enforced by the database:**
+
+- A trigger on `payments` allows only one change: `recorded` → `voided`, with nothing else
+  altered. The API role has no `DELETE` on payments, and no `UPDATE` or `DELETE` on allocations.
+- A trigger on `payment_allocations` locks the payment and then the invoice (the order the API
+  uses), and refuses an allocation when the payment is voided, the invoice is not the same
+  customer's issued invoice in the same currency, the payment's allocations would exceed its
+  amount, or the invoice would be paid beyond its total. Locking first means allocations made at
+  the same moment are checked one after the other.
+- Voiding a payment keeps its allocations as history; they stop counting because only
+  allocations of `recorded` payments are added up.
+
+**Views:** `invoice_amounts_paid` (per invoice, the sum of allocations from recorded payments)
+and `payment_amounts_allocated` (per payment, the sum of its allocations). An invoice's balance
+due is `total - amount_paid`.
+
+**What a customer owes** is computed, not stored: confirmed dispatches not yet on an issued
+invoice, plus what is unpaid on issued invoices, less unallocated credit. This equals the value
+of confirmed dispatches less payments received, which is also the balance used for credit-limit
+warnings.
+
 ## Planned tables
 
-Added by later stages, each with its own migration: `credit_notes`, `payments`,
-`payment_allocations`, `forecasts`.
+Added by later stages, each with its own migration: `credit_notes`, `forecasts`.
 
 ## Migrations
 

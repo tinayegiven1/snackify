@@ -11,6 +11,8 @@ import '../../features/dispatches/domain/dispatch_models.dart';
 import '../../features/dispatches/presentation/dispatches_screen.dart';
 import '../../features/invoices/domain/invoice_models.dart';
 import '../../features/invoices/presentation/invoices_screen.dart';
+import '../../features/payments/domain/payment_models.dart';
+import '../../features/payments/presentation/payments_screen.dart';
 import '../../features/products/presentation/products_screen.dart';
 import '../../features/stock/presentation/stock_screen.dart';
 import 'api_status_indicator.dart';
@@ -85,6 +87,18 @@ class _AppShellState extends State<AppShell> {
         icon: Icons.lock_outline,
         title: 'Invoices are for accounts staff',
         message: 'Ask an administrator or a member of the accounts team for invoice details.',
+      ),
+      'Payments' when canUsePayments(widget.user.role) => PaymentsScreen(
+        payments: widget.services.payments,
+        customers: widget.services.customers,
+        invoices: widget.services.invoices,
+        sharePdf: widget.services.sharePdf,
+        canVoid: canVoidPayments(widget.user.role),
+      ),
+      'Payments' => const MessageView(
+        icon: Icons.lock_outline,
+        title: 'Payments are for accounts staff',
+        message: 'Ask an administrator or a member of the accounts team about payments.',
       ),
       _ => ComingSoonView(title: destination.label),
     };

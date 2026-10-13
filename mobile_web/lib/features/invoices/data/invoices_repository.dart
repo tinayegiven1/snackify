@@ -9,10 +9,20 @@ class InvoicesRepository {
 
   final ApiClient _api;
 
-  Future<List<InvoiceSummary>> list({InvoiceStatus? status, String search = ''}) async {
+  Future<List<InvoiceSummary>> list({
+    InvoiceFilter filter = InvoiceFilter.all,
+    String search = '',
+  }) async {
     final query = Uri(
       queryParameters: {
-        'status': ?status?.name,
+        ...switch (filter) {
+          InvoiceFilter.all => const <String, String>{},
+          InvoiceFilter.drafts => {'status': 'draft'},
+          InvoiceFilter.issued => {'status': 'issued'},
+          InvoiceFilter.unpaid => {'payment': 'unpaid'},
+          InvoiceFilter.overdue => {'payment': 'overdue'},
+          InvoiceFilter.voided => {'status': 'voided'},
+        },
         if (search.trim().isNotEmpty) 'q': search.trim(),
         'limit': '200',
       },

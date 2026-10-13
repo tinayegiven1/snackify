@@ -27,7 +27,7 @@ class InvoicesScreen extends StatefulWidget {
 class _InvoicesScreenState extends State<InvoicesScreen> {
   final _search = TextEditingController();
   Timer? _searchDelay;
-  InvoiceStatus? _status;
+  InvoiceFilter _filter = InvoiceFilter.all;
   int _latestRequest = 0;
   bool _loading = true;
   String? _error;
@@ -53,7 +53,7 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
       _error = null;
     });
     try {
-      final invoices = await widget.invoices.list(status: _status, search: _search.text);
+      final invoices = await widget.invoices.list(filter: _filter, search: _search.text);
       if (!mounted || request != _latestRequest) return;
       setState(() {
         _invoices = invoices;
@@ -100,7 +100,7 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
           ),
         ),
       );
-      _status = created == 0 ? _status : InvoiceStatus.draft;
+      _filter = created == 0 ? _filter : InvoiceFilter.drafts;
     }
     _load();
   }
@@ -137,17 +137,12 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
             child: Wrap(
               spacing: 8,
               children: [
-                for (final (label, status) in [
-                  ('All', null),
-                  ('Drafts', InvoiceStatus.draft),
-                  ('Issued', InvoiceStatus.issued),
-                  ('Voided', InvoiceStatus.voided),
-                ])
+                for (final filter in InvoiceFilter.values)
                   ChoiceChip(
-                    label: Text(label),
-                    selected: _status == status,
+                    label: Text(filter.label),
+                    selected: _filter == filter,
                     onSelected: (_) {
-                      setState(() => _status = status);
+                      setState(() => _filter = filter);
                       _load();
                     },
                   ),
@@ -198,7 +193,13 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
           trailing: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.end,
-            children: [Text(withCurrency(invoice.total)), InvoiceStatusBadge(invoice.status)],
+            children: [
+              Text(withCurrency(invoice.total)),
+              if (invoice.paymentStatus case final paymentStatus?)
+                InvoicePaymentBadge(paymentStatus, overdue: invoice.overdue)
+              else
+                InvoiceStatusBadge(invoice.status),
+            ],
           ),
           onTap: () => _open(invoice.id),
         );

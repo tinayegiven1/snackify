@@ -183,10 +183,17 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   InvoiceStatusBadge(invoice.status),
+                  if (invoice.paymentStatus case final paymentStatus?)
+                    InvoicePaymentBadge(paymentStatus, overdue: invoice.overdue),
                   if (invoice.issueDate != null)
                     Text('Issued ${formatApiDate(invoice.issueDate!)}')
                   else if (isDraft)
                     const Text('Not issued yet'),
+                  if (invoice.dueDate != null)
+                    Text(
+                      'Due ${formatApiDate(invoice.dueDate!)}',
+                      style: invoice.overdue ? TextStyle(color: theme.colorScheme.error) : null,
+                    ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -222,6 +229,25 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
                   ('Balance due', invoice.balanceDue, true),
                 ],
               ),
+              if (invoice.payments.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Text('Payments', style: theme.textTheme.titleMedium),
+                Card(
+                  child: Column(
+                    children: [
+                      for (final payment in invoice.payments)
+                        ListTile(
+                          dense: true,
+                          title: Text(payment.paymentNumber),
+                          subtitle: Text(
+                            '${formatApiDate(payment.paymentDate)} · ${payment.method.label}',
+                          ),
+                          trailing: Text(money(invoice.currency, payment.amount)),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               Text('Created by ${invoice.createdBy}', style: theme.textTheme.bodySmall),
               if (invoice.issuedBy != null)

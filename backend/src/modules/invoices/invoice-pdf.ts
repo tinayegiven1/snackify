@@ -62,6 +62,7 @@ export function renderInvoicePdf(
       ? `Invoice number: ${invoice.invoiceNumber}`
       : 'Not issued: not a valid invoice',
     invoice.issueDate ? `Issue date: ${displayDate(invoice.issueDate)}` : null,
+    invoice.dueDate ? `Due date: ${displayDate(invoice.dueDate)}` : null,
     `Period: ${displayDate(invoice.periodFrom)} – ${displayDate(invoice.periodTo)}`,
   ].filter((line): line is string => line !== null);
   for (const line of details) doc.text(line, 330, doc.y, { width: 215, align: 'right' });

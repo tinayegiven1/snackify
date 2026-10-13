@@ -122,3 +122,35 @@ class InvoiceNotice extends StatelessWidget {
     );
   }
 }
+
+/// Whether an issued invoice is paid, part paid, unpaid or overdue.
+class InvoicePaymentBadge extends StatelessWidget {
+  const InvoicePaymentBadge(this.status, {super.key, required this.overdue});
+
+  final InvoicePaymentStatus status;
+  final bool overdue;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    if (overdue) {
+      return StatusBadge(
+        'Overdue',
+        color: colorScheme.errorContainer,
+        textColor: colorScheme.onErrorContainer,
+      );
+    }
+    final (background, foreground) = switch (status) {
+      InvoicePaymentStatus.paid => (Colors.green.shade100, Colors.green.shade900),
+      InvoicePaymentStatus.partPaid => (
+        colorScheme.tertiaryContainer,
+        colorScheme.onTertiaryContainer,
+      ),
+      InvoicePaymentStatus.unpaid => (
+        colorScheme.secondaryContainer,
+        colorScheme.onSecondaryContainer,
+      ),
+    };
+    return StatusBadge(status.label, color: background, textColor: foreground);
+  }
+}

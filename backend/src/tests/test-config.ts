@@ -11,6 +11,7 @@ export const testConfig: AppConfig = {
   businessTimezone: 'Africa/Harare',
   billingWeekStartsOn: 1,
   baseCurrency: 'USD',
+  paymentTermsDays: 7,
   business: { name: 'Snackify Test Foods', contact: '12 Example Road, Harare' },
 };
 

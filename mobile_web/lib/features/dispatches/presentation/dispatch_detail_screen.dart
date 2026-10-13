@@ -266,8 +266,8 @@ class _DispatchDetailScreenState extends State<DispatchDetailScreen> {
                   message:
                       'Over credit limit: confirming takes the unpaid balance to '
                       '${withCurrency(credit.balanceAfter)} (limit '
-                      '${withCurrency(credit.creditLimit!)}). Until payments are recorded, '
-                      'every confirmed dispatch counts as unpaid.',
+                      '${withCurrency(credit.creditLimit!)}). The unpaid balance is every confirmed '
+                      'dispatch less the payments received.',
                 ),
               if (isDraft && dispatch.shortLines.isNotEmpty)
                 _Notice(

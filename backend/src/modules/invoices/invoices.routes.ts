@@ -31,6 +31,7 @@ const listQuerySchema = z.object({
   status: z
     .enum(['draft', 'issued', 'voided'], { error: 'Must be draft, issued or voided' })
     .optional(),
+  payment: z.enum(['unpaid', 'overdue'], { error: 'Must be unpaid or overdue' }).optional(),
   customerId: z.uuid().optional(),
   q: z.string().trim().max(100).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -91,7 +92,7 @@ export function invoicesRouter(db: pg.Pool, config: AppConfig): Router {
 
   router.get('/', async (req, res) => {
     const search = parseBody(listQuerySchema, req.query);
-    res.json(await listInvoices(db, search));
+    res.json(await listInvoices(db, search, today()));
   });
 
   /** A draft invoice for one customer and period. */
@@ -121,12 +122,12 @@ export function invoicesRouter(db: pg.Pool, config: AppConfig): Router {
 
   router.get('/:id', async (req, res) => {
     const id = parseIdParam(req.params.id, invoiceNotFound);
-    res.json({ invoice: await getInvoice(db, id) });
+    res.json({ invoice: await getInvoice(db, id, today()) });
   });
 
   router.get('/:id/pdf', async (req, res) => {
     const id = parseIdParam(req.params.id, invoiceNotFound);
-    const invoice = await getInvoice(db, id);
+    const invoice = await getInvoice(db, id, today());
     const pdf = await renderInvoicePdf(invoice, config.business);
     const name = invoice.invoiceNumber ?? `draft-${invoice.customer.code}-${invoice.periodFrom}`;
     res
@@ -138,7 +139,8 @@ export function invoicesRouter(db: pg.Pool, config: AppConfig): Router {
 
   router.post('/:id/issue', async (req, res) => {
     const id = parseIdParam(req.params.id, invoiceNotFound);
-    res.json({ invoice: await issueInvoice(db, id, getAuth(res).user, today()) });
+    const invoice = await issueInvoice(db, id, getAuth(res).user, today(), config.paymentTermsDays);
+    res.json({ invoice });
   });
 
   router.post('/:id/void', async (req, res) => {

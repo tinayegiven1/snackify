@@ -1,5 +1,6 @@
 import '../../../core/formatting/dates.dart';
 import '../../auth/domain/app_user.dart';
+import '../../payments/domain/payment_models.dart';
 
 enum InvoiceStatus {
   draft('Draft'),
@@ -140,8 +141,12 @@ class Invoice {
     required this.lines,
     required this.subtotal,
     required this.total,
+    required this.dueDate,
     required this.amountPaid,
     required this.balanceDue,
+    required this.paymentStatus,
+    required this.overdue,
+    required this.payments,
     required this.createdBy,
     required this.issuedBy,
     required this.voidReason,
@@ -160,8 +165,15 @@ class Invoice {
     ],
     subtotal: json['subtotal'] as String,
     total: json['total'] as String,
+    dueDate: json['dueDate'] as String?,
     amountPaid: json['amountPaid'] as String,
     balanceDue: json['balanceDue'] as String,
+    paymentStatus: InvoicePaymentStatus.fromApi(json['paymentStatus'] as String?),
+    overdue: json['overdue'] as bool,
+    payments: [
+      for (final payment in json['payments'] as List)
+        InvoicePayment.fromJson(payment as Map<String, dynamic>),
+    ],
     createdBy: json['createdBy'] as String,
     issuedBy: json['issuedBy'] as String?,
     voidReason: json['voidReason'] as String?,
@@ -181,8 +193,20 @@ class Invoice {
   final List<InvoiceLine> lines;
   final String subtotal;
   final String total;
+
+  /// Set when issued: the issue date plus the payment terms.
+  final String? dueDate;
   final String amountPaid;
   final String balanceDue;
+
+  /// Issued invoices only.
+  final InvoicePaymentStatus? paymentStatus;
+
+  /// Issued, not fully paid, and past the due date.
+  final bool overdue;
+
+  /// The payments that paid it, oldest first.
+  final List<InvoicePayment> payments;
   final String createdBy;
   final String? issuedBy;
   final String? voidReason;
@@ -203,6 +227,9 @@ class InvoiceSummary {
     required this.period,
     required this.issueDate,
     required this.total,
+    required this.balanceDue,
+    required this.paymentStatus,
+    required this.overdue,
     required this.lineCount,
   });
 
@@ -214,6 +241,9 @@ class InvoiceSummary {
     period: BillingPeriod(json['periodFrom'] as String, json['periodTo'] as String),
     issueDate: json['issueDate'] as String?,
     total: json['total'] as String,
+    balanceDue: json['balanceDue'] as String,
+    paymentStatus: InvoicePaymentStatus.fromApi(json['paymentStatus'] as String?),
+    overdue: json['overdue'] as bool,
     lineCount: json['lineCount'] as int,
   );
 
@@ -224,7 +254,65 @@ class InvoiceSummary {
   final BillingPeriod period;
   final String? issueDate;
   final String total;
+  final String balanceDue;
+  final InvoicePaymentStatus? paymentStatus;
+  final bool overdue;
   final int lineCount;
+}
+
+/// How much of an issued invoice has been paid.
+enum InvoicePaymentStatus {
+  unpaid('unpaid', 'Unpaid'),
+  partPaid('part_paid', 'Part paid'),
+  paid('paid', 'Paid');
+
+  const InvoicePaymentStatus(this.apiName, this.label);
+
+  final String apiName;
+  final String label;
+
+  static InvoicePaymentStatus? fromApi(String? value) => value == null
+      ? null
+      : InvoicePaymentStatus.values.firstWhere((status) => status.apiName == value);
+}
+
+/// A payment (or part of one) applied to an invoice.
+class InvoicePayment {
+  const InvoicePayment({
+    required this.paymentId,
+    required this.paymentNumber,
+    required this.paymentDate,
+    required this.method,
+    required this.amount,
+  });
+
+  factory InvoicePayment.fromJson(Map<String, dynamic> json) => InvoicePayment(
+    paymentId: json['paymentId'] as String,
+    paymentNumber: json['paymentNumber'] as String,
+    paymentDate: json['paymentDate'] as String,
+    method: PaymentMethod.fromApi(json['method'] as String),
+    amount: json['amount'] as String,
+  );
+
+  final String paymentId;
+  final String paymentNumber;
+  final String paymentDate;
+  final PaymentMethod method;
+  final String amount;
+}
+
+/// Filters for the invoices list.
+enum InvoiceFilter {
+  all('All'),
+  drafts('Drafts'),
+  issued('Issued'),
+  unpaid('Unpaid'),
+  overdue('Overdue'),
+  voided('Voided');
+
+  const InvoiceFilter(this.label);
+
+  final String label;
 }
 
 /// A customer with confirmed dispatches in the period that are not on any invoice yet.

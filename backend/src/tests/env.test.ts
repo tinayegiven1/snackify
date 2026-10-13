@@ -13,6 +13,7 @@ describe('loadConfig', () => {
       businessTimezone: 'Africa/Harare',
       billingWeekStartsOn: 1,
       baseCurrency: 'USD',
+      paymentTermsDays: 7,
       business: { name: 'Snackify', contact: null },
     });
   });
@@ -64,6 +65,24 @@ describe('loadConfig', () => {
 
   it('rejects an empty CORS origin list', () => {
     expect(() => loadConfig({ DATABASE_URL, CORS_ORIGINS: ' , ' })).toThrow(/CORS_ORIGINS/);
+  });
+
+  it('reads the billing settings and rejects nonsense', () => {
+    const config = loadConfig({
+      DATABASE_URL,
+      BILLING_WEEK_STARTS_ON: 'sunday',
+      PAYMENT_TERMS_DAYS: '14',
+    });
+    expect(config).toMatchObject({ billingWeekStartsOn: 7, paymentTermsDays: 14 });
+
+    for (const days of ['-1', '400', '7.5', 'a week']) {
+      expect(() => loadConfig({ DATABASE_URL, PAYMENT_TERMS_DAYS: days }), days).toThrow(
+        /PAYMENT_TERMS_DAYS/,
+      );
+    }
+    expect(() => loadConfig({ DATABASE_URL, BILLING_WEEK_STARTS_ON: 'funday' })).toThrow(
+      /BILLING_WEEK_STARTS_ON/,
+    );
   });
 });
 

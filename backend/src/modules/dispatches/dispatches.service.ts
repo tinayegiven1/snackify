@@ -24,8 +24,8 @@ export interface DispatchLine {
 }
 
 /**
- * What confirming would do to the customer's unpaid balance. Until payments are recorded
- * (a later stage), every confirmed dispatch counts as unpaid.
+ * What confirming would do to the customer's unpaid balance: the value of their confirmed
+ * dispatches (invoiced or not) less the payments received from them.
  */
 export interface CreditCheck {
   creditLimit: string | null;
@@ -94,7 +94,10 @@ interface HeaderRow {
   reversal_reason: string | null;
 }
 
-/** The customer's unpaid balance (confirmed dispatches) and the effect of adding `amount`. */
+/**
+ * The customer's unpaid balance (confirmed dispatches less payments that have not been voided)
+ * and the effect of adding `amount`.
+ */
 async function creditCheck(
   db: Queryable,
   customerId: string,
@@ -103,9 +106,13 @@ async function creditCheck(
 ): Promise<CreditCheck> {
   const { rows } = await db.query<{ before: string; after: string; exceeds: boolean }>(
     `WITH balance AS (
-       SELECT COALESCE(sum(i.quantity * i.unit_price), 0) AS before
-       FROM dispatches d JOIN dispatch_items i ON i.dispatch_id = d.id
-       WHERE d.customer_id = $1 AND d.status = 'confirmed'
+       SELECT
+         (SELECT COALESCE(sum(i.quantity * i.unit_price), 0)
+          FROM dispatches d JOIN dispatch_items i ON i.dispatch_id = d.id
+          WHERE d.customer_id = $1 AND d.status = 'confirmed')
+         - (SELECT COALESCE(sum(p.amount), 0)
+            FROM payments p
+            WHERE p.customer_id = $1 AND p.status = 'recorded') AS before
      )
      SELECT before::numeric(14, 2)::text AS before,
             (before + $2::numeric)::numeric(14, 2)::text AS after,

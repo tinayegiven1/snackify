@@ -12,6 +12,7 @@ import 'features/auth/presentation/auth_controller.dart';
 import 'features/customers/data/customers_repository.dart';
 import 'features/dispatches/data/dispatches_repository.dart';
 import 'features/invoices/data/invoices_repository.dart';
+import 'features/payments/data/payments_repository.dart';
 import 'features/products/data/products_repository.dart';
 import 'features/stock/data/stock_repository.dart';
 
@@ -25,6 +26,7 @@ void main() {
     customers: CustomersRepository(api),
     dispatches: DispatchesRepository(api),
     invoices: InvoicesRepository(api),
+    payments: PaymentsRepository(api),
     sharePdf: sharePdfWithDevice,
   );
   runApp(SnackifyApp(auth: auth, services: services));

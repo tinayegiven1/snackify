@@ -528,9 +528,9 @@ Rules:
   credit limit, the request is refused with **409** `CREDIT_LIMIT_EXCEEDED` and
   `details: { creditLimit, balanceBefore, dispatchTotal, balanceAfter, exceedsLimit }`. Send
   the confirmation again with `"acknowledgeCreditLimit": true` to go ahead; the dispatch is then
-  marked `confirmedOverCreditLimit` and the audit log records the override. **Until payments are
-  recorded (a later stage), every confirmed dispatch counts as unpaid**, so warnings appear
-  earlier than they eventually will.
+  marked `confirmedOverCreditLimit` and the audit log records the override. The **unpaid
+  balance** is the value of the customer's confirmed dispatches (invoiced or not) less the
+  payments received from them (voided payments do not count).
 
 Changes are recorded in the audit log: `dispatch.confirmed`, `dispatch.cancelled`,
 `dispatch.reversed`.
@@ -677,15 +677,18 @@ Rules:
   `NOTHING_TO_INVOICE` (or, rarely, `ALREADY_INVOICED`); refresh and try again.
 - **A dispatch on an invoice cannot be reversed** (**409** `DISPATCH_INVOICED`).
 - **Issuing** gives the invoice the next number (`INV-000001`, …; voided drafts never use a
-  number, so there are no gaps), today's date as the issue date, and freezes the customer's
-  name, code, phone and address as printed. Issuing again changes nothing.
+  number, so there are no gaps), today's date as the issue date, a **due date**
+  `PAYMENT_TERMS_DAYS` later (default 7), and freezes the customer's name, code, phone and
+  address as printed. Issuing again changes nothing.
 - **Issued invoices never change** and cannot be voided (**409** `INVOICE_ISSUED`); the database
   itself refuses changes. Mistakes will be corrected with credit notes (a later stage).
 - **Voiding a draft** (with a reason) releases its dispatch lines so they can be invoiced again.
 - **Totals.** `total` equals `subtotal`, the sum of the lines (no discounts yet; the database
-  checks this when issuing). `amountPaid` is `"0.00"` and `balanceDue` equals `total` until
-  payments are recorded in a later stage. All amounts are in `currency` (`BASE_CURRENCY`,
-  default `USD`).
+  checks this when issuing). `amountPaid` is what payments that have not been voided allocated
+  to it, and `balanceDue` is `total - amountPaid` (`0.00` for a voided draft). For issued
+  invoices, `paymentStatus` is `unpaid`, `part_paid` or `paid`, and `overdue` is `true` when
+  something is still owed after the due date (in the business time zone). All amounts are in
+  `currency` (`BASE_CURRENCY`, default `USD`).
 
 Changes are recorded in the audit log: `invoice.issued`, `invoice.voided`.
 
@@ -758,8 +761,12 @@ What a draft for one customer would contain. Changes nothing. Query: `customerId
     "lines": [ { "…": "as in the preview" } ],
     "subtotal": "6.00",
     "total": "6.00",
+    "dueDate": null,
     "amountPaid": "0.00",
     "balanceDue": "6.00",
+    "paymentStatus": null,
+    "overdue": false,
+    "payments": [],
     "createdBy": "Rudo Accounts",
     "createdAt": "2026-10-12T08:30:00.000Z",
     "issuedBy": null,
@@ -780,8 +787,8 @@ dispatches in the period, each in its own transaction. **201 Created** with
 
 ### `POST /api/v1/invoices/:id/issue`
 
-**200 OK** with `{ "invoice": { … } }`, now `issued` with its number and issue date. **409**
-`INVOICE_VOIDED` for a voided draft.
+**200 OK** with `{ "invoice": { … } }`, now `issued` with its number, issue date and due date.
+**409** `INVOICE_VOIDED` for a voided draft.
 
 ### `POST /api/v1/invoices/:id/void` (drafts only)
 
@@ -791,8 +798,9 @@ dispatches in the period, each in its own transaction. **201 Created** with
 
 ### `GET /api/v1/invoices`
 
-Query: optional `status` (`draft`, `issued`, `voided`), `customerId`, `q` (part of the invoice
-number or customer name), `limit` (1–200, default 50), `offset`. Newest first.
+Query: optional `status` (`draft`, `issued`, `voided`), `payment` (`unpaid`: issued and not
+fully paid; `overdue`: also past the due date), `customerId`, `q` (part of the invoice number
+or customer name), `limit` (1–200, default 50), `offset`. Newest first.
 
 ```json
 {
@@ -805,7 +813,12 @@ number or customer name), `limit` (1–200, default 50), `offset`. Newest first.
       "periodFrom": "2026-10-05",
       "periodTo": "2026-10-11",
       "issueDate": "2026-10-12",
+      "dueDate": "2026-10-19",
       "total": "7.50",
+      "amountPaid": "2.00",
+      "balanceDue": "5.50",
+      "paymentStatus": "part_paid",
+      "overdue": false,
       "currency": "USD",
       "lineCount": 2
     }
@@ -816,13 +829,210 @@ number or customer name), `limit` (1–200, default 50), `offset`. Newest first.
 
 ### `GET /api/v1/invoices/:id`
 
-**200 OK** with `{ "invoice": { … } }` as above.
+**200 OK** with `{ "invoice": { … } }` as above. `payments` lists what paid it, oldest first:
+`[{ "paymentId", "paymentNumber": "P000001", "paymentDate", "method": "cash", "amount": "2.00" }]`.
 
 ### `GET /api/v1/invoices/:id/pdf`
 
 The invoice as an A4 PDF (`Content-Type: application/pdf`, file name `INV-000001.pdf`, or
 `draft-C0001-2026-10-05.pdf` for a draft). It shows the business name and contact line
-(`BUSINESS_NAME`, `BUSINESS_CONTACT`), invoice number, issue date, period, the customer, every
+(`BUSINESS_NAME`, `BUSINESS_CONTACT`), invoice number, issue and due dates, period, the customer, every
 line (dispatch date and number, product with flavour and size, quantity, unit price, amount),
 subtotal, total, amount paid and balance due. Drafts are headed **DRAFT INVOICE** and say they
 are not a valid invoice; voided drafts are headed **VOIDED DRAFT**.
+
+## Payments
+
+Money received from customers (spec 6.9). Accounts staff and admins record payments; only
+admins void one. Everyone else gets **403**.
+
+Rules:
+
+- **A payment is in the base currency** (`BASE_CURRENCY`, default `USD`). Payments in another
+  currency need an exchange-rate rule first, so they are not accepted yet.
+- **Allocation.** A payment can pay one or more of the same customer's **issued** invoices, in
+  parts or in full. Allocations never add up to more than the payment, and an invoice is never
+  paid beyond its total (**409** `ALLOCATION_EXCEEDS_PAYMENT` / `ALLOCATION_EXCEEDS_BALANCE`,
+  the latter with `details: { invoiceId, balanceDue }`). Drafts and voided drafts cannot be paid
+  (**409** `INVOICE_NOT_ISSUED`), nor can another customer's invoice (**409**
+  `INVOICE_OTHER_CUSTOMER`).
+- **Credit.** Whatever is not allocated stays as credit on the customer's account. It can be
+  allocated later, for example to next week's invoice.
+- **Simultaneous allocations** are checked one after the other (the payment and invoices are
+  locked), so two people cannot overpay the same invoice. The database checks the same rules.
+- **No duplicates.** Send a fresh `idempotencyKey` (a UUID) with each new payment. If the same
+  request arrives again (a double tap, or a retry after a dropped connection), the payment
+  already recorded is returned with **200 OK** and `"duplicate": true` instead of recording it
+  twice. Reusing a key for a different payment is refused (**409** `IDEMPOTENCY_KEY_REUSED`).
+- **Payments are never edited or deleted**, enforced by the database. A payment recorded by
+  mistake is **voided** by an admin with a reason: its allocations stay as history but no
+  longer count, so the invoices it paid are owed again. Record it again with the right details.
+- A payment is money received; an invoice or dispatch is never treated as proof of payment.
+
+Changes are recorded in the audit log: `payment.recorded`, `payment.allocated`,
+`payment.voided`.
+
+### `POST /api/v1/payments`
+
+```json
+{
+  "customerId": "…",
+  "paymentDate": "2026-10-12",
+  "amount": "20.00",
+  "method": "mobile_money",
+  "reference": "MP261012.1234",
+  "notes": null,
+  "idempotencyKey": "8f14e45f-ceea-4e7a-9b8a-1f3c5d2e7a90",
+  "allocations": [
+    { "invoiceId": "…", "amount": "10.00" },
+    { "invoiceId": "…", "amount": "5.00" }
+  ]
+}
+```
+
+`method` is one of `cash`, `bank_transfer`, `mobile_money`, `card`, `cheque`, `other`.
+`paymentDate` cannot be in the future. `reference` (up to 100 characters), `notes` (up to 500),
+`idempotencyKey` and `allocations` are optional. **201 Created**:
+
+```json
+{
+  "duplicate": false,
+  "payment": {
+    "id": "…",
+    "paymentNumber": "P000001",
+    "status": "recorded",
+    "customer": { "id": "…", "code": "C0001", "name": "Avondale Tuckshop" },
+    "paymentDate": "2026-10-12",
+    "amount": "20.00",
+    "currency": "USD",
+    "method": "mobile_money",
+    "reference": "MP261012.1234",
+    "notes": null,
+    "allocations": [
+      {
+        "invoiceId": "…",
+        "invoiceNumber": "INV-000001",
+        "amount": "10.00",
+        "allocatedBy": "Rudo Accounts",
+        "allocatedAt": "2026-10-12T09:15:00.000Z"
+      }
+    ],
+    "allocatedAmount": "15.00",
+    "unallocatedAmount": "5.00",
+    "recordedBy": "Rudo Accounts",
+    "recordedAt": "2026-10-12T09:15:00.000Z",
+    "voidedBy": null,
+    "voidedAt": null,
+    "voidReason": null
+  }
+}
+```
+
+### `POST /api/v1/payments/:id/allocations` (allocate credit)
+
+```json
+{ "allocations": [{ "invoiceId": "…", "amount": "3.00" }] }
+```
+
+**200 OK** with `{ "payment": { … } }`. **409** `PAYMENT_VOIDED` for a voided payment.
+
+### `POST /api/v1/payments/:id/void` (admins only)
+
+```json
+{ "reason": "Cheque bounced" }
+```
+
+**200 OK** with `{ "payment": { … } }`, now `voided` with `unallocatedAmount` `"0.00"`. Voiding
+again changes nothing.
+
+### `GET /api/v1/payments`
+
+Query: optional `customerId`, `status` (`recorded`, `voided`), `from`, `to` (payment dates),
+`q` (part of the receipt number, reference or customer name), `limit` (1–200, default 50),
+`offset`. Newest first: `{ "payments": [ … ], "total": 1 }`, each with `id`, `paymentNumber`,
+`status`, `customer`, `paymentDate`, `amount`, `currency`, `method`, `reference`,
+`allocatedAmount` and `unallocatedAmount`.
+
+### `GET /api/v1/payments/:id`
+
+**200 OK** with `{ "payment": { … } }` as above.
+
+## Balances and statements
+
+What customers owe, as separate measures (spec 6.10: dispatch value, invoiced sales and cash
+received are never mixed). Accounts staff and admins only.
+
+| Measure             | Meaning                                                              |
+| ------------------- | -------------------------------------------------------------------- |
+| `notYetInvoiced`    | Confirmed dispatches not on an issued invoice yet (including drafts) |
+| `invoicedUnpaid`    | Still owed on issued invoices                                        |
+| `overdue`           | The part of `invoicedUnpaid` past its due date                       |
+| `unallocatedCredit` | Payments received but not yet allocated to an invoice                |
+| `balance`           | `notYetInvoiced + invoicedUnpaid - unallocatedCredit`: confirmed dispatches less payments received; negative when the customer has paid in advance |
+
+The same `balance` is what dispatch credit-limit warnings use.
+
+### `GET /api/v1/balances`
+
+Every customer with confirmed dispatches or payments, most overdue first, then largest balance.
+
+```json
+{
+  "currency": "USD",
+  "customers": [
+    {
+      "customer": { "id": "…", "code": "C0001", "name": "Avondale Tuckshop", "creditLimit": null },
+      "notYetInvoiced": "2.00",
+      "invoicedUnpaid": "12.00",
+      "overdue": "7.00",
+      "unallocatedCredit": "1.00",
+      "balance": "13.00",
+      "oldestOverdueDueDate": "2026-09-29"
+    }
+  ],
+  "totals": {
+    "notYetInvoiced": "2.00",
+    "invoicedUnpaid": "12.00",
+    "overdue": "7.00",
+    "unallocatedCredit": "1.00",
+    "balance": "13.00"
+  }
+}
+```
+
+### `GET /api/v1/balances/:customerId` (account and statement)
+
+Query: optional `from`, `to` for the statement (default: the last 90 days up to today; at most
+366 days).
+
+```json
+{
+  "account": {
+    "customer": { "id": "…", "code": "C0001", "name": "Avondale Tuckshop", "phone": null, "address": null, "creditLimit": null },
+    "currency": "USD",
+    "summary": { "notYetInvoiced": "0.00", "invoicedUnpaid": "11.00", "overdue": "6.00", "unallocatedCredit": "1.50", "balance": "9.50", "oldestOverdueDueDate": "2026-09-09" },
+    "openInvoices": [
+      { "id": "…", "invoiceNumber": "INV-000001", "issueDate": "2026-09-02", "dueDate": "2026-09-09", "total": "10.00", "amountPaid": "4.00", "balanceDue": "6.00", "overdue": true, "daysOverdue": 33 }
+    ],
+    "creditPayments": [
+      { "id": "…", "paymentNumber": "P000002", "paymentDate": "2026-10-10", "amount": "1.50", "unallocatedAmount": "1.50" }
+    ],
+    "statement": {
+      "from": "2026-09-06",
+      "to": "2026-10-12",
+      "openingBalance": "10.00",
+      "entries": [
+        { "date": "2026-09-07", "type": "payment", "id": "…", "reference": "P000001", "periodFrom": null, "periodTo": null, "method": "cash", "paymentReference": null, "debit": null, "credit": "4.00", "balance": "6.00" },
+        { "date": "2026-10-12", "type": "invoice", "id": "…", "reference": "INV-000002", "periodFrom": "2026-10-05", "periodTo": "2026-10-11", "method": null, "paymentReference": null, "debit": "5.00", "credit": null, "balance": "11.00" }
+      ],
+      "closingBalance": "11.00"
+    }
+  }
+}
+```
+
+`openInvoices` are issued invoices not fully paid, oldest due date first. The **statement**
+lists issued invoices (debits, on their issue date) and payments (credits, on the date received)
+with a running balance; the opening balance carries in everything before `from`. Voided payments
+and draft invoices are not on a statement, and dispatches not yet invoiced appear only in the
+summary (`notYetInvoiced`).

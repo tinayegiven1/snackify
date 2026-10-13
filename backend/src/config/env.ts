@@ -14,6 +14,8 @@ export interface AppConfig {
   billingWeekStartsOn: number;
   /** ISO 4217 code of the currency prices are in, stored on every invoice, e.g. USD. */
   baseCurrency: string;
+  /** Days after the issue date that an invoice is due, e.g. 7. */
+  paymentTermsDays: number;
   /** Printed at the top of invoices. */
   business: { name: string; contact: string | null };
 }
@@ -78,6 +80,12 @@ const envSchema = z.object({
     .string()
     .regex(/^[A-Z]{3}$/, 'Must be a 3-letter currency code such as USD')
     .default('USD'),
+  PAYMENT_TERMS_DAYS: z.coerce
+    .number({ error: 'Must be a whole number of days' })
+    .int('Must be a whole number of days')
+    .min(0, 'Must be 0 or more')
+    .max(365, 'Must be at most 365')
+    .default(7),
   BUSINESS_NAME: z.string().trim().min(1).max(100).default('Snackify'),
   BUSINESS_CONTACT: z.string().trim().max(200).optional(),
 });
@@ -110,6 +118,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     businessTimezone: result.data.BUSINESS_TIMEZONE,
     billingWeekStartsOn: WEEKDAYS.indexOf(result.data.BILLING_WEEK_STARTS_ON) + 1,
     baseCurrency: result.data.BASE_CURRENCY,
+    paymentTermsDays: result.data.PAYMENT_TERMS_DAYS,
     business: { name: result.data.BUSINESS_NAME, contact: result.data.BUSINESS_CONTACT || null },
   };
 }

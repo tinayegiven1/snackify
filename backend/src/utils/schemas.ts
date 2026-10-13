@@ -10,7 +10,8 @@ export const moneySchema = z
   .transform((value) => String(value).trim())
   .refine(
     (value) => /^\d{1,10}(\.\d{1,2})?$/.test(value),
-    'Use an amount of 0 or more with up to 2 decimal places, e.g. 0.50',
+    // Stop here when the format is wrong, so later checks (e.g. "more than 0") add no noise.
+    { message: 'Use an amount of 0 or more with up to 2 decimal places, e.g. 0.50', abort: true },
   );
 
 /** Optional text: trimmed, and empty text or null counts as "not given" (null). */

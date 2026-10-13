@@ -2,6 +2,8 @@ import type pg from 'pg';
 import { escapeLike } from '../../database/sql.js';
 import { isUniqueViolation, withTransaction, type Queryable } from '../../database/transaction.js';
 import { AppError } from '../../utils/app-error.js';
+import { addDays } from '../../utils/dates.js';
+import { fromCents, toCents } from '../../utils/money.js';
 import { recordAudit } from '../audit/audit.js';
 import type { PublicUser } from '../auth/roles.js';
 
@@ -39,9 +41,18 @@ export interface Invoice {
   lines: InvoiceLine[];
   subtotal: string;
   total: string;
-  /** Payments are recorded in a later stage; until then nothing has been paid. */
+  /** Set when the invoice is issued: the issue date plus the payment terms. */
+  dueDate: string | null;
+  /** Allocations from payments that have not been voided. */
   amountPaid: string;
+  /** What is still owed: total minus amount paid (0.00 for a voided draft). */
   balanceDue: string;
+  /** For issued invoices only; null for drafts and voided drafts. */
+  paymentStatus: PaymentStatus | null;
+  /** Issued, not fully paid, and past its due date. */
+  overdue: boolean;
+  /** The payments that paid this invoice, oldest first. */
+  payments: InvoicePayment[];
   createdBy: string;
   createdAt: Date;
   issuedBy: string | null;
@@ -49,7 +60,33 @@ export interface Invoice {
   voidReason: string | null;
 }
 
+export type PaymentStatus = 'unpaid' | 'part_paid' | 'paid';
+
+export interface InvoicePayment {
+  paymentId: string;
+  paymentNumber: string;
+  paymentDate: string;
+  method: string;
+  amount: string;
+}
+
 const invoiceNotFound = () => new AppError(404, 'INVOICE_NOT_FOUND', 'No invoice has that id.');
+
+/** Whether an invoice has been paid, and whether it is overdue on `today` (if given). */
+export function paymentState(
+  invoice: { status: InvoiceStatus; total: string; amountPaid: string; dueDate: string | null },
+  today: string | undefined,
+): { paymentStatus: PaymentStatus | null; overdue: boolean } {
+  if (invoice.status !== 'issued') return { paymentStatus: null, overdue: false };
+  const paid = toCents(invoice.amountPaid);
+  const paymentStatus = paid >= toCents(invoice.total) ? 'paid' : paid > 0 ? 'part_paid' : 'unpaid';
+  const overdue =
+    paymentStatus !== 'paid' &&
+    today !== undefined &&
+    invoice.dueDate !== null &&
+    invoice.dueDate < today;
+  return { paymentStatus, overdue };
+}
 
 // ---------------------------------------------------------------- What can be billed
 
@@ -208,7 +245,8 @@ export async function previewInvoice(
 
 // ---------------------------------------------------------------- Reading invoices
 
-export async function getInvoice(db: Queryable, id: string): Promise<Invoice> {
+/** One invoice with its lines and payments. Without `today`, it is never reported overdue. */
+export async function getInvoice(db: Queryable, id: string, today?: string): Promise<Invoice> {
   const { rows } = await db.query<{
     id: string;
     invoice_number: string | null;
@@ -225,9 +263,11 @@ export async function getInvoice(db: Queryable, id: string): Promise<Invoice> {
     period_from: string;
     period_to: string;
     issue_date: string | null;
+    due_date: string | null;
     currency: string;
     subtotal: string;
     total: string;
+    amount_paid: string;
     created_by_name: string;
     created_at: Date;
     issued_by_name: string | null;
@@ -238,13 +278,15 @@ export async function getInvoice(db: Queryable, id: string): Promise<Invoice> {
             v.customer_code, v.customer_name, v.customer_phone, v.customer_address,
             c.code AS current_code, c.name AS current_name, c.phone AS current_phone,
             c.address AS current_address,
-            v.period_from, v.period_to, v.issue_date, v.currency, v.subtotal, v.total,
+            v.period_from, v.period_to, v.issue_date, v.due_date, v.currency, v.subtotal, v.total,
+            COALESCE(paid.amount_paid, 0)::numeric(14, 2)::text AS amount_paid,
             cb.full_name AS created_by_name, v.created_at,
             ib.full_name AS issued_by_name, v.issued_at, v.void_reason
      FROM invoices v
      JOIN customers c ON c.id = v.customer_id
      JOIN users cb ON cb.id = v.created_by
      LEFT JOIN users ib ON ib.id = v.issued_by
+     LEFT JOIN invoice_amounts_paid paid ON paid.invoice_id = v.id
      WHERE v.id = $1`,
     [id],
   );
@@ -259,7 +301,23 @@ export async function getInvoice(db: Queryable, id: string): Promise<Invoice> {
     [id],
   );
 
+  const { rows: payments } = await db.query<{
+    id: string;
+    payment_number: string;
+    payment_date: string;
+    method: string;
+    amount: string;
+  }>(
+    `SELECT p.id, p.payment_number, p.payment_date, p.method, a.amount::text AS amount
+     FROM payment_allocations a
+     JOIN payments p ON p.id = a.payment_id
+     WHERE a.invoice_id = $1 AND p.status = 'recorded'
+     ORDER BY p.payment_date, p.payment_number, a.created_at`,
+    [id],
+  );
+
   const issued = v.status === 'issued';
+  const balanceDue = v.status === 'voided' ? 0 : toCents(v.total) - toCents(v.amount_paid);
   return {
     id: v.id,
     invoiceNumber: v.invoice_number,
@@ -278,8 +336,20 @@ export async function getInvoice(db: Queryable, id: string): Promise<Invoice> {
     lines: lines.map(toLine),
     subtotal: v.subtotal,
     total: v.total,
-    amountPaid: '0.00',
-    balanceDue: v.status === 'voided' ? '0.00' : v.total,
+    dueDate: v.due_date,
+    amountPaid: v.amount_paid,
+    balanceDue: fromCents(balanceDue),
+    ...paymentState(
+      { status: v.status, total: v.total, amountPaid: v.amount_paid, dueDate: v.due_date },
+      today,
+    ),
+    payments: payments.map((p) => ({
+      paymentId: p.id,
+      paymentNumber: p.payment_number,
+      paymentDate: p.payment_date,
+      method: p.method,
+      amount: p.amount,
+    })),
     createdBy: v.created_by_name,
     createdAt: v.created_at,
     issuedBy: v.issued_by_name,
@@ -296,7 +366,12 @@ export interface InvoiceSummary {
   periodFrom: string;
   periodTo: string;
   issueDate: string | null;
+  dueDate: string | null;
   total: string;
+  amountPaid: string;
+  balanceDue: string;
+  paymentStatus: PaymentStatus | null;
+  overdue: boolean;
   currency: string;
   lineCount: number;
 }
@@ -305,11 +380,14 @@ export async function listInvoices(
   db: Queryable,
   search: {
     status?: InvoiceStatus | undefined;
+    /** unpaid: issued and not fully paid; overdue: also past the due date. */
+    payment?: 'unpaid' | 'overdue' | undefined;
     customerId?: string | undefined;
     q?: string | undefined;
     limit: number;
     offset: number;
   },
+  today: string,
 ): Promise<{ invoices: InvoiceSummary[]; total: number }> {
   const conditions: string[] = [];
   const params: unknown[] = [];
@@ -318,6 +396,10 @@ export async function listInvoices(
     conditions.push(condition.replaceAll('?', `$${params.length}`));
   };
   if (search.status) add('v.status = ?', search.status);
+  if (search.payment) {
+    conditions.push(`v.status = 'issued' AND v.total > COALESCE(paid.amount_paid, 0)`);
+    if (search.payment === 'overdue') add('v.due_date < ?', today);
+  }
   if (search.customerId) add('v.customer_id = ?', search.customerId);
   if (search.q) add('(v.invoice_number ILIKE ? OR c.name ILIKE ?)', `%${escapeLike(search.q)}%`);
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -332,18 +414,22 @@ export async function listInvoices(
     period_from: string;
     period_to: string;
     issue_date: string | null;
+    due_date: string | null;
     total: string;
+    amount_paid: string;
     currency: string;
     line_count: number;
     total_count: number;
   }>(
     `SELECT v.id, v.invoice_number, v.status, c.id AS customer_id,
             COALESCE(v.customer_code, c.code) AS code, COALESCE(v.customer_name, c.name) AS name,
-            v.period_from, v.period_to, v.issue_date, v.total, v.currency,
+            v.period_from, v.period_to, v.issue_date, v.due_date, v.total, v.currency,
+            COALESCE(paid.amount_paid, 0)::numeric(14, 2)::text AS amount_paid,
             (SELECT count(*) FROM invoice_items ii WHERE ii.invoice_id = v.id)::integer AS line_count,
             count(*) OVER ()::integer AS total_count
      FROM invoices v
      JOIN customers c ON c.id = v.customer_id
+     LEFT JOIN invoice_amounts_paid paid ON paid.invoice_id = v.id
      ${where}
      ORDER BY v.created_at DESC
      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
@@ -358,7 +444,21 @@ export async function listInvoices(
       periodFrom: row.period_from,
       periodTo: row.period_to,
       issueDate: row.issue_date,
+      dueDate: row.due_date,
       total: row.total,
+      amountPaid: row.amount_paid,
+      balanceDue: fromCents(
+        row.status === 'voided' ? 0 : toCents(row.total) - toCents(row.amount_paid),
+      ),
+      ...paymentState(
+        {
+          status: row.status,
+          total: row.total,
+          amountPaid: row.amount_paid,
+          dueDate: row.due_date,
+        },
+        today,
+      ),
       currency: row.currency,
       lineCount: row.line_count,
     })),
@@ -476,18 +576,20 @@ async function lockInvoice(client: pg.PoolClient, id: string) {
 }
 
 /**
- * Issues a draft: gives it the next invoice number and today's date, and freezes the customer
- * details printed on it. Issuing an invoice that is already issued changes nothing.
+ * Issues a draft: gives it the next invoice number, today's date and a due date
+ * `paymentTermsDays` later, and freezes the customer details printed on it. Issuing an invoice
+ * that is already issued changes nothing.
  */
 export async function issueInvoice(
   pool: pg.Pool,
   id: string,
   actor: PublicUser,
   today: string,
+  paymentTermsDays: number,
 ): Promise<Invoice> {
   return withTransaction(pool, async (client) => {
     const current = await lockInvoice(client, id);
-    if (current.status === 'issued') return getInvoice(client, id);
+    if (current.status === 'issued') return getInvoice(client, id, today);
     if (current.status !== 'draft') {
       throw new AppError(409, 'INVOICE_VOIDED', 'This draft invoice was voided.');
     }
@@ -497,11 +599,20 @@ export async function issueInvoice(
       `UPDATE invoices
        SET status = 'issued',
            invoice_number = 'INV-' || lpad(nextval('invoice_number_seq')::text, 6, '0'),
-           issue_date = $2, issued_by = $3, issued_at = now(),
+           issue_date = $2, due_date = $8, issued_by = $3, issued_at = now(),
            customer_code = $4, customer_name = $5, customer_phone = $6, customer_address = $7
        WHERE id = $1
        RETURNING invoice_number`,
-      [id, today, actor.id, customer.code, customer.name, customer.phone, customer.address],
+      [
+        id,
+        today,
+        actor.id,
+        customer.code,
+        customer.name,
+        customer.phone,
+        customer.address,
+        addDays(today, paymentTermsDays),
+      ],
     );
     await recordAudit(client, {
       actorUserId: actor.id,
@@ -510,7 +621,7 @@ export async function issueInvoice(
       entityId: id,
       details: { invoiceNumber: rows[0]?.invoice_number, total: current.total },
     });
-    return getInvoice(client, id);
+    return getInvoice(client, id, today);
   });
 }
 

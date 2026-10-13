@@ -5,16 +5,16 @@ snacks business. One backend API and database serve a Flutter web app and a Flut
 
 The full product specification is in [Snackify_Claude_Code_Spec.md](Snackify_Claude_Code_Spec.md).
 
-## Current status: Stage 8 (weekly invoices)
+## Current status: Stage 9 (payments and balances)
 
 | Part                                   | Status                                                                     |
 | -------------------------------------- | -------------------------------------------------------------------------- |
-| Backend (Node.js, Express, TypeScript) | Health, sign-in, roles, staff, products, stock ledger, customers, dispatches, invoices with PDFs, audit log, tests |
+| Backend (Node.js, Express, TypeScript) | Health, sign-in, roles, staff, products, stock ledger, customers, dispatches, invoices with PDFs, payments, balances and statements, audit log, tests |
 | PostgreSQL                             | Dev + test databases, least-privilege roles, migrations, seed              |
-| Database tables                        | `products`, `users`, `sessions`, `audit_logs`, `stock_batches`, `stock_movements`, `customers`, `dispatches`, `dispatch_items`, `invoices`, `invoice_items` |
-| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**, **Dispatches** (drafts, confirm, cancel, reverse, credit warnings), **Invoices** (weekly run, preview, drafts, issue, void, PDF); dashboard with **sample data** |
+| Database tables                        | `products`, `users`, `sessions`, `audit_logs`, `stock_batches`, `stock_movements`, `customers`, `dispatches`, `dispatch_items`, `invoices`, `invoice_items`, `payments`, `payment_allocations` |
+| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**, **Dispatches** (drafts, confirm, cancel, reverse, credit warnings), **Invoices** (weekly run, preview, drafts, issue, void, PDF, paid/overdue), **Payments** (record and allocate payments, balances, account statements); dashboard with **sample data** |
 | Staff management screens               | Not yet: use the API or `npm run user:create`                              |
-| Payments, reports                      | Not started (navigation shows "coming soon" pages)                         |
+| Reports, forecasts, barcode scanning   | Not started (navigation shows "coming soon" pages)                         |
 
 ## Project structure
 
@@ -27,7 +27,7 @@ snackify/
 │   │   ├── config/          Environment variable validation
 │   │   ├── database/        Connection pool, transactions, migration runner
 │   │   ├── middleware/      Sign-in and role checks, 404 and error handlers
-│   │   ├── modules/         auth, users, products, stock, customers, dispatches, invoices (+ PDF), audit, health
+│   │   ├── modules/         auth, users, products, stock, customers, dispatches, invoices (+ PDF), payments, audit, health
 │   │   ├── scripts/         db:migrate, db:seed and user:create commands
 │   │   ├── utils/           AppError, validation, JSON logger
 │   │   └── tests/           Unit tests; tests/db/ = tests against PostgreSQL
@@ -40,7 +40,7 @@ snackify/
 │   ├── lib/
 │   │   ├── core/            config, network (API client), files (PDF sharing), routing, theme
 │   │   ├── shared/widgets/  app shell, API status chip, logo
-│   │   └── features/        auth, dashboard, products, stock, customers, dispatches, invoices
+│   │   └── features/        auth, dashboard, products, stock, customers, dispatches, invoices, payments
 │   ├── test/
 │   └── assets/images/
 └── docs/                    api-documentation.md, database-design.md
@@ -206,6 +206,7 @@ npm start
 | `BUSINESS_TIMEZONE`           | `Africa/Harare`         | Time zone that decides "today" for business dates       |
 | `BILLING_WEEK_STARTS_ON`      | `monday`                | First day of the billing week (`monday` … `sunday`)     |
 | `BASE_CURRENCY`               | `USD`                   | Currency of prices and invoices (three letters)         |
+| `PAYMENT_TERMS_DAYS`          | `7`                     | Days after the issue date that an invoice is due        |
 | `BUSINESS_NAME`               | `Snackify`              | Printed at the top of invoice PDFs                      |
 | `BUSINESS_CONTACT`            | (none)                  | Optional contact line on invoice PDFs (address, phone)  |
 
@@ -315,7 +316,17 @@ start takes about a minute while Flutter compiles; later starts are faster.
    A draft can be voided with a reason, which frees its dispatches. **Share PDF** (on a
    phone) or **Download PDF** (on the web) produces the printable invoice. A dispatch on an
    invoice can no longer be reversed. Storekeepers and salespeople cannot open invoices.
-11. Resize the browser window: below 840 px wide, navigation moves into a menu drawer and
+11. Open **Payments** (admins and accounts staff). **Record payment**: choose the customer,
+   enter the amount, date and method (cash, bank transfer, mobile money, card, cheque) and an
+   optional reference. Their unpaid invoices are listed oldest first and the amount is applied
+   to them in that order; change any amount by hand. Whatever is left is kept as **credit** and
+   can be applied later with **Allocate credit** on the payment. The **Balances** tab shows what
+   each customer owes, split into overdue, unpaid invoices, not yet invoiced and credit; tap a
+   customer for their unpaid invoices and a **statement** (issued invoices and payments with a
+   running balance; choose the dates with the calendar). Invoices now show **Paid**,
+   **Part paid** or **Overdue**, their due date and the payments that paid them. Admins can
+   **Void** a payment recorded by mistake (with a reason); its invoices are owed again.
+12. Resize the browser window: below 840 px wide, navigation moves into a menu drawer and
    products are shown as a list; wider screens show a permanent sidebar and a table.
 
 ### Checks
@@ -328,22 +339,27 @@ dart format .
 
 ---
 
-## Known limitations (Stage 8)
+## Known limitations (Stage 9)
 
-- **Credit warnings count every confirmed dispatch as unpaid**, because payments are not
-  recorded yet (a later stage). Warnings will therefore appear earlier than they should once
-  customers have paid; the app lets you confirm anyway and records it.
-- **Invoices show amount paid 0.00** and the full total as balance due until payments are
-  recorded (next stage). There are no discounts or adjustments yet.
+- **Payments are in USD only.** Every payment is recorded in the base currency; there is no way
+  to record a ZiG payment yet, because mixing currencies needs a documented exchange-rate rule
+  first (spec 7). Decide which currencies you accept and how rates are set, and it can be added.
+- **Payment terms are the same for every customer** (`PAYMENT_TERMS_DAYS`, default 7 days after
+  the invoice is issued). Invoices issued before this stage were given 7 days.
+- **A payment recorded by mistake cannot be edited**: an admin voids it and it is recorded again.
+  Allocations cannot be undone one by one either; void and re-record the payment instead.
 - **Issued invoices cannot be corrected yet.** They are final by design; credit notes, the
   controlled way to correct them (spec 6.8), come in a later stage. Check drafts before
-  issuing, and void a wrong draft instead.
+  issuing, and void a wrong draft instead. There are no discounts or adjustments yet.
+- Statements are shown in the app only; there is no statement PDF or receipt PDF yet.
+- Voided payments are left off statements, so a statement printed before a payment was voided
+  will differ from one produced afterwards.
 - Invoice PDFs use the plain built-in Helvetica font and no logo yet; set `BUSINESS_NAME`
   and `BUSINESS_CONTACT` in `backend/.env` for the heading.
 - The PDF package used by the app (`printing`) downloads a PDF library from GitHub when
   building the **Windows desktop** app. Web and Android builds do not need it.
-- No printable dispatch note yet, and no customer history screen (dispatches, invoices,
-  payments, balance) yet.
+- No printable dispatch note yet. A customer's account (Payments → Balances) shows their
+  invoices, payments and balance; their dispatches are in Dispatches.
 - The Flutter dashboard still shows **sample data only**; it does not read the database yet.
 - **Expiry warnings** are not shown yet. Expiry dates are recorded with each receipt, but
   dispatches do not yet record which batch they took stock from, so it is not known which
