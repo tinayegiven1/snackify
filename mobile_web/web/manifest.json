@@ -1,11 +1,11 @@
 {
-    "name": "snackify",
-    "short_name": "snackify",
+    "name": "Snackify",
+    "short_name": "Snackify",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Snackify: stock, dispatches, invoices and payments.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

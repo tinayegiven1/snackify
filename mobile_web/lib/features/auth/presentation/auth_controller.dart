@@ -35,6 +35,16 @@ class AuthController extends ChangeNotifier {
           ? 'Cannot reach the Snackify server, so you need to sign in again.'
           : error.message;
       await _repository.forgetSession();
+    } on Object catch (error) {
+      // Anything else must not leave the app stuck on its loading screen: sign in again.
+      debugPrint('Could not restore the session: $error');
+      _user = null;
+      _status = AuthStatus.signedOut;
+      try {
+        await _repository.forgetSession();
+      } on Object {
+        // Nothing more to do; the token expires on the server by itself.
+      }
     }
     notifyListeners();
   }
@@ -46,6 +56,10 @@ class AuthController extends ChangeNotifier {
     _notice = null;
     notifyListeners();
   }
+
+  /// Throws [ApiException], e.g. with a field error when the current password is wrong.
+  Future<void> changePassword(String currentPassword, String newPassword) =>
+      _repository.changePassword(currentPassword, newPassword);
 
   Future<void> signOut() async {
     await _repository.signOut();

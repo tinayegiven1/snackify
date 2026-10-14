@@ -1,0 +1,24 @@
+# Files uploaded to Google Cloud Build for the server image (see Dockerfile).
+# Everything is left out except what the image needs. Secrets (.env) are never uploaded:
+# on Cloud Run they come from Secret Manager.
+/*
+!/Dockerfile
+!/backend/
+!/database/
+!/mobile_web/
+
+/backend/*
+!/backend/package.json
+!/backend/package-lock.json
+!/backend/tsconfig.json
+!/backend/tsconfig.build.json
+!/backend/src/
+/backend/src/tests/
+
+/database/*
+!/database/migrations/
+
+/mobile_web/*
+!/mobile_web/build/
+/mobile_web/build/*
+!/mobile_web/build/web/

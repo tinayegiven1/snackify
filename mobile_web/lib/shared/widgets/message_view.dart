@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/theme/app_theme.dart';
+
 /// A centred icon, title, message and optional button, for empty and error states.
 class MessageView extends StatelessWidget {
   const MessageView({
@@ -78,6 +80,34 @@ class StatusBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(label, style: theme.textTheme.labelSmall?.copyWith(color: textColor)),
+    );
+  }
+}
+
+/// A green banner confirming that something worked, shown in place on the screen (unlike a
+/// snackbar, it never covers a button).
+class SuccessBanner extends StatelessWidget {
+  const SuccessBanner({super.key, required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    const green = SnackifyColors.success;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: green.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: green.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.check_circle_outline, color: green),
+          const SizedBox(width: 12),
+          Expanded(child: Text(message)),
+        ],
+      ),
     );
   }
 }

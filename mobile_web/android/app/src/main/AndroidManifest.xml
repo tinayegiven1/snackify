@@ -2,7 +2,12 @@
     <!-- Talks to the Snackify API. The camera permission (barcode scanning) comes from the
          mobile_scanner plugin and is asked for the first time a barcode is scanned. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- No automatic Google backup: it would copy the encrypted sign-in to another phone,
+         where it cannot be decrypted, and session tokens should not leave the device. -->
     <application
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:label="Snackify"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">

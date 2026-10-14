@@ -17,6 +17,7 @@ import 'features/invoices/data/invoices_repository.dart';
 import 'features/payments/data/payments_repository.dart';
 import 'features/products/data/products_repository.dart';
 import 'features/reports/data/reports_repository.dart';
+import 'features/staff/data/staff_repository.dart';
 import 'features/stock/data/stock_repository.dart';
 
 void main() {
@@ -32,6 +33,7 @@ void main() {
     payments: PaymentsRepository(api),
     reports: ReportsRepository(api),
     forecasts: ForecastsRepository(api),
+    staff: StaffRepository(api),
     sharePdf: sharePdfWithDevice,
     readBarcode: readBarcodeWithDevice,
   );

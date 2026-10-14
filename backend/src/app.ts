@@ -17,6 +17,7 @@ import { productsRouter } from './modules/products/products.routes.js';
 import { reportsRouter } from './modules/reports/reports.routes.js';
 import { stockRouter } from './modules/stock/stock.routes.js';
 import { usersRouter } from './modules/users/users.routes.js';
+import { webAppRouter } from './web/web-app.js';
 
 /** Things the app needs from outside, passed in so tests can replace them. */
 export interface AppDependencies {
@@ -28,8 +29,18 @@ export interface AppDependencies {
 export function createApp(config: AppConfig, deps: AppDependencies): Express {
   configurePgTypes();
   const app = express();
+  if (config.trustProxyHops > 0) app.set('trust proxy', config.trustProxyHops);
 
-  app.use(helmet());
+  // The API only returns JSON, so its responses may load nothing at all. The web app replaces
+  // this with a policy that fits Flutter (see web/web-app.ts).
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        useDefaults: false,
+        directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"] },
+      },
+    }),
+  );
   app.use(cors({ origin: config.corsOrigins }));
   app.use(express.json({ limit: '100kb' }));
 
@@ -45,6 +56,7 @@ export function createApp(config: AppConfig, deps: AppDependencies): Express {
   app.use('/api/v1/balances', balancesRouter(deps.db, config));
   app.use('/api/v1/reports', reportsRouter(deps.db, config));
   app.use('/api/v1/forecasts', forecastsRouter(deps.db, config));
+  if (config.webAppDir) app.use(webAppRouter(config.webAppDir));
 
   app.use(notFoundHandler);
   app.use(errorHandler);

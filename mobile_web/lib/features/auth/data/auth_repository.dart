@@ -27,6 +27,15 @@ class AuthRepository {
     return AppUser.fromJson(body['user'] as Map<String, dynamic>);
   }
 
+  /// Changes the signed-in user's password. This device stays signed in; the server signs
+  /// out every other session. A wrong current password comes back as a field error.
+  Future<void> changePassword(String currentPassword, String newPassword) async {
+    await _api.postJson('/api/v1/auth/change-password', {
+      'currentPassword': currentPassword,
+      'newPassword': newPassword,
+    });
+  }
+
   /// Returns the user for a saved session, or null if there is none or it has ended.
   Future<AppUser?> restoreSession() async {
     final token = await _tokenStore.read();

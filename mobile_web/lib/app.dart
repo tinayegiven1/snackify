@@ -27,6 +27,7 @@ class SnackifyApp extends StatelessWidget {
           AuthStatus.signedIn => AppShell(
             user: auth.user!,
             onSignOut: auth.signOut,
+            onChangePassword: auth.changePassword,
             services: services,
           ),
         },

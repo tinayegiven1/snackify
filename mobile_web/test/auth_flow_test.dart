@@ -94,6 +94,9 @@ void main() {
     expect(find.text('Tendai Moyo'), findsOneWidget);
     expect(find.text('Storekeeper'), findsOneWidget);
 
+    // The menu scrolls on a small phone.
+    await tester.ensureVisible(find.text('Sign out'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Sign out'));
     await tester.pumpAndSettle();
 

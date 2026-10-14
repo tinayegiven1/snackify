@@ -4,6 +4,7 @@ import '../../core/app_services.dart';
 import '../../core/routing/app_destinations.dart';
 import '../../core/theme/app_theme.dart';
 import '../../features/auth/domain/app_user.dart';
+import '../../features/auth/presentation/change_password_screen.dart';
 import '../../features/customers/domain/customer.dart';
 import '../../features/customers/presentation/customers_screen.dart';
 import '../../features/dashboard/presentation/dashboard_screen.dart';
@@ -18,6 +19,7 @@ import '../../features/payments/presentation/payments_screen.dart';
 import '../../features/products/presentation/products_screen.dart';
 import '../../features/reports/domain/report_models.dart';
 import '../../features/reports/presentation/reports_screen.dart';
+import '../../features/staff/presentation/staff_screen.dart';
 import '../../features/stock/presentation/stock_screen.dart';
 import 'api_status_indicator.dart';
 import 'message_view.dart';
@@ -28,10 +30,17 @@ const double kWideLayoutBreakpoint = 840;
 
 /// App frame: top bar, navigation, and the selected section.
 class AppShell extends StatefulWidget {
-  const AppShell({super.key, required this.user, required this.onSignOut, required this.services});
+  const AppShell({
+    super.key,
+    required this.user,
+    required this.onSignOut,
+    required this.onChangePassword,
+    required this.services,
+  });
 
   final AppUser user;
   final Future<void> Function() onSignOut;
+  final Future<void> Function(String currentPassword, String newPassword) onChangePassword;
   final AppServices services;
 
   @override
@@ -55,6 +64,14 @@ class _AppShellState extends State<AppShell> {
       selectedIndex: _selectedIndex,
       onSelected: _onDestinationSelected,
       user: widget.user,
+      onChangePassword: () {
+        _scaffoldKey.currentState?.closeDrawer();
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => ChangePasswordScreen(changePassword: widget.onChangePassword),
+          ),
+        );
+      },
       onSignOut: () {
         _scaffoldKey.currentState?.closeDrawer();
         widget.onSignOut();
@@ -124,6 +141,18 @@ class _AppShellState extends State<AppShell> {
         title: 'Forecasts are for managers',
         message: 'Admins, accounts staff and storekeepers can see forecasts.',
       ),
+      // Staff accounts are for admins only; the server enforces this too.
+      'Staff' when widget.user.role == StaffRole.admin => StaffScreen(
+        repository: widget.services.staff,
+        currentUserId: widget.user.id,
+      ),
+      'Staff' => const MessageView(
+        icon: Icons.lock_outline,
+        title: 'Staff accounts are managed by admins',
+        message:
+            'Ask an administrator to add staff or reset a password. To change your own '
+            'password, use Change password in the menu.',
+      ),
       _ => throw StateError('No screen for ${destination.label}'),
     };
 
@@ -156,12 +185,14 @@ class _NavigationList extends StatelessWidget {
     required this.selectedIndex,
     required this.onSelected,
     required this.user,
+    required this.onChangePassword,
     required this.onSignOut,
   });
 
   final int selectedIndex;
   final ValueChanged<int> onSelected;
   final AppUser user;
+  final VoidCallback onChangePassword;
   final VoidCallback onSignOut;
 
   @override
@@ -202,6 +233,11 @@ class _NavigationList extends StatelessWidget {
           leading: CircleAvatar(child: Text(user.initials)),
           title: Text(user.fullName, overflow: TextOverflow.ellipsis),
           subtitle: Text(user.role.label),
+        ),
+        ListTile(
+          leading: const Icon(Icons.password),
+          title: const Text('Change password'),
+          onTap: onChangePassword,
         ),
         ListTile(
           leading: const Icon(Icons.logout),

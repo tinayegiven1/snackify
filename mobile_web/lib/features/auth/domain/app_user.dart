@@ -36,9 +36,11 @@ class AppUser {
   final String fullName;
   final StaffRole role;
 
-  /// Up to two initials for an avatar, e.g. "Tendai Moyo" -> "TM".
-  String get initials {
-    final parts = fullName.trim().split(RegExp(r'\s+')).where((part) => part.isNotEmpty);
-    return parts.take(2).map((part) => part[0].toUpperCase()).join();
-  }
+  String get initials => initialsOf(fullName);
+}
+
+/// Up to two initials for an avatar, e.g. "Tendai Moyo" -> "TM".
+String initialsOf(String fullName) {
+  final parts = fullName.trim().split(RegExp(r'\s+')).where((part) => part.isNotEmpty);
+  return parts.take(2).map((part) => part[0].toUpperCase()).join();
 }

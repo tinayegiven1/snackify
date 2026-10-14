@@ -15,6 +15,8 @@ describe('loadConfig', () => {
       baseCurrency: 'USD',
       paymentTermsDays: 7,
       business: { name: 'Snackify', contact: null },
+      webAppDir: null,
+      trustProxyHops: 0,
     });
   });
 

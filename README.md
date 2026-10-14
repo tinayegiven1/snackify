@@ -12,9 +12,8 @@ The full product specification is in [Snackify_Claude_Code_Spec.md](Snackify_Cla
 | Backend (Node.js, Express, TypeScript) | Health, sign-in, roles, staff, products, stock ledger, customers, dispatches, invoices with PDFs, payments, balances and statements, barcode lookup and label PDFs, reports (dashboard, sales trends, best sellers, customers, stock received, expiring stock), sales forecasts with accuracy and restocking suggestions, audit log, tests |
 | PostgreSQL                             | Dev + test databases, least-privilege roles, migrations, seed              |
 | Database tables                        | `products`, `users`, `sessions`, `audit_logs`, `stock_batches`, `stock_movements`, `customers`, `dispatches`, `dispatch_items`, `invoices`, `invoice_items`, `payments`, `payment_allocations`, `forecast_runs`, `forecasts` |
-| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**, **Dispatches** (drafts, confirm, cancel, reverse, credit warnings), **Invoices** (weekly run, preview, drafts, issue, void, PDF, paid/overdue), **Payments** (record and allocate payments, balances, account statements), **barcode scanning** (camera on Android; typed or USB scanner on the web) and **barcode labels**, a live **Dashboard** and **Reports** (daily/weekly/monthly sales, best sellers, customer summaries, stock received, expiring stock), **Forecasts** (next 7 and 30 days per product, how much to receive, accuracy) |
+| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**, **Dispatches** (drafts, confirm, cancel, reverse, credit warnings), **Invoices** (weekly run, preview, drafts, issue, void, PDF, paid/overdue), **Payments** (record and allocate payments, balances, account statements), **barcode scanning** (camera on Android; typed or USB scanner on the web) and **barcode labels**, a live **Dashboard** and **Reports** (daily/weekly/monthly sales, best sellers, customer summaries, stock received, expiring stock), **Forecasts** (next 7 and 30 days per product, how much to receive, accuracy), **Staff** (admins add staff, change roles, deactivate accounts and set new passwords) and **Change password** for everyone |
 | Backups                                | Daily-ready `npm run db:backup` with an automatic, verified test restore; guarded emergency restore ([docs/backup-and-restore.md](docs/backup-and-restore.md)) |
-| Staff management screens               | Not yet: use the API or `npm run user:create`                              |
 
 ## Project structure
 
@@ -31,6 +30,7 @@ snackify/
 │   │   ├── modules/         auth, users, products, stock, customers, dispatches, invoices (+ PDF), payments, reports, forecasts, audit, health
 │   │   ├── scripts/         db:migrate, db:seed, db:backup, db:restore-check, db:restore and user:create commands
 │   │   ├── utils/           AppError, validation, JSON logger
+│   │   ├── web/             Serves the built web app on the API's address (production)
 │   │   └── tests/           Unit tests; tests/db/ = tests against PostgreSQL
 │   └── .env.example
 ├── database/
@@ -41,10 +41,12 @@ snackify/
 │   ├── lib/
 │   │   ├── core/            config, network (API client), files (PDF sharing), scanning (camera/typed barcodes), routing, theme
 │   │   ├── shared/widgets/  app shell, API status chip, logo
-│   │   └── features/        auth, dashboard, products, stock, customers, dispatches, invoices, payments, reports, forecasts
+│   │   └── features/        auth, dashboard, products, stock, customers, dispatches, invoices, payments, reports, forecasts, staff
 │   ├── test/
 │   └── assets/images/
-└── docs/                    api-documentation.md, database-design.md, backup-and-restore.md
+├── deploy/                  deploy-staging.ps1 (Google Cloud Run + Android APK)
+├── Dockerfile               Server image for Cloud Run (API + web app)
+└── docs/                    api-documentation.md, database-design.md, backup-and-restore.md, deployment.md
 ```
 
 ## Prerequisites
@@ -148,10 +150,11 @@ it cannot end up in your shell history):
 npm run user:create -- --username your.name --name "Your Full Name" --role admin
 ```
 
-The same command creates other staff accounts, with `--role storekeeper`, `salesperson` or
-`accounts`. Once signed in, an admin can also manage staff through the API (see
-[docs/api-documentation.md](docs/api-documentation.md#staff-accounts-admins-only)); screens for
-this come in a later stage.
+After that, add everyone else in the app: **Staff → Add staff** (admins only). Choose each
+person's first password and give it to them privately; they can change it under **Change
+password** in the menu. (`npm run user:create` with `--role storekeeper`, `salesperson` or
+`accounts` also still works.) On Windows PowerShell, type `npm.cmd` instead of `npm` if
+PowerShell says running scripts is disabled.
 
 ### Roles and sign-in rules
 
@@ -221,6 +224,8 @@ npm start
 | `PAYMENT_TERMS_DAYS`          | `7`                     | Days after the issue date that an invoice is due        |
 | `BUSINESS_NAME`               | `Snackify`              | Printed at the top of invoice PDFs                      |
 | `BUSINESS_CONTACT`            | (none)                  | Optional contact line on invoice PDFs (address, phone)  |
+| `WEB_APP_DIR`                 | (none)                  | Folder with the built web app (`flutter build web`) to serve on the API's address; used in production |
+| `TRUST_PROXY_HOPS`            | `0`                     | Proxies in front of the API (1 on Cloud Run), so sign-in limits apply per client |
 | `BACKUP_DIR`, `BACKUP_KEEP`, `PG_BIN_DIR`, `RESTORE_CHECK_DATABASE_URL` | see [backups](docs/backup-and-restore.md#settings-backendenv-all-optional) | Where backups go, how many to keep, where `pg_dump` is |
 
 **Billing week:** by default an invoice covers the last complete Monday-to-Sunday week, with
@@ -421,10 +426,9 @@ dart format .
 - **Camera scanning has not been tried on a real phone yet.** The Android app builds (see
   "Run on Android"), and the scanning flow itself is tested, but the camera screen still needs
   a check on a real device (spec 6.7).
-- **Backups do not run on their own yet.** `npm run db:backup` works and checks itself, but
-  nothing runs it daily until a scheduled task is set up
-  ([how](docs/backup-and-restore.md#running-backups-automatically)), and copies are not yet
-  kept anywhere but this PC.
+- **Backups stay on this PC.** A scheduled task backs up every evening at 22:00 (while the PC
+  is on and you are signed in), but no copy is kept anywhere else yet
+  ([why it matters](docs/backup-and-restore.md#keep-a-copy-somewhere-else)).
 - **The web app does not use the computer's camera.** Laptop webcams read barcodes poorly, and
   Chrome on Windows has no built-in barcode reader, so on the web the barcode is typed or
   scanned with a USB or Bluetooth scanner (which types like a keyboard).
@@ -434,8 +438,10 @@ dart format .
 - Product prices are shown in USD (the assumed base currency, set in
   `mobile_web/lib/core/config/app_config.dart`).
 - The products screen loads up to 200 products at a time; use search to find others.
-- There are no staff-management screens yet; use `npm run user:create` or the API.
-- Users are not forced to change a password an admin has reset.
+- Users are not forced to change a password an admin has set or reset; ask them to change it
+  under **Change password** after their first sign-in.
+- Usernames cannot be changed once an account exists (add a new account and deactivate the old
+  one instead).
 - The sign-in attempt counter is kept in memory: it resets when the backend restarts and
   assumes a single backend server (fine for now; revisit before scaling out).
 - On the web, the session token is kept in the browser's storage, which cannot be fully
@@ -443,12 +449,19 @@ dart format .
   server at any time.
 - If the database is down, the app's status chip shows **API offline**, because the health
   endpoint then answers 503.
-- Not ready to deploy to the internet yet (needs HTTPS and production hosting).
+- **Deployment is prepared but not live yet.** Staging on Google Cloud (Johannesburg) and a
+  signed Android APK are ready to go once the Google Cloud account exists; see
+  [docs/deployment.md](docs/deployment.md). Production comes after staging has been tried.
 - The backend allows browser requests only from the origins in `CORS_ORIGINS`.
 - Plain HTTP is only for local development. Production must use HTTPS.
 - **Keep the project out of OneDrive and other sync folders.** Sync tools lock files in
   `mobile_web/build/`, and Flutter then fails with "failed to delete a directory". The project
   lives at `C:\dev\snackify`; use Git/GitHub for backup instead.
+
+## Deployment
+
+See [docs/deployment.md](docs/deployment.md): Google Cloud Run and Cloud SQL in Johannesburg,
+the deploy script, the Android signing key and giving staff the app.
 
 ## API documentation
 

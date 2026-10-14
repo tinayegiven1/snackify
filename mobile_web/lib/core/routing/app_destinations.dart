@@ -35,4 +35,9 @@ const appDestinations = <AppDestination>[
     icon: Icons.trending_up_outlined,
     selectedIcon: Icons.trending_up,
   ),
+  AppDestination(
+    label: 'Staff',
+    icon: Icons.manage_accounts_outlined,
+    selectedIcon: Icons.manage_accounts,
+  ),
 ];

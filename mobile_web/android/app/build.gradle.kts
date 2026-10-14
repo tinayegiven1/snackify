@@ -1,7 +1,19 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+// Release builds are signed with Snackify's own key, described in android/key.properties
+// (never committed; see docs/deployment.md). Every update must be signed with the same key,
+// or phones refuse to install it over the old version.
+val keystorePropertiesFile = rootProject.file("key.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    FileInputStream(keystorePropertiesFile).use { keystoreProperties.load(it) }
 }
 
 android {
@@ -29,11 +41,20 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            if (keystorePropertiesFile.exists()) {
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }
@@ -46,4 +67,19 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+// Never fall back to the debug key for a release: an APK signed with it could not be updated
+// later by one signed with the real key.
+gradle.taskGraph.whenReady {
+    val buildsRelease = allTasks.any { task ->
+        task.project.name == "app" && task.name.endsWith("Release") &&
+            (task.name.startsWith("assemble") || task.name.startsWith("bundle"))
+    }
+    if (buildsRelease && !keystorePropertiesFile.exists()) {
+        throw GradleException(
+            "No release signing key: create mobile_web/android/key.properties " +
+                "(see docs/deployment.md, \"Android signing key\").",
+        )
+    }
 }

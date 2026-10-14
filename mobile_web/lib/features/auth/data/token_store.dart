@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// Keeps the session token between app launches.
@@ -11,14 +14,28 @@ abstract interface class TokenStore {
 /// Web: the browser's local storage, encrypted with WebCrypto. A browser cannot fully protect
 /// it from malicious scripts, which is one reason sessions expire after 12 hours.
 class SecureTokenStore implements TokenStore {
-  SecureTokenStore([FlutterSecureStorage? storage])
+  SecureTokenStore([FlutterSecureStorage? storage, this.readTimeout = const Duration(seconds: 5)])
     : _storage = storage ?? const FlutterSecureStorage();
 
   final FlutterSecureStorage _storage;
   static const _key = 'snackify_session_token';
 
+  /// How long to wait for the phone's secure storage before giving up.
+  final Duration readTimeout;
+
+  /// The saved token, or null. A token that cannot be read (for example because the phone's
+  /// encryption key was lost when the app was reinstalled or restored from a backup) is deleted,
+  /// so the person simply signs in again instead of the app waiting forever.
   @override
-  Future<String?> read() => _storage.read(key: _key);
+  Future<String?> read() async {
+    try {
+      return await _storage.read(key: _key).timeout(readTimeout);
+    } on Object catch (error) {
+      debugPrint('Saved session could not be read, so it is cleared: $error');
+      unawaited(_storage.delete(key: _key).catchError((Object _) {}));
+      return null;
+    }
+  }
 
   @override
   Future<void> write(String token) => _storage.write(key: _key, value: token);

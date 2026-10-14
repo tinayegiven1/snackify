@@ -77,15 +77,27 @@ Everything entered after the backup was made is lost, so restore the newest good
 
 ## Running backups automatically
 
-Backups should run every day without anyone remembering to. On this Windows PC, Task Scheduler
-can run one every evening at 22:00 (the PC must be on and you signed in). In PowerShell:
+On this PC, the Windows Task Scheduler task **Snackify daily backup** runs `npm run db:backup`
+every evening at 22:00. It runs as you, only while you are signed in (so no password is stored),
+catches up at the next opportunity if the PC was off at 22:00, and is stopped if it takes more
+than an hour. Its output is added to `backups\backup.log`.
+
+Check `backups\backup.log` now and then: each run ends with `Restore check passed`. In Task
+Scheduler, a **Last Run Result** other than `0x0` means the last run failed.
+
+To set the same task up on another Windows PC, in PowerShell (change the paths if the project
+is elsewhere):
 
 ```powershell
-schtasks /Create /TN "Snackify daily backup" /SC DAILY /ST 22:00 /TR "cmd /c cd /d C:\dev\snackify\backend && npm run db:backup >> C:\dev\snackify\backups\backup.log 2>&1"
+$action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\cmd.exe" -Argument '/c npm run db:backup >> "C:\dev\snackify\backups\backup.log" 2>&1' -WorkingDirectory 'C:\dev\snackify\backend'
+$trigger = New-ScheduledTaskTrigger -Daily -At '22:00'
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 1) -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName 'Snackify daily backup' -Action $action -Trigger $trigger -Settings $settings
 ```
 
-Check `backups\backup.log` now and then: each run ends with `Restore check passed`. To remove
-the task: `schtasks /Delete /TN "Snackify daily backup"`.
+The `backups` folder must exist first (run `npm run db:backup` once by hand). To run the task
+now: `Start-ScheduledTask 'Snackify daily backup'`. To remove it:
+`Unregister-ScheduledTask 'Snackify daily backup'`.
 
 ## Keep a copy somewhere else
 

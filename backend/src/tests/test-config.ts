@@ -13,6 +13,8 @@ export const testConfig: AppConfig = {
   baseCurrency: 'USD',
   paymentTermsDays: 7,
   business: { name: 'Snackify Test Foods', contact: '12 Example Road, Harare' },
+  webAppDir: null,
+  trustProxyHops: 0,
 };
 
 /**

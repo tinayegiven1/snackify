@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import type { Express } from 'express';
 import request from 'supertest';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { createApp } from '../../app.js';
+import { testConfig } from '../test-config.js';
 import {
   auditEntries,
   createDbTestApp,
@@ -111,6 +113,31 @@ describe('POST /api/v1/auth/login', () => {
 
     expect(blocked.status).toBe(429);
     expect(blocked.body.error.code).toBe('TOO_MANY_ATTEMPTS');
+  });
+
+  it('behind a proxy (Cloud Run), limits each client address, which clients cannot fake', async () => {
+    const proxied = createApp(
+      { ...testConfig, trustProxyHops: 1 },
+      {
+        db: pools.app,
+        checkDatabase: async () => true,
+      },
+    );
+    // The proxy adds the real client address at the end; anything before it came from the client.
+    const from = (forwardedFor: string, password: string) =>
+      request(proxied)
+        .post('/api/v1/auth/login')
+        .set('X-Forwarded-For', forwardedFor)
+        .send({ username: 'tendai', password });
+
+    for (let attempt = 1; attempt <= 10; attempt++) {
+      const fakeAddress = `203.0.113.${attempt}`;
+      expect((await from(`${fakeAddress}, 198.51.100.1`, `wrong ${attempt}`)).status).toBe(401);
+    }
+
+    expect((await from('203.0.113.99, 198.51.100.1', PASSWORD)).status).toBe(429);
+    // Another client, for example in another shop, can still sign in.
+    expect((await from('198.51.100.2', PASSWORD)).status).toBe(200);
   });
 
   it('stores only a hash of the session token', async () => {

@@ -14,6 +14,11 @@ class AppConfig {
 
   static String get apiBaseUrl {
     if (_apiBaseUrlOverride.isNotEmpty) return _apiBaseUrlOverride;
+    if (kIsWeb && kReleaseMode) {
+      // A release web build is served by the backend itself (WEB_APP_DIR), so the API is on
+      // the same address as the page.
+      return Uri.base.origin;
+    }
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       // The Android emulator reaches the host computer's localhost through 10.0.2.2.
       return 'http://10.0.2.2:3000';

@@ -5,8 +5,17 @@ type LogFields = Record<string, unknown>;
  * Minimal structured (JSON-lines) logger.
  * Never pass passwords, tokens, or connection strings in `fields`.
  */
+// Google Cloud Logging reads the level from "severity".
+const SEVERITY: Record<LogLevel, string> = { info: 'INFO', warn: 'WARNING', error: 'ERROR' };
+
 function write(level: LogLevel, message: string, fields: LogFields = {}): void {
-  const line = JSON.stringify({ level, time: new Date().toISOString(), message, ...fields });
+  const line = JSON.stringify({
+    level,
+    severity: SEVERITY[level],
+    time: new Date().toISOString(),
+    message,
+    ...fields,
+  });
   if (level === 'error') {
     console.error(line);
   } else {

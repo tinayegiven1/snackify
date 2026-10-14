@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { z } from 'zod';
 
 export interface AppConfig {
@@ -18,6 +19,14 @@ export interface AppConfig {
   paymentTermsDays: number;
   /** Printed at the top of invoices. */
   business: { name: string; contact: string | null };
+  /** Folder with the built Flutter web app, served on the same address as the API, or null. */
+  webAppDir: string | null;
+  /**
+   * How many proxies in front of the API to trust for the client's address (X-Forwarded-For),
+   * e.g. 1 on Google Cloud Run. Sign-in rate limits are per address, so this must be right:
+   * too low and everyone shares one limit; too high and clients can fake their address.
+   */
+  trustProxyHops: number;
 }
 
 /** Loads backend/.env for local development. Real environment variables take precedence. */
@@ -88,6 +97,21 @@ const envSchema = z.object({
     .default(7),
   BUSINESS_NAME: z.string().trim().min(1).max(100).default('Snackify'),
   BUSINESS_CONTACT: z.string().trim().max(200).optional(),
+  WEB_APP_DIR: z
+    .string()
+    .trim()
+    .min(1)
+    .refine(
+      (dir) => existsSync(join(dir, 'index.html')),
+      'Must be a folder containing the built web app (index.html); run flutter build web',
+    )
+    .optional(),
+  TRUST_PROXY_HOPS: z.coerce
+    .number({ error: 'Must be a whole number' })
+    .int('Must be a whole number')
+    .min(0, 'Must be 0 or more')
+    .max(5, 'Must be at most 5')
+    .default(0),
 });
 
 const WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
@@ -120,6 +144,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     baseCurrency: result.data.BASE_CURRENCY,
     paymentTermsDays: result.data.PAYMENT_TERMS_DAYS,
     business: { name: result.data.BUSINESS_NAME, contact: result.data.BUSINESS_CONTACT || null },
+    webAppDir: result.data.WEB_APP_DIR ?? null,
+    trustProxyHops: result.data.TRUST_PROXY_HOPS,
   };
 }
 

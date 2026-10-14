@@ -19,6 +19,7 @@ import 'package:snackify/features/invoices/data/invoices_repository.dart';
 import 'package:snackify/features/payments/data/payments_repository.dart';
 import 'package:snackify/features/products/data/products_repository.dart';
 import 'package:snackify/features/reports/data/reports_repository.dart';
+import 'package:snackify/features/staff/data/staff_repository.dart';
 import 'package:snackify/features/stock/data/stock_repository.dart';
 
 const phoneSize = Size(390, 844);
@@ -93,6 +94,34 @@ class FakeBackend {
 
   /// The stock ledger, oldest first.
   final List<Map<String, Object?>> movements = [];
+
+  /// Staff accounts as the server lists them. The signed-in user is always the first.
+  late final List<Map<String, Object?>> staff = [
+    {...user, 'isActive': true, 'lastSignInAt': '2026-10-13T06:30:00Z'},
+  ];
+
+  /// Passwords set through the API: (account id, new password).
+  final List<(String, String)> passwordsSet = [];
+
+  /// Adds a staff account directly, as if it already existed on the server.
+  Map<String, Object?> addStaff(
+    String username,
+    String fullName,
+    String role, {
+    bool isActive = true,
+    String? lastSignInAt,
+  }) {
+    final member = <String, Object?>{
+      'id': 'user-${staff.length + 1}',
+      'username': username,
+      'fullName': fullName,
+      'role': role,
+      'isActive': isActive,
+      'lastSignInAt': lastSignInAt,
+    };
+    staff.add(member);
+    return member;
+  }
 
   /// Every request received, as "METHOD /path" (plus "?query" when there is one).
   final List<String> requests = [];
@@ -180,6 +209,8 @@ class FakeBackend {
       validTokens.remove(token);
       return http.Response('', 204);
     }
+    if (route == 'POST /api/v1/auth/change-password') return _changePassword(request);
+    if (path.startsWith('/api/v1/users')) return _users(request);
     if (route == 'GET /api/v1/products') return _listProducts(request.url.queryParameters);
     if (path.startsWith('/api/v1/products/barcode/') ||
         path.endsWith('/barcode') ||
@@ -203,6 +234,78 @@ class FakeBackend {
     if (path.startsWith('/api/v1/forecasts')) return _forecasts(request);
     return _error(404, 'NOT_FOUND', 'Not found');
   }
+
+  /// Like the real server: proving the current password is required, and the new one must
+  /// differ and have at least 10 characters.
+  http.Response _changePassword(http.Request request) {
+    final body = jsonDecode(request.body) as Map<String, dynamic>;
+    final current = body['currentPassword'] as String;
+    final next = body['newPassword'] as String;
+    if (current != testPassword) return _fieldError('currentPassword', 'Incorrect password');
+    if (next.length < 10) return _fieldError('newPassword', 'Use at least 10 characters');
+    if (next == current) {
+      return _fieldError('newPassword', 'Must be different from the current password');
+    }
+    passwordsSet.add((user['id'] as String, next));
+    return http.Response('', 204);
+  }
+
+  /// Staff accounts: admins only; admins cannot change their own role or deactivate
+  /// themselves, nor reset their own password here.
+  http.Response _users(http.Request request) {
+    if (role != 'admin') return _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
+    final segments = request.url.pathSegments; // api, v1, users, [id], [reset-password]
+    final body = request.body.isEmpty
+        ? const <String, dynamic>{}
+        : jsonDecode(request.body) as Map<String, dynamic>;
+
+    if (segments.length == 3) {
+      if (request.method == 'GET') return _json(200, {'users': staff});
+      final username = body['username'] as String;
+      if (staff.any((member) => member['username'] == username)) {
+        return _error(409, 'USERNAME_TAKEN', 'The username "$username" is already taken.');
+      }
+      final added = addStaff(username, body['fullName'] as String, body['role'] as String);
+      passwordsSet.add((added['id'] as String, body['password'] as String));
+      return _json(201, {'user': added});
+    }
+
+    final member = staff.where((m) => m['id'] == segments[3]).firstOrNull;
+    if (member == null) return _error(404, 'USER_NOT_FOUND', 'No staff account has that id.');
+    final isSelf = member['id'] == user['id'];
+
+    if (segments.length == 5 && segments[4] == 'reset-password') {
+      if (isSelf) {
+        return _error(409, 'USE_CHANGE_PASSWORD', 'Use change-password for your own account.');
+      }
+      passwordsSet.add((member['id'] as String, body['newPassword'] as String));
+      return http.Response('', 204);
+    }
+
+    final changesOwnAccess =
+        (body.containsKey('role') && body['role'] != member['role']) || body['isActive'] == false;
+    if (isSelf && changesOwnAccess) {
+      return _error(
+        409,
+        'CANNOT_CHANGE_OWN_ACCESS',
+        'You cannot change your own role or deactivate your own account. Ask another admin.',
+      );
+    }
+    for (final key in ['fullName', 'role', 'isActive']) {
+      if (body.containsKey(key)) member[key] = body[key];
+    }
+    return _json(200, {'user': member});
+  }
+
+  http.Response _fieldError(String field, String message) => _json(400, {
+    'error': {
+      'code': 'VALIDATION_ERROR',
+      'message': 'Some fields are missing or invalid.',
+      'details': [
+        {'field': field, 'message': message},
+      ],
+    },
+  });
 
   Map<String, Object?> _summary(Map<String, Object?> product) => {
     for (final key in ['id', 'sku', 'name', 'flavour', 'size']) key: product[key],
@@ -1611,6 +1714,7 @@ Future<TestApp> pumpSnackify(
     payments: PaymentsRepository(api),
     reports: ReportsRepository(api),
     forecasts: ForecastsRepository(api),
+    staff: StaffRepository(api),
     sharePdf: (bytes, filename) async => sharedPdfs.add((filename, utf8.decode(bytes))),
     readBarcode: scanner.read,
   );
