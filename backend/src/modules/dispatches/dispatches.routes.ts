@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type pg from 'pg';
 import { z } from 'zod';
-import { getAuth, requireAuth, requireRole } from '../../middleware/authenticate.js';
+import { getAuth, requireAuth, requirePermission } from '../../middleware/authenticate.js';
 import { AppError } from '../../utils/app-error.js';
 import { businessToday } from '../../utils/dates.js';
 import { moneySchema, optionalText, parseIdParam } from '../../utils/schemas.js';
@@ -81,7 +81,7 @@ const dispatchNotFound = () => new AppError(404, 'DISPATCH_NOT_FOUND', 'No dispa
  */
 export function dispatchesRouter(db: pg.Pool, businessTimezone: string): Router {
   const router = Router();
-  router.use(requireAuth(db));
+  router.use(requireAuth(db), requirePermission('dispatch.view'));
   const today = () => businessToday(businessTimezone);
 
   router.get('/', async (req, res) => {
@@ -94,7 +94,7 @@ export function dispatchesRouter(db: pg.Pool, businessTimezone: string): Router 
     res.json({ dispatch: await getDispatch(db, id) });
   });
 
-  router.post('/', requireRole('salesperson', 'storekeeper'), async (req, res) => {
+  router.post('/', requirePermission('dispatch.draft'), async (req, res) => {
     const input = parseBody(draftSchema, req.body);
     const dispatch = await createDraft(
       db,
@@ -104,7 +104,7 @@ export function dispatchesRouter(db: pg.Pool, businessTimezone: string): Router 
     res.status(201).json({ dispatch });
   });
 
-  router.put('/:id', requireRole('salesperson', 'storekeeper'), async (req, res) => {
+  router.put('/:id', requirePermission('dispatch.draft'), async (req, res) => {
     const id = parseIdParam(req.params.id, dispatchNotFound);
     const input = parseBody(draftSchema, req.body);
     const dispatch = await updateDraft(db, id, {
@@ -114,13 +114,13 @@ export function dispatchesRouter(db: pg.Pool, businessTimezone: string): Router 
     res.json({ dispatch });
   });
 
-  router.post('/:id/cancel', requireRole('salesperson', 'storekeeper'), async (req, res) => {
+  router.post('/:id/cancel', requirePermission('dispatch.draft'), async (req, res) => {
     const id = parseIdParam(req.params.id, dispatchNotFound);
     const { reason } = parseBody(reasonSchema, req.body);
     res.json({ dispatch: await cancelDraft(db, id, reason, getAuth(res).user) });
   });
 
-  router.post('/:id/confirm', requireRole('storekeeper'), async (req, res) => {
+  router.post('/:id/confirm', requirePermission('dispatch.confirm'), async (req, res) => {
     const id = parseIdParam(req.params.id, dispatchNotFound);
     const { acknowledgeCreditLimit } = parseBody(confirmSchema, req.body);
     const result = await confirmDispatch(db, id, getAuth(res).user, {
@@ -130,7 +130,7 @@ export function dispatchesRouter(db: pg.Pool, businessTimezone: string): Router 
     res.json(result);
   });
 
-  router.post('/:id/reverse', requireRole('admin'), async (req, res) => {
+  router.post('/:id/reverse', requirePermission('dispatch.reverse'), async (req, res) => {
     const id = parseIdParam(req.params.id, dispatchNotFound);
     const { reason } = parseBody(reasonSchema, req.body);
     res.json({ dispatch: await reverseDispatch(db, id, reason, getAuth(res).user, today()) });

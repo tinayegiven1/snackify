@@ -11,6 +11,7 @@ class Customer {
     required this.address,
     required this.creditLimit,
     required this.isActive,
+    this.organisationId,
   });
 
   factory Customer.fromJson(Map<String, dynamic> json) => Customer(
@@ -21,6 +22,7 @@ class Customer {
     address: json['address'] as String?,
     creditLimit: json['creditLimit'] as String?,
     isActive: json['isActive'] as bool,
+    organisationId: json['organisationId'] as String?,
   );
 
   final String id;
@@ -32,6 +34,9 @@ class Customer {
   /// Exact decimal text in the base currency, or null when no limit is set.
   final String? creditLimit;
   final bool isActive;
+
+  /// The subsidiary this customer record stands for, if any (decision D1).
+  final String? organisationId;
 
   String? get formattedCreditLimit =>
       creditLimit == null ? null : '${AppConfig.currencyCode} $creditLimit';
@@ -47,11 +52,13 @@ class CustomerPermissions {
     required this.canChangeActive,
   });
 
-  factory CustomerPermissions.forRole(StaffRole role) => CustomerPermissions._(
-    canAdd: role == StaffRole.admin || role == StaffRole.salesperson,
-    canEditDetails: role == StaffRole.admin || role == StaffRole.salesperson,
-    canEditCreditLimit: role == StaffRole.admin || role == StaffRole.accounts,
-    canChangeActive: role == StaffRole.admin,
+  /// Customers are no longer added on their own: each subsidiary brings its customer record
+  /// (decision D1), so [canAdd] is always false.
+  factory CustomerPermissions.forUser(AppUser user) => CustomerPermissions._(
+    canAdd: false,
+    canEditDetails: user.can('customer.edit_details'),
+    canEditCreditLimit: user.can('customer.edit_credit_limit'),
+    canChangeActive: user.can('customer.change_active'),
   );
 
   final bool canAdd;

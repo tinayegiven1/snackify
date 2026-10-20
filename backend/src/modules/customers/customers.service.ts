@@ -14,6 +14,8 @@ export interface Customer {
   /** Exact decimal string in the base currency, or null when no limit is set. */
   creditLimit: string | null;
   isActive: boolean;
+  /** The subsidiary this customer record stands for (decision D1), if any. */
+  organisationId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -26,12 +28,13 @@ interface CustomerRow {
   address: string | null;
   credit_limit: string | null;
   is_active: boolean;
+  organisation_id: string | null;
   created_at: Date;
   updated_at: Date;
 }
 
 const CUSTOMER_COLUMNS =
-  'id, code, name, phone, address, credit_limit, is_active, created_at, updated_at';
+  'id, code, name, phone, address, credit_limit, is_active, organisation_id, created_at, updated_at';
 
 const toCustomer = (row: CustomerRow): Customer => ({
   id: row.id,
@@ -41,6 +44,7 @@ const toCustomer = (row: CustomerRow): Customer => ({
   address: row.address,
   creditLimit: row.credit_limit,
   isActive: row.is_active,
+  organisationId: row.organisation_id,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
@@ -120,35 +124,54 @@ export interface NewCustomerInput {
   phone: string | null;
   address: string | null;
   creditLimit: string | null;
+  /** The subsidiary the customer record stands for. */
+  organisationId?: string | null;
 }
 
-export async function createCustomer(
-  pool: pg.Pool,
+/**
+ * Adds a customer inside the caller's transaction (used when a subsidiary is added). A code
+ * already in use is reported as a field error; the transaction must then be rolled back.
+ */
+export async function insertCustomer(
+  client: pg.PoolClient,
   input: NewCustomerInput,
-  actorUserId: string,
+  actorUserId: string | null,
 ): Promise<Customer> {
+  const code = input.code ?? (await nextCustomerCode(client));
   try {
-    return await withTransaction(pool, async (client) => {
-      const code = input.code ?? (await nextCustomerCode(client));
-      const { rows } = await client.query<CustomerRow>(
-        `INSERT INTO customers (code, name, phone, address, credit_limit)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING ${CUSTOMER_COLUMNS}`,
-        [code, input.name, input.phone, input.address, input.creditLimit],
-      );
-      const customer = toCustomer(rows[0] as CustomerRow);
-      await recordAudit(client, {
-        actorUserId,
-        action: 'customer.created',
-        entityType: 'customer',
-        entityId: customer.id,
-        details: { code: customer.code, name: customer.name, creditLimit: customer.creditLimit },
-      });
-      return customer;
+    const { rows } = await client.query<CustomerRow>(
+      `INSERT INTO customers (code, name, phone, address, credit_limit, organisation_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING ${CUSTOMER_COLUMNS}`,
+      [
+        code,
+        input.name,
+        input.phone,
+        input.address,
+        input.creditLimit,
+        input.organisationId ?? null,
+      ],
+    );
+    const customer = toCustomer(rows[0] as CustomerRow);
+    await recordAudit(client, {
+      actorUserId,
+      action: 'customer.created',
+      entityType: 'customer',
+      entityId: customer.id,
+      details: { code: customer.code, name: customer.name, creditLimit: customer.creditLimit },
     });
+    return customer;
   } catch (error) {
     throw codeTaken(error, input.code) ?? error;
   }
+}
+
+export function createCustomer(
+  pool: pg.Pool,
+  input: NewCustomerInput,
+  actorUserId: string | null,
+): Promise<Customer> {
+  return withTransaction(pool, (client) => insertCustomer(client, input, actorUserId));
 }
 
 export interface CustomerChanges {

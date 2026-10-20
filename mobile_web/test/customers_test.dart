@@ -41,59 +41,36 @@ void main() {
     expect(find.text('Edit customer'), findsNothing);
   });
 
-  testWidgets('a salesperson adds a customer and the code is generated', (tester) async {
+  testWidgets('nobody adds customers here: they come with each subsidiary', (tester) async {
+    for (final role in ['salesperson', 'admin']) {
+      final app = await pumpSnackify(tester, signedIn: true, backend: backendWithCustomers(role));
+      await openSection(tester, 'Customers');
+      expect(find.text('Add customer'), findsNothing, reason: role);
+      expect(app.backend.requests, isNot(contains('POST /api/v1/customers')), reason: role);
+    }
+  });
+
+  testWidgets('a salesperson edits details but not the credit limit', (tester) async {
     final app = await pumpSnackify(
       tester,
       signedIn: true,
       backend: backendWithCustomers('salesperson'),
     );
     await openSection(tester, 'Customers');
-    await tester.tap(find.text('Add customer'));
-    await tester.pumpAndSettle();
+    await openCustomer(tester, 'Avondale Tuckshop');
 
     // Credit limits are for accounts staff and admins.
     expect(fieldLabelled(tester, 'Credit limit (optional)').enabled, isFalse);
     expect(find.text('Only accounts staff and admins can change this.'), findsOneWidget);
 
-    await tester.enterText(find.widgetWithText(TextFormField, 'Customer name'), 'Borrowdale Spar');
-    await tester.enterText(find.widgetWithText(TextFormField, 'Phone (optional)'), '0242 300 300');
-    await saveCustomer(tester);
-
-    expect(find.text('Saved Borrowdale Spar (C0004)'), findsOneWidget);
-    expect(find.text('Borrowdale Spar'), findsOneWidget);
-    expect(app.backend.customers.last, containsPair('creditLimit', null));
-  });
-
-  testWidgets('the form checks fields before sending anything', (tester) async {
-    final app = await pumpSnackify(
-      tester,
-      signedIn: true,
-      backend: backendWithCustomers('salesperson'),
-    );
-    await openSection(tester, 'Customers');
-    await tester.tap(find.text('Add customer'));
-    await tester.pumpAndSettle();
-
     await tester.enterText(find.widgetWithText(TextFormField, 'Phone (optional)'), 'call me');
     await saveCustomer(tester);
-
-    expect(find.text('Required'), findsOneWidget);
     expect(find.text('Use digits, spaces, brackets or dashes'), findsOneWidget);
-    expect(app.backend.requests, isNot(contains('POST /api/v1/customers')));
-  });
 
-  testWidgets('a code already in use is reported on the Code field', (tester) async {
-    await pumpSnackify(tester, signedIn: true, backend: backendWithCustomers('salesperson'));
-    await openSection(tester, 'Customers');
-    await tester.tap(find.text('Add customer'));
-    await tester.pumpAndSettle();
-
-    await tester.enterText(find.widgetWithText(TextFormField, 'Customer name'), 'Copycat');
-    await tester.enterText(find.widgetWithText(TextFormField, 'Customer code (optional)'), 'c0001');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Phone (optional)'), '0242 300 300');
     await saveCustomer(tester);
-
-    expect(find.text('Already used by another customer'), findsOneWidget);
-    expect(find.text('Add customer'), findsOneWidget); // still on the form
+    expect(find.text('Saved Avondale Tuckshop (C0001)'), findsOneWidget);
+    expect(app.backend.customers.first['phone'], '0242 300 300');
   });
 
   testWidgets('accounts staff set a credit limit but cannot change details', (tester) async {
@@ -174,8 +151,7 @@ void main() {
     await openSection(tester, 'Customers');
     expect(find.text('Avondale Tuckshop'), findsOneWidget);
 
-    await tester.tap(find.text('Add customer'));
-    await tester.pumpAndSettle();
+    await openCustomer(tester, 'Avondale Tuckshop');
     expect(find.text('Save customer'), findsOneWidget);
   });
 }

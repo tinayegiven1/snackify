@@ -1,43 +1,111 @@
 import 'package:flutter/material.dart';
 
+import '../../features/auth/domain/app_user.dart';
+
 class AppDestination {
-  const AppDestination({required this.label, required this.icon, required this.selectedIcon});
+  const AppDestination({
+    required this.label,
+    required this.icon,
+    required this.selectedIcon,
+    required this.isVisibleTo,
+  });
 
   final String label;
   final IconData icon;
   final IconData selectedIcon;
+
+  /// Sections a user may not use are not shown at all (the server refuses them anyway).
+  final bool Function(AppUser user) isVisibleTo;
 }
 
-/// Main navigation sections.
+bool _everyone(AppUser user) => true;
+bool _dashboard(AppUser user) => user.can('report.dashboard');
+bool _stock(AppUser user) => user.can('stock.view');
+bool _customers(AppUser user) => user.can('customer.view');
+bool _dispatches(AppUser user) => user.can('dispatch.view');
+bool _invoices(AppUser user) => user.can('invoice.manage');
+bool _payments(AppUser user) => user.can('payment.manage');
+bool _reports(AppUser user) => user.can('report.stock') || user.can('report.financial');
+bool _forecasts(AppUser user) => user.can('forecast.use');
+bool _users(AppUser user) => user.can('user.manage');
+bool _audit(AppUser user) => user.can('audit.view');
+
+/// Main navigation sections, in menu order.
 const appDestinations = <AppDestination>[
-  AppDestination(label: 'Dashboard', icon: Icons.dashboard_outlined, selectedIcon: Icons.dashboard),
+  AppDestination(
+    label: 'Dashboard',
+    icon: Icons.dashboard_outlined,
+    selectedIcon: Icons.dashboard,
+    isVisibleTo: _dashboard,
+  ),
   AppDestination(
     label: 'Products',
     icon: Icons.inventory_2_outlined,
     selectedIcon: Icons.inventory_2,
+    isVisibleTo: _everyone,
   ),
-  AppDestination(label: 'Stock', icon: Icons.warehouse_outlined, selectedIcon: Icons.warehouse),
-  AppDestination(label: 'Customers', icon: Icons.people_outline, selectedIcon: Icons.people),
+  AppDestination(
+    label: 'Stock',
+    icon: Icons.warehouse_outlined,
+    selectedIcon: Icons.warehouse,
+    isVisibleTo: _stock,
+  ),
+  AppDestination(
+    label: 'Customers',
+    icon: Icons.people_outline,
+    selectedIcon: Icons.people,
+    isVisibleTo: _customers,
+  ),
   AppDestination(
     label: 'Dispatches',
     icon: Icons.local_shipping_outlined,
     selectedIcon: Icons.local_shipping,
+    isVisibleTo: _dispatches,
   ),
   AppDestination(
     label: 'Invoices',
     icon: Icons.receipt_long_outlined,
     selectedIcon: Icons.receipt_long,
+    isVisibleTo: _invoices,
   ),
-  AppDestination(label: 'Payments', icon: Icons.payments_outlined, selectedIcon: Icons.payments),
-  AppDestination(label: 'Reports', icon: Icons.insights_outlined, selectedIcon: Icons.insights),
+  AppDestination(
+    label: 'Payments',
+    icon: Icons.payments_outlined,
+    selectedIcon: Icons.payments,
+    isVisibleTo: _payments,
+  ),
+  AppDestination(
+    label: 'Reports',
+    icon: Icons.insights_outlined,
+    selectedIcon: Icons.insights,
+    isVisibleTo: _reports,
+  ),
   AppDestination(
     label: 'Forecasts',
     icon: Icons.trending_up_outlined,
     selectedIcon: Icons.trending_up,
+    isVisibleTo: _forecasts,
   ),
   AppDestination(
-    label: 'Staff',
+    label: 'Organisations',
+    icon: Icons.business_outlined,
+    selectedIcon: Icons.business,
+    isVisibleTo: _everyone,
+  ),
+  AppDestination(
+    label: 'Users & Roles',
     icon: Icons.manage_accounts_outlined,
     selectedIcon: Icons.manage_accounts,
+    isVisibleTo: _users,
+  ),
+  AppDestination(
+    label: 'Audit Log',
+    icon: Icons.history_outlined,
+    selectedIcon: Icons.history,
+    isVisibleTo: _audit,
   ),
 ];
+
+/// The sections [user] may use, in menu order.
+List<AppDestination> destinationsFor(AppUser user) =>
+    appDestinations.where((destination) => destination.isVisibleTo(user)).toList();

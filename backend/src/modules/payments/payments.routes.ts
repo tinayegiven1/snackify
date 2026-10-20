@@ -2,7 +2,7 @@ import { Router } from 'express';
 import type pg from 'pg';
 import { z } from 'zod';
 import type { AppConfig } from '../../config/env.js';
-import { getAuth, requireAuth, requireRole } from '../../middleware/authenticate.js';
+import { getAuth, requireAuth, requirePermission } from '../../middleware/authenticate.js';
 import { AppError } from '../../utils/app-error.js';
 import { addDays, businessToday, daysBetween } from '../../utils/dates.js';
 import { toCents } from '../../utils/money.js';
@@ -82,7 +82,7 @@ function fieldError(field: string, message: string): AppError {
  */
 export function paymentsRouter(db: pg.Pool, config: AppConfig): Router {
   const router = Router();
-  router.use(requireAuth(db), requireRole('accounts'));
+  router.use(requireAuth(db), requirePermission('payment.manage'));
   const today = () => businessToday(config.businessTimezone);
 
   router.get('/', async (req, res) => {
@@ -110,7 +110,7 @@ export function paymentsRouter(db: pg.Pool, config: AppConfig): Router {
     res.json({ payment: await allocatePayment(db, id, allocations, getAuth(res).user) });
   });
 
-  router.post('/:id/void', requireRole('admin'), async (req, res) => {
+  router.post('/:id/void', requirePermission('payment.void'), async (req, res) => {
     const id = parseIdParam(req.params.id, paymentNotFound);
     const { reason } = parseBody(reasonSchema, req.body);
     res.json({ payment: await voidPayment(db, id, reason, getAuth(res).user) });
@@ -122,7 +122,7 @@ export function paymentsRouter(db: pg.Pool, config: AppConfig): Router {
 /** Customer balances and account statements (spec 6.9). Accounts staff and admins. */
 export function balancesRouter(db: pg.Pool, config: AppConfig): Router {
   const router = Router();
-  router.use(requireAuth(db), requireRole('accounts'));
+  router.use(requireAuth(db), requirePermission('payment.manage'));
   const today = () => businessToday(config.businessTimezone);
 
   router.get('/', async (_req, res) => {

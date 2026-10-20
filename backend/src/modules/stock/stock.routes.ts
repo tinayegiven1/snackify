@@ -1,11 +1,18 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import type pg from 'pg';
 import { z } from 'zod';
-import { getAuth, requireAuth, requireRole } from '../../middleware/authenticate.js';
+import {
+  can,
+  forbidden,
+  getAuth,
+  requireAuth,
+  requirePermission,
+} from '../../middleware/authenticate.js';
 import { AppError } from '../../utils/app-error.js';
 import { businessToday, daysBetween } from '../../utils/dates.js';
 import { optionalText } from '../../utils/schemas.js';
 import { parseBody } from '../../utils/validation.js';
+import { organisationFor, scopeOf } from '../organisations/access.js';
 import {
   adjustStock,
   listBalances,
@@ -60,13 +67,20 @@ const flag = z
   .optional()
   .transform((value) => value === 'true');
 
+/** Whose stock to show. Defaults to the user's own organisation; checked against their access. */
+const organisationQuery = {
+  organisationId: z.uuid({ error: 'Must be an organisation id' }).optional(),
+};
+
 const balanceQuerySchema = z.object({
+  ...organisationQuery,
   q: z.string().trim().max(100).optional(),
   lowStockOnly: flag,
   includeInactive: flag,
 });
 
 const dateRangeQuerySchema = z.object({
+  ...organisationQuery,
   from: dateSchema.optional(),
   to: dateSchema.optional(),
   productId: productIdSchema.optional(),
@@ -89,17 +103,21 @@ function checkNotFuture(field: string, date: string, today: string): void {
 }
 
 /**
- * Stock (spec 6.3 and 6.4). Everyone signed in can view stock; storekeepers and admins
- * receive stock; only admins record opening balances and manual adjustments.
+ * Stock (spec 6.3 and 6.4). Stock belongs to an organisation: Head Office users may see any
+ * organisation's, a subsidiary's users only their own (the scope is applied in every query).
+ * Recording receipts, opening balances and adjustments each need their own permission.
  */
 export function stockRouter(db: pg.Pool, businessTimezone: string): Router {
   const router = Router();
-  router.use(requireAuth(db));
+  router.use(requireAuth(db), requirePermission('stock.view'));
   const today = () => businessToday(businessTimezone);
+  const ownerFor = (res: Response, requested: string | undefined) =>
+    organisationFor(scopeOf(getAuth(res).user), requested);
 
   router.get('/balance', async (req, res) => {
-    const filter = parseBody(balanceQuerySchema, req.query);
-    res.json({ balances: await listBalances(db, filter) });
+    const { organisationId, ...filter } = parseBody(balanceQuerySchema, req.query);
+    const ownerOrganisationId = ownerFor(res, organisationId);
+    res.json({ balances: await listBalances(db, { ...filter, ownerOrganisationId }) });
   });
 
   router.get('/receipts', async (req, res) => {
@@ -110,32 +128,45 @@ export function stockRouter(db: pg.Pool, businessTimezone: string): Router {
     if (daysBetween(from, to) >= MAX_REPORT_DAYS) {
       throw fieldError('to', `Choose a range of at most ${MAX_REPORT_DAYS} days`);
     }
-    res.json({ from, to, ...(await listReceipts(db, { from, to, productId: query.productId })) });
+    const ownerOrganisationId = ownerFor(res, query.organisationId);
+    res.json({
+      from,
+      to,
+      ...(await listReceipts(db, { ownerOrganisationId, from, to, productId: query.productId })),
+    });
   });
 
-  router.post('/receipts', requireRole('storekeeper'), async (req, res) => {
-    const input = parseBody(receiptSchema, req.body);
-    const { user } = getAuth(res);
-    if (input.isOpeningBalance && user.role !== 'admin') {
-      throw new AppError(403, 'FORBIDDEN', 'Only admins can record opening balances.');
-    }
+  // Receipts are the Head Office's own stock until StockFlow Stage 4 lets the owner be chosen.
+  router.post(
+    '/receipts',
+    requirePermission('stock.receive', 'stock.opening_balance'),
+    async (req, res) => {
+      const input = parseBody(receiptSchema, req.body);
+      const { user } = getAuth(res);
+      if (!can(user, input.isOpeningBalance ? 'stock.opening_balance' : 'stock.receive')) {
+        throw input.isOpeningBalance
+          ? new AppError(403, 'FORBIDDEN', 'Only admins can record opening balances.')
+          : forbidden();
+      }
 
-    const receivedDate = input.receivedDate ?? today();
-    checkNotFuture('receivedDate', receivedDate, today());
-    if (input.expiryDate !== null && input.expiryDate < receivedDate) {
-      throw fieldError('expiryDate', 'Cannot be before the date the stock was received');
-    }
+      const receivedDate = input.receivedDate ?? today();
+      checkNotFuture('receivedDate', receivedDate, today());
+      if (input.expiryDate !== null && input.expiryDate < receivedDate) {
+        throw fieldError('expiryDate', 'Cannot be before the date the stock was received');
+      }
 
-    const result = await receiveStock(db, { ...input, receivedDate }, user);
-    res.status(201).json(result);
-  });
+      const result = await receiveStock(db, { ...input, receivedDate }, user);
+      res.status(201).json(result);
+    },
+  );
 
   router.get('/movements', async (req, res) => {
-    const query = parseBody(movementsQuerySchema, req.query);
-    res.json(await listMovements(db, query));
+    const { organisationId, ...query } = parseBody(movementsQuerySchema, req.query);
+    const ownerOrganisationId = ownerFor(res, organisationId);
+    res.json(await listMovements(db, { ...query, ownerOrganisationId }));
   });
 
-  router.post('/adjustments', requireRole('admin'), async (req, res) => {
+  router.post('/adjustments', requirePermission('stock.adjust'), async (req, res) => {
     const input = parseBody(adjustmentSchema, req.body);
     const businessDate = input.businessDate ?? today();
     checkNotFuture('businessDate', businessDate, today());

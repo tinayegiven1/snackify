@@ -274,15 +274,14 @@ void main() {
     expect(app.backend.requests.where((r) => r.contains('/reports/sales')), isEmpty);
   });
 
-  testWidgets('salespeople are told reports are for managers', (tester) async {
+  testWidgets('reports are not offered to sales staff', (tester) async {
     final app = await pumpSnackify(
       tester,
       signedIn: true,
       backend: FakeBackend(role: 'salesperson'),
     );
-    await openReports(tester);
 
-    expect(find.text('Reports are for managers'), findsOneWidget);
+    expect(await menuSections(tester), isNot(contains('Reports')));
     expect(
       app.backend.requests.where((r) => r.contains('/reports/') && !r.contains('dashboard')),
       isEmpty,

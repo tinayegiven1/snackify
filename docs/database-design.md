@@ -72,14 +72,44 @@ changing `default_price` never rewrites history.
 | `id`            | `uuid`        | Primary key                                                    |
 | `username`      | `text`        | Required, unique, lower case: `a-z 0-9 . _ -`, 3–32 chars      |
 | `full_name`     | `text`        | Required, trimmed, 1–100 chars                                 |
-| `role`          | `text`        | `admin`, `storekeeper`, `salesperson` or `accounts`            |
+| `organisation_id` | `uuid`      | Required; references `organisations`. Where the person works   |
+| `role`          | `text`        | Old single role, kept for history only (null for new accounts); roles are in `user_roles` |
 | `password_hash` | `text`        | Must be an Argon2id hash (`$argon2id$...`); plain text is rejected |
 | `is_active`     | `boolean`     | Defaults to `true`. Inactive accounts cannot sign in           |
 | `created_at`    | `timestamptz` | Set on insert                                                  |
 | `updated_at`    | `timestamptz` | Updated automatically on every change                          |
 
 The API role cannot delete accounts; they are deactivated instead, so the audit log always
-points at a real person. Each user has one role.
+points at a real person. Staff of a deactivated organisation cannot sign in either.
+
+### `organisations`: the Head Office and its subsidiaries (StockFlow Stage 3)
+
+| Column              | Type          | Rules                                                      |
+| ------------------- | ------------- | ---------------------------------------------------------- |
+| `id`                | `uuid`        | Primary key                                                |
+| `code`              | `text`        | Required, unique, upper case: `A-Z 0-9 _ -`, 2–20 chars    |
+| `name`              | `text`        | Required, trimmed, 1–120 chars                             |
+| `organisation_type` | `text`        | `HQ` or `SUBSIDIARY`; exactly one `HQ` (partial unique index) |
+| `is_active`         | `boolean`     | The Head Office is always active                           |
+| `contact_name`, `contact_phone`, `contact_email`, `address` | `text` | Optional, checked formats |
+| `billing_name`, `billing_address`, `tax_number` | `text` | Optional                           |
+| `created_at`, `updated_at` | `timestamptz` |                                                 |
+
+Never deleted (the API role has no `DELETE`). The function `hq_organisation_id()` returns the
+Head Office's id; it is the default owner of stock recorded by the existing screens.
+
+### `permissions`, `roles`, `role_permissions`, `user_roles`
+
+- `permissions`: one row per permission code the API checks (e.g. `stock.receive`). The list is
+  defined by the code (`backend/src/modules/auth/permissions.ts`; a test checks they match), so
+  the API role cannot change it.
+- `roles`: `code`, `name`, `description`, `organisation_type` (which kind of organisation's staff
+  may hold it).
+- `role_permissions`: which permissions each role has. Data, not code: changed through
+  `PUT /api/v1/roles/:code/permissions`.
+- `user_roles`: which roles each user holds (`granted_by`, `granted_at`). A trigger refuses a role
+  that does not suit the user's organisation type (`user_roles_organisation_type`), also when a
+  user is moved to another organisation.
 
 ### `sessions`: signed-in devices
 
@@ -104,7 +134,9 @@ The token itself is never stored, so a copy of the database cannot be used to si
 | `action`        | `text`        | e.g. `auth.login`, `auth.login_failed`, `user.created`         |
 | `entity_type`   | `text`        | What was affected, e.g. `user`                                 |
 | `entity_id`     | `uuid`        | Which record was affected                                      |
-| `details`       | `jsonb`       | Extra facts, e.g. `{"changes": {"role": {"from": "accounts", "to": "admin"}}}` |
+| `details`       | `jsonb`       | Extra facts, e.g. `{"from": ["hq_sales_officer"], "to": ["system_admin"]}` |
+| `organisation_id` | `uuid`      | The organisation the action was for or by (StockFlow Stage 3)  |
+| `ip_address`    | `inet`        | The client's network address                                   |
 
 The API role can add entries but cannot change or delete them. Passwords and tokens are never
 written to the log.
@@ -145,8 +177,15 @@ with an adjustment in the ledger, so the original record stays.
 
 Indexed by product and date. The API role can add rows but never change or delete them.
 
-**Stock on hand** comes from the `stock_balances` view: the sum of `quantity_delta` per product.
-There is no separate balance column that could drift from the history.
+**Ownership (StockFlow Stage 3).** Every batch and movement has an `owner_organisation_id`
+(default: the Head Office). A movement of a batch always has the batch's owner (composite
+foreign key). Where stock is kept is not who owns it.
+
+**Stock on hand** comes from the ledger: the sum of `quantity_delta`, per product and owner. The
+`stock_balances` view is the **Head Office's** stock, which dispatches, forecasts and reports
+use, so the Head Office can never dispatch a subsidiary's goods. There is no separate balance
+column that could drift from the history (Stage 4 adds one per owner and location, kept in step
+inside the same transaction).
 
 **Never below zero, even under concurrency:** every operation that changes stock first locks the
 product's row (`SELECT … FOR UPDATE`), checks the balance, and then writes the movement in the
@@ -169,8 +208,11 @@ no `DELETE`), so dispatch and invoice history always points at a real customer.
 | `is_active`    | `boolean`       | Defaults to `true`                                        |
 | `created_at`   | `timestamptz`   | Set on insert                                             |
 | `updated_at`   | `timestamptz`   | Updated automatically on every change                     |
+| `organisation_id` | `uuid`       | The subsidiary this customer record stands for (unique); `NULL` for customers added before Stage 3 |
 
-Which roles may change which columns is enforced by the API (see the API documentation).
+Which permissions may change which columns is enforced by the API (see the API documentation).
+Since StockFlow Stage 3 the buyers are the subsidiaries (decision D1): customer records are
+created with each subsidiary, not on their own.
 
 ### `dispatches` and `dispatch_items` (spec 6.6)
 

@@ -203,19 +203,20 @@ export async function receiveStock(
   });
 }
 
+/** Receipts of stock owned by `ownerOrganisationId` (callers check the user may see it). */
 export async function listReceipts(
   db: Queryable,
-  filter: { from: string; to: string; productId?: string | undefined },
+  filter: { ownerOrganisationId: string; from: string; to: string; productId?: string | undefined },
 ): Promise<{ receipts: StockReceipt[]; totalQuantity: number }> {
-  const params: unknown[] = [filter.from, filter.to];
+  const params: unknown[] = [filter.ownerOrganisationId, filter.from, filter.to];
   let productCondition = '';
   if (filter.productId) {
     params.push(filter.productId);
-    productCondition = 'AND b.product_id = $3';
+    productCondition = 'AND b.product_id = $4';
   }
   const { rows } = await db.query<ReceiptRow>(
     `${RECEIPT_SELECT}
-     WHERE b.received_date BETWEEN $1 AND $2 ${productCondition}
+     WHERE b.owner_organisation_id = $1 AND b.received_date BETWEEN $2 AND $3 ${productCondition}
      ORDER BY b.received_date DESC, b.created_at DESC`,
     params,
   );
@@ -286,6 +287,7 @@ export async function adjustStock(
     });
 
     const { movements } = await listMovements(client, {
+      ownerOrganisationId: await headOfficeId(client),
       productId: input.productId,
       movementId,
       limit: 1,
@@ -305,12 +307,28 @@ export interface StockBalance {
   isLowStock: boolean;
 }
 
+/** The Head Office's organisation id. */
+export async function headOfficeId(db: Queryable): Promise<string> {
+  const { rows } = await db.query<{ id: string }>('SELECT hq_organisation_id() AS id');
+  return (rows[0] as { id: string }).id;
+}
+
+/**
+ * Every product with the stock that `ownerOrganisationId` owns of it (callers check the user
+ * may see that organisation). Physical location is not ownership: only the owner's ledger
+ * entries count.
+ */
 export async function listBalances(
   db: Queryable,
-  filter: { q?: string | undefined; lowStockOnly: boolean; includeInactive: boolean },
+  filter: {
+    ownerOrganisationId: string;
+    q?: string | undefined;
+    lowStockOnly: boolean;
+    includeInactive: boolean;
+  },
 ): Promise<StockBalance[]> {
   const conditions: string[] = [];
-  const params: unknown[] = [];
+  const params: unknown[] = [filter.ownerOrganisationId];
   if (!filter.includeInactive) conditions.push('p.is_active');
   if (filter.lowStockOnly) {
     conditions.push('p.reorder_level IS NOT NULL AND b.quantity_on_hand <= p.reorder_level');
@@ -318,7 +336,7 @@ export async function listBalances(
   if (filter.q) {
     params.push(`%${escapeLike(filter.q)}%`, filter.q);
     conditions.push(
-      '(p.sku ILIKE $1 OR p.name ILIKE $1 OR p.flavour ILIKE $1 OR p.size ILIKE $1 OR p.barcode = $2)',
+      '(p.sku ILIKE $2 OR p.name ILIKE $2 OR p.flavour ILIKE $2 OR p.size ILIKE $2 OR p.barcode = $3)',
     );
   }
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -329,7 +347,11 @@ export async function listBalances(
     `SELECT p.id AS product_id, p.sku, p.name, p.flavour, p.size, p.is_active, p.reorder_level,
             b.quantity_on_hand
      FROM products p
-     JOIN stock_balances b ON b.product_id = p.id
+     CROSS JOIN LATERAL (
+       SELECT COALESCE(sum(m.quantity_delta), 0)::integer AS quantity_on_hand
+       FROM stock_movements m
+       WHERE m.product_id = p.id AND m.owner_organisation_id = $1
+     ) b
      ${where}
      ORDER BY p.name, p.flavour, p.size, p.sku`,
     params,
@@ -374,9 +396,11 @@ interface MovementRow extends ProductColumns {
   total: number;
 }
 
+/** The ledger of stock owned by `ownerOrganisationId` (callers check the user may see it). */
 export async function listMovements(
   db: Queryable,
   filter: {
+    ownerOrganisationId: string;
     productId?: string | undefined;
     movementId?: string;
     from?: string | undefined;
@@ -391,19 +415,20 @@ export async function listMovements(
     params.push(value);
     conditions.push(condition.replace('?', `$${params.length}`));
   };
+  add('l.owner_organisation_id = ?', filter.ownerOrganisationId);
   if (filter.productId) add('l.product_id = ?', filter.productId);
   if (filter.movementId) add('l.id = ?', filter.movementId);
   if (filter.from) add('l.business_date >= ?', filter.from);
   if (filter.to) add('l.business_date <= ?', filter.to);
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  // The running balance is worked out over each product's whole ledger, in the order the
-  // movements were recorded, before any filtering.
+  // The running balance is worked out over each owner's whole ledger of each product, in the
+  // order the movements were recorded, before any filtering.
   const { rows } = await db.query<MovementRow>(
     `WITH ledger AS (
        SELECT m.*,
               sum(m.quantity_delta) OVER (
-                PARTITION BY m.product_id ORDER BY m.occurred_at, m.id
+                PARTITION BY m.owner_organisation_id, m.product_id ORDER BY m.occurred_at, m.id
               )::integer AS balance_after
        FROM stock_movements m
      )

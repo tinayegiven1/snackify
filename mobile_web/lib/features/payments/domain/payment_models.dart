@@ -1,12 +1,3 @@
-import '../../auth/domain/app_user.dart';
-
-/// Accounts staff and admins record payments and see balances (spec section 5). The server
-/// enforces this too.
-bool canUsePayments(StaffRole role) => role == StaffRole.admin || role == StaffRole.accounts;
-
-/// Only admins void a payment recorded by mistake.
-bool canVoidPayments(StaffRole role) => role == StaffRole.admin;
-
 enum PaymentMethod {
   cash('cash', 'Cash'),
   bankTransfer('bank_transfer', 'Bank transfer'),

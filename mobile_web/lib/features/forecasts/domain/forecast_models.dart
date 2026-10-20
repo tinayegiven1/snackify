@@ -1,9 +1,3 @@
-import '../../auth/domain/app_user.dart';
-
-/// Admins, accounts staff and storekeepers (who plan deliveries) see forecasts.
-bool canUseForecasts(StaffRole role) =>
-    role == StaffRole.admin || role == StaffRole.accounts || role == StaffRole.storekeeper;
-
 enum ForecastStatus {
   ok,
   insufficientHistory,

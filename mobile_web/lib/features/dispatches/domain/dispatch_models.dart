@@ -13,7 +13,7 @@ enum DispatchStatus {
   static DispatchStatus fromApi(String value) => DispatchStatus.values.byName(value);
 }
 
-/// What each role may do with dispatches. The server enforces the same rules.
+/// What the user may do with dispatches. The server enforces the same rules.
 class DispatchPermissions {
   const DispatchPermissions._({
     required this.canCreate,
@@ -21,10 +21,10 @@ class DispatchPermissions {
     required this.canReverse,
   });
 
-  factory DispatchPermissions.forRole(StaffRole role) => DispatchPermissions._(
-    canCreate: role != StaffRole.accounts,
-    canConfirm: role == StaffRole.admin || role == StaffRole.storekeeper,
-    canReverse: role == StaffRole.admin,
+  factory DispatchPermissions.forUser(AppUser user) => DispatchPermissions._(
+    canCreate: user.can('dispatch.draft'),
+    canConfirm: user.can('dispatch.confirm'),
+    canReverse: user.can('dispatch.reverse'),
   );
 
   /// Create, edit and cancel drafts.

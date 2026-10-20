@@ -1,13 +1,3 @@
-import '../../auth/domain/app_user.dart';
-
-/// Sales, product and customer reports: admins and accounts staff (spec section 5).
-bool canSeeFinancialReports(StaffRole role) =>
-    role == StaffRole.admin || role == StaffRole.accounts;
-
-/// Stock reports (received, expiring): also storekeepers.
-bool canSeeStockReports(StaffRole role) =>
-    canSeeFinancialReports(role) || role == StaffRole.storekeeper;
-
 enum GroupBy {
   day('Day'),
   week('Week'),

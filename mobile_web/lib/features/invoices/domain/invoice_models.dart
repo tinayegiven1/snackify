@@ -1,5 +1,4 @@
 import '../../../core/formatting/dates.dart';
-import '../../auth/domain/app_user.dart';
 import '../../payments/domain/payment_models.dart';
 
 enum InvoiceStatus {
@@ -13,9 +12,6 @@ enum InvoiceStatus {
 
   static InvoiceStatus fromApi(String value) => InvoiceStatus.values.byName(value);
 }
-
-/// Accounts staff and admins work with invoices (spec section 5). The server enforces this too.
-bool canUseInvoices(StaffRole role) => role == StaffRole.admin || role == StaffRole.accounts;
 
 /// A billing period, both dates included, in the API's "2026-10-12" format.
 class BillingPeriod {

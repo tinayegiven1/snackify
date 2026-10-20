@@ -158,9 +158,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
         title: searching ? 'No customers match "${_search.text.trim()}"' : 'No customers yet',
         message: searching
             ? 'Check the spelling, or search by code or phone number.'
-            : widget.permissions.canAdd
-            ? 'Add your first customer with the Add customer button.'
-            : 'A salesperson or admin can add customers.',
+            : 'Customers are the subsidiaries: an admin adds one under Organisations.',
       );
     }
 

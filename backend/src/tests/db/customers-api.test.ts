@@ -2,11 +2,13 @@ import { randomUUID } from 'node:crypto';
 import type { Express } from 'express';
 import request from 'supertest';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import type { Role } from '../../modules/auth/roles.js';
+import { createCustomer } from '../../modules/customers/customers.service.js';
+import type { Role } from './db-test-helpers.js';
 import {
   auditEntries,
   createDbTestApp,
   createTestPools,
+  createTestSubsidiary,
   createTestUser,
   PG,
   pgErrorOf,
@@ -27,17 +29,22 @@ const as = (role: Role) => ({
     request(app).patch(path).set('Authorization', `Bearer ${tokens[role]}`).send(body),
 });
 
-async function addCustomer(body: object = {}, role: Role = 'salesperson') {
-  const response = await as(role).post('/api/v1/customers', {
-    name: 'Avondale Tuckshop',
-    phone: '+263 77 123 4567',
-    address: '12 King George Road, Avondale, Harare',
-    ...body,
-  });
-  if (response.status !== 201) {
-    throw new Error(`Could not add customer: ${JSON.stringify(response.body)}`);
-  }
-  return response.body.customer as { id: string; code: string };
+/**
+ * Adds a customer the way adding a subsidiary does (the API no longer adds stand-alone
+ * customers: decision D1).
+ */
+function addCustomer(body: { code?: string; name?: string; phone?: string } = {}) {
+  return createCustomer(
+    pools.app,
+    {
+      name: 'Avondale Tuckshop',
+      phone: '+263 77 123 4567',
+      address: '12 King George Road, Avondale, Harare',
+      creditLimit: null,
+      ...body,
+    },
+    null,
+  );
 }
 
 const fields = (response: request.Response) =>
@@ -56,9 +63,18 @@ beforeEach(async () => {
 afterAll(() => pools.close());
 
 describe('adding customers', () => {
-  it('gives each new customer the next free code unless one is chosen', async () => {
+  it('is refused for everyone: buyers are added as subsidiaries (decision D1)', async () => {
+    for (const role of ['admin', 'salesperson', 'accounts', 'storekeeper'] as const) {
+      const response = await as(role).post('/api/v1/customers', { name: 'Avondale Tuckshop' });
+      expect(response.status, role).toBe(409);
+      expect(response.body.error.code).toBe('ADD_AS_SUBSIDIARY');
+    }
+    expect((await pools.owner.query('SELECT 1 FROM customers')).rowCount).toBe(0);
+  });
+
+  it('gives each new customer record the next free code unless one is chosen', async () => {
     const first = await addCustomer();
-    const own = await addCustomer({ name: 'Borrowdale Spar', code: ' spar-bdl ' }, 'admin');
+    const own = await addCustomer({ name: 'Borrowdale Spar', code: 'SPAR-BDL' });
     const second = await addCustomer({ name: 'Mabelreign Grocers' });
 
     expect([first.code, own.code, second.code]).toEqual(['C0001', 'SPAR-BDL', 'C0002']);
@@ -69,69 +85,40 @@ describe('adding customers', () => {
     expect((await addCustomer({ name: 'Generated' })).code).toBe('C0002');
   });
 
-  it('stores tidied details and records who added the customer', async () => {
-    const response = await as('salesperson').post('/api/v1/customers', {
-      name: '  Avondale Tuckshop ',
-      phone: '',
-      address: '  12 King George Road ',
-    });
-
-    expect(response.status).toBe(201);
-    expect(response.body.customer).toMatchObject({
-      code: 'C0001',
-      name: 'Avondale Tuckshop',
-      phone: null,
-      address: '12 King George Road',
-      creditLimit: null,
-      isActive: true,
-    });
-    const [entry] = await auditEntries(pools.owner, 'customer.created');
-    expect(entry?.details).toEqual({ code: 'C0001', name: 'Avondale Tuckshop', creditLimit: null });
-  });
-
-  it('explains every invalid field', async () => {
-    const response = await as('salesperson').post('/api/v1/customers', {
-      code: 'bad code!',
-      name: '',
-      phone: 'call me',
-    });
-
-    expect(response.status).toBe(400);
-    expect(fields(response)).toEqual(['code', 'name', 'phone']);
-  });
-
-  it('rejects a code that another customer already uses, in any letter case', async () => {
+  it('records who added the customer, and refuses a code already in use', async () => {
     await addCustomer({ code: 'SPAR-BDL' });
-    const response = await as('salesperson').post('/api/v1/customers', {
-      name: 'Another Spar',
-      code: 'spar-bdl',
+    const [entry] = await auditEntries(pools.owner, 'customer.created');
+    expect(entry?.details).toEqual({
+      code: 'SPAR-BDL',
+      name: 'Avondale Tuckshop',
+      creditLimit: null,
     });
 
-    expect(response.status).toBe(409);
-    expect(response.body.error).toMatchObject({
+    await expect(addCustomer({ name: 'Another Spar', code: 'SPAR-BDL' })).rejects.toMatchObject({
       code: 'CUSTOMER_CODE_TAKEN',
       details: [{ field: 'code', message: 'Already used by another customer' }],
     });
   });
 
-  it('is allowed for salespeople and admins only', async () => {
-    for (const role of ['storekeeper', 'accounts'] as const) {
-      const response = await as(role).post('/api/v1/customers', { name: 'Not allowed' });
-      expect(response.status, role).toBe(403);
-    }
-    expect((await pools.owner.query('SELECT 1 FROM customers')).rowCount).toBe(0);
+  it("are the Head Office's business: a subsidiary's staff cannot see them", async () => {
+    await addCustomer();
+    const subsidiary = await createTestSubsidiary(pools.owner, 'SUB1');
+    await createTestUser(pools.app, {
+      username: 'manager',
+      roleCodes: ['subsidiary_manager'],
+      organisationId: subsidiary,
+      password: PASSWORD,
+    });
+    const token = await signIn(app, 'manager', PASSWORD);
+    const response = await request(app)
+      .get('/api/v1/customers')
+      .set('Authorization', `Bearer ${token}`);
+    expect(response.status).toBe(403);
   });
 });
 
 describe('credit limits and other restricted fields', () => {
   it('only accounts staff and admins can set a credit limit', async () => {
-    const bySalesperson = await as('salesperson').post('/api/v1/customers', {
-      name: 'Credit Customer',
-      creditLimit: '500',
-    });
-    expect(bySalesperson.status).toBe(403);
-    expect(fields(bySalesperson)).toEqual(['creditLimit']);
-
     const customer = await addCustomer();
     const salesChange = await as('salesperson').patch(`/api/v1/customers/${customer.id}`, {
       creditLimit: '500',

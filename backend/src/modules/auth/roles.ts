@@ -1,15 +1,18 @@
 import { z } from 'zod';
+import type { OrganisationRef, Permission, RoleRef } from './permissions.js';
 
-/** Staff roles (spec section 5). Admins may do everything. */
-export const ROLES = ['admin', 'storekeeper', 'salesperson', 'accounts'] as const;
-export type Role = (typeof ROLES)[number];
-
-/** The signed-in user, as returned by the API. Never includes the password hash. */
+/**
+ * The signed-in user, as returned by the API. Never includes the password hash.
+ * What they may do is `permissions` (from all their roles); which organisations' data they may
+ * see follows from `organisation` (see organisations/access.ts).
+ */
 export interface PublicUser {
   id: string;
   username: string;
   fullName: string;
-  role: Role;
+  organisation: OrganisationRef;
+  roles: RoleRef[];
+  permissions: Permission[];
 }
 
 // Shared input rules, so the API and the create-user command validate the same way.
@@ -28,7 +31,13 @@ export const fullNameSchema = z
   .min(1, 'Required')
   .max(100, 'Use at most 100 characters');
 
-export const roleSchema = z.enum(ROLES, { error: `Must be one of: ${ROLES.join(', ')}` });
+export const roleCodesSchema = z
+  .array(z.string({ error: 'Must be a role code' }).regex(/^[a-z][a-z_]{1,39}$/, 'Unknown role'), {
+    error: 'Must be a list of role codes',
+  })
+  .min(1, 'Give at least one role')
+  .max(10, 'Too many roles')
+  .transform((codes) => [...new Set(codes)].sort());
 
 // Long passphrases are encouraged; the upper limit stops absurdly long inputs.
 export const newPasswordSchema = z

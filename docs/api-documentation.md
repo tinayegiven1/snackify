@@ -68,8 +68,33 @@ Raw database errors, stack traces and submitted values are never returned.
 3. A session lasts 12 hours. It ends earlier on sign-out, when an admin resets the password or
    deactivates the account, or when the user changes their password on another device.
 
-Roles: `admin`, `storekeeper`, `salesperson`, `accounts`. Each endpoint lists the roles allowed;
-**admins are always allowed**. Permissions are checked on the server for every request.
+**Permissions** (StockFlow Stage 3, see [STAGE_3_5_PLAN.md](STAGE_3_5_PLAN.md)). Each user
+belongs to one organisation (the Head Office or a subsidiary) and holds one or more **roles**;
+each role is a set of **permission codes** such as `stock.receive`. Endpoints check permission
+codes, on the server, on every request; `403 FORBIDDEN` means none of the user's roles allows
+it. Which role has which permission is data (`GET /api/v1/roles`), changeable without code.
+
+| Role (code)                                    | Organisation | Main permissions |
+| ---------------------------------------------- | ------------ | ---------------- |
+| System Administrator (`system_admin`)          | HQ           | `organisation.manage`, `user.manage`, `role.manage`, `audit.view`, `product.manage`, `stock.adjust`, `stock.opening_balance`, `dispatch.reverse`, `payment.void`, `customer.change_active` |
+| HQ Warehouse Officer (`hq_warehouse_officer`)  | HQ           | `stock.receive`, `dispatch.draft`, `dispatch.confirm`, `label.print`, `report.stock`, `forecast.use` |
+| HQ Finance Officer (`hq_finance_officer`)      | HQ           | `invoice.manage`, `payment.manage`, `customer.edit_credit_limit`, `report.financial`, `report.stock`, `forecast.use` |
+| HQ Sales Officer (`hq_sales_officer`)          | HQ           | `customer.edit_details`, `dispatch.draft` |
+| Subsidiary Manager (`subsidiary_manager`)      | Subsidiary   | `stock.view` (own organisation); orders from Stage 5 |
+| Subsidiary Storekeeper (`subsidiary_storekeeper`) | Subsidiary | `stock.view` (own organisation) |
+
+All Head Office roles also have `stock.view`, `customer.view`, `dispatch.view` and
+`report.dashboard`. A subsidiary's staff can only hold subsidiary roles (the database refuses
+anything else).
+
+**Organisation separation.** Head Office staff may see every organisation's records; a
+subsidiary's staff only their own, plus the shared product catalogue. The organisation is always
+taken from the signed-in user; an `organisationId` sent by the app is only accepted when the user
+may see that organisation, and another organisation's record answers **404** (so its existence
+is not revealed).
+
+**Sessions** are read only from the `Authorization` header, never from cookies, so another
+website cannot act through a signed-in browser (no cross-site request forgery).
 
 ## Endpoints
 
@@ -126,13 +151,16 @@ Request:
     "id": "7f9c2b1e-...",
     "username": "tendai",
     "fullName": "Tendai Moyo",
-    "role": "storekeeper"
+    "organisation": { "id": "3b1f...", "code": "HQ", "name": "Head Office", "type": "HQ" },
+    "roles": [{ "code": "hq_warehouse_officer", "name": "HQ Warehouse Officer" }],
+    "permissions": ["customer.view", "dispatch.confirm", "dispatch.draft", "stock.receive", "stock.view"]
   }
 }
 ```
 
-**401** `INVALID_CREDENTIALS` for a wrong password, an unknown username or a deactivated
-account. The answer is identical in all three cases.
+(The permission list is shortened here.) **401** `INVALID_CREDENTIALS` for a wrong password, an
+unknown username, a deactivated account, or an account whose organisation is deactivated. The
+answer is identical in every case.
 
 ### `POST /api/v1/auth/logout`
 
@@ -140,7 +168,8 @@ Signed in. Ends the current session. **204 No Content**.
 
 ### `GET /api/v1/auth/me`
 
-Signed in. **200 OK** with `{ "user": { "id", "username", "fullName", "role" } }`.
+Signed in. **200 OK** with `{ "user": { ... } }`, the same as the sign-in answer. Roles and
+permissions are read on every request, so a change an admin makes applies at once.
 
 ### `POST /api/v1/auth/change-password`
 
@@ -153,14 +182,15 @@ Signed in. Changes your own password and signs you out on every other device.
 **204 No Content**. **400** `VALIDATION_ERROR` if the current password is wrong or the new one
 is invalid. Rate-limited like sign-in.
 
-## Staff accounts (admins only)
+## Staff accounts (`user.manage`)
 
 Passwords must be 10–128 characters. Usernames are 3–32 characters (letters, digits, `.`, `-`,
 `_`) and are stored in lower case. Accounts are never deleted; deactivate them instead.
 
 ### `GET /api/v1/users`
 
-**200 OK**, active accounts first, then by name. Password hashes are never returned.
+Optional `?organisationId=`. **200 OK**, active accounts first. Password hashes are never
+returned.
 
 ```json
 {
@@ -169,7 +199,8 @@ Passwords must be 10–128 characters. Usernames are 3–32 characters (letters,
       "id": "7f9c2b1e-...",
       "username": "tendai",
       "fullName": "Tendai Moyo",
-      "role": "storekeeper",
+      "organisation": { "id": "3b1f...", "code": "HQ", "name": "Head Office", "type": "HQ" },
+      "roles": [{ "code": "hq_warehouse_officer", "name": "HQ Warehouse Officer" }],
       "isActive": true,
       "createdAt": "2026-10-12T12:35:43.000Z",
       "lastSignInAt": "2026-10-12T12:47:25.000Z"
@@ -181,22 +212,31 @@ Passwords must be 10–128 characters. Usernames are 3–32 characters (letters,
 ### `POST /api/v1/users`
 
 ```json
-{ "username": "rudo", "fullName": "Rudo Chikore", "role": "accounts", "password": "first-passphrase" }
+{
+  "username": "rudo",
+  "fullName": "Rudo Chikore",
+  "organisationId": "3b1f...",
+  "roleCodes": ["hq_finance_officer", "hq_warehouse_officer"],
+  "password": "first-passphrase"
+}
 ```
 
-**201 Created** with `{ "user": { ... } }`. **409** `USERNAME_TAKEN`.
+**201 Created** with `{ "user": { ... } }`. **409** `USERNAME_TAKEN`. **400** with a `roleCodes`
+field error for an unknown role, or one that does not suit the organisation.
 
 ### `PATCH /api/v1/users/:id`
 
-Send any of `fullName`, `role`, `isActive`. Other fields are rejected.
+Send any of `fullName`, `organisationId`, `roleCodes`, `isActive`. Other fields are rejected.
 
 ```json
-{ "role": "admin" }
+{ "roleCodes": ["system_admin"] }
 ```
 
-**200 OK** with `{ "user": { ... } }`. Role changes apply to the user's next request.
-Setting `isActive: false` signs the user out everywhere at once. Admins cannot change their own
-role or deactivate themselves (`409 CANNOT_CHANGE_OWN_ACCESS`), so there is always an active admin.
+**200 OK** with `{ "user": { ... } }`. Role changes apply to the user's next request. Moving
+someone to another organisation needs roles that suit it, and signs them out. Setting
+`isActive: false` signs the user out everywhere at once. Admins cannot change their own roles or
+organisation, or deactivate themselves (`409 CANNOT_CHANGE_OWN_ACCESS`), so there is always an
+active admin. Role changes are audited as `user.roles_changed` (from and to).
 
 ### `POST /api/v1/users/:id/reset-password`
 
@@ -206,6 +246,110 @@ role or deactivate themselves (`409 CANNOT_CHANGE_OWN_ACCESS`), so there is alwa
 
 **204 No Content**. The user is signed out everywhere and must use the new password. Admins
 change their own password with `/auth/change-password` instead (`409 USE_CHANGE_PASSWORD`).
+
+## Roles (`user.manage` or `role.manage`)
+
+### `GET /api/v1/roles`
+
+**200 OK** with every role (`code`, `name`, `description`, `organisationType` `HQ` or
+`SUBSIDIARY`, `permissions`) and every permission (`code`, `description`).
+
+### `PUT /api/v1/roles/:code/permissions` (`role.manage`)
+
+```json
+{ "permissions": ["stock.view", "customer.view", "report.dashboard", "forecast.use"] }
+```
+
+Replaces what the role allows, for everyone holding it, at once. **200 OK** with `{ "role" }`.
+The System Administrator role must keep `user.manage` and `role.manage`
+(`409 PERMISSION_REQUIRED`). Audited as `role.permissions_changed`.
+
+## Organisations
+
+Everyone signed in sees the organisations they may access (Head Office staff: all; a
+subsidiary's staff: their own). Adding and changing them needs `organisation.manage`.
+Organisations are deactivated, never deleted.
+
+### `GET /api/v1/organisations`
+
+Optional `?includeInactive=true`. **200 OK**:
+
+```json
+{
+  "organisations": [
+    {
+      "id": "8c2e...",
+      "code": "SUB-01",
+      "name": "Bulawayo Branch",
+      "type": "SUBSIDIARY",
+      "isActive": true,
+      "contactName": "Nomsa Dube",
+      "contactPhone": "+263 29 222 3333",
+      "contactEmail": "orders@bulawayo.example",
+      "address": "5 Fife Street, Bulawayo",
+      "billingName": null,
+      "billingAddress": null,
+      "taxNumber": null,
+      "customerId": "41aa...",
+      "createdAt": "...",
+      "updatedAt": "..."
+    }
+  ]
+}
+```
+
+### `GET /api/v1/organisations/:id`
+
+**200 OK** with `{ "organisation" }`, or **404** `ORGANISATION_NOT_FOUND` (also for an
+organisation the user may not see).
+
+### `POST /api/v1/organisations` (adds a subsidiary)
+
+```json
+{ "code": "bul-01", "name": "Bulawayo Branch", "contactPhone": "+263 29 222 3333" }
+```
+
+Codes are 2–20 letters, digits, `-` or `_`, stored in upper case. The subsidiaries are the
+buyers (decision D1), so a **customer record** is created with it, in the same transaction, for
+today's dispatch and invoice screens (its code is the subsidiary's code when free). To reuse an
+existing customer record instead, send `"existingCustomerId"` (only one not linked yet).
+**201 Created**; **409** `ORGANISATION_CODE_TAKEN`.
+
+### `PATCH /api/v1/organisations/:id`
+
+Send any of `code`, `name`, the contact and billing fields (`null` clears one), `isActive`. The
+linked customer record keeps the subsidiary's name and active state. Deactivating a subsidiary
+signs its staff out and stops them signing in; the Head Office cannot be deactivated
+(`409 HEAD_OFFICE_ALWAYS_ACTIVE`).
+
+## Audit log (`audit.view`)
+
+### `GET /api/v1/audit-logs`
+
+Newest first. Optional `from`, `to` (dates), `action` (`user.created`, or a group such as
+`stock`), `userId`, `organisationId`, `limit` (1–200, default 50), `offset`.
+
+```json
+{
+  "entries": [
+    {
+      "id": "...",
+      "occurredAt": "2026-10-20T09:15:00.000Z",
+      "action": "user.roles_changed",
+      "actor": { "id": "...", "fullName": "Tendai Moyo" },
+      "organisation": { "id": "...", "code": "HQ" },
+      "entityType": "user",
+      "entityId": "...",
+      "details": { "from": ["hq_sales_officer"], "to": ["system_admin"] },
+      "ipAddress": "192.0.2.10"
+    }
+  ],
+  "total": 1
+}
+```
+
+Every entry records the organisation and network address of the request. Passwords and tokens
+are never recorded.
 
 ## Products
 
@@ -352,12 +496,19 @@ hand is always the sum of the ledger. Business dates (`receivedDate`, `businessD
 `YYYY-MM-DD` in the business time zone (`BUSINESS_TIMEZONE`, default `Africa/Harare`) and may not
 be in the future.
 
-| Action                                      | Who                      |
-| ------------------------------------------- | ------------------------ |
-| View balances, receipts and movements       | Everyone signed in       |
-| Receive stock                               | Storekeepers and admins  |
-| Record an opening balance                   | Admins                   |
-| Damage and corrections (adjustments)        | Admins, with a reason    |
+**Stock belongs to an organisation** (StockFlow Stage 3). Where stock is kept is not who owns
+it: every batch and movement records its owner. The `GET` endpoints below take an optional
+`organisationId` (default: the user's own organisation); Head Office staff may ask for any
+organisation, a subsidiary's staff only their own (another organisation answers **404**).
+Receipts, adjustments and dispatches recorded by today's screens are the Head Office's stock;
+choosing another owner when receiving arrives in Stage 4.
+
+| Action                                      | Permission                                |
+| ------------------------------------------- | ----------------------------------------- |
+| View balances, receipts and movements       | `stock.view` (own organisation, or any for the Head Office) |
+| Receive stock                               | `stock.receive`                           |
+| Record an opening balance                   | `stock.opening_balance`                   |
+| Damage and corrections (adjustments)        | `stock.adjust`, with a reason             |
 
 Movement types: `opening_balance`, `receipt`, `damage`, `adjustment` (and later `dispatch`,
 `customer_return`, `reversal`).
@@ -521,13 +672,12 @@ Query: optional `q` (part of the code, name or phone, case ignored), `includeIna
 
 **200 OK** with `{ "customer": { … } }`.
 
-### `POST /api/v1/customers` (salespeople and admins)
+### `POST /api/v1/customers` (no longer used)
 
-```json
-{ "name": "Avondale Tuckshop", "phone": "+263 77 123 4567", "address": "12 King George Road" }
-```
-
-**201 Created** with `{ "customer": { … } }`. Only admins may include `creditLimit` here.
+Since StockFlow Stage 3 the buyers are the subsidiaries (decision D1): a customer record is
+created with each subsidiary (`POST /api/v1/organisations`). This endpoint answers
+**409** `ADD_AS_SUBSIDIARY` for everyone. Customer records carry `organisationId` (the subsidiary
+they stand for, or `null` for customers added before Stage 3).
 
 ### `PATCH /api/v1/customers/:id`
 

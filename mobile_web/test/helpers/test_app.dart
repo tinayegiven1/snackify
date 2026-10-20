@@ -12,10 +12,12 @@ import 'package:snackify/core/network/api_client.dart';
 import 'package:snackify/features/auth/data/auth_repository.dart';
 import 'package:snackify/features/auth/data/token_store.dart';
 import 'package:snackify/features/auth/presentation/auth_controller.dart';
+import 'package:snackify/features/audit/data/audit_repository.dart';
 import 'package:snackify/features/customers/data/customers_repository.dart';
 import 'package:snackify/features/dispatches/data/dispatches_repository.dart';
 import 'package:snackify/features/forecasts/data/forecasts_repository.dart';
 import 'package:snackify/features/invoices/data/invoices_repository.dart';
+import 'package:snackify/features/organisations/data/organisations_repository.dart';
 import 'package:snackify/features/payments/data/payments_repository.dart';
 import 'package:snackify/features/products/data/products_repository.dart';
 import 'package:snackify/features/reports/data/reports_repository.dart';
@@ -97,17 +99,32 @@ class FakeBackend {
 
   /// Staff accounts as the server lists them. The signed-in user is always the first.
   late final List<Map<String, Object?>> staff = [
-    {...user, 'isActive': true, 'lastSignInAt': '2026-10-13T06:30:00Z'},
+    {
+      for (final key in ['id', 'username', 'fullName', 'organisation', 'roles']) key: user[key],
+      'isActive': true,
+      'lastSignInAt': '2026-10-13T06:30:00Z',
+    },
   ];
+
+  /// The Head Office and subsidiaries, as the server lists them.
+  final List<Map<String, Object?>> organisations = [
+    {...headOffice, 'isActive': true, 'customerId': null},
+    {...subsidiaryOne, 'isActive': true, 'contactPhone': '+263 00 100 0001', 'customerId': null},
+  ];
+
+  /// Audit log entries, newest first, as the server returns them.
+  final List<Map<String, Object?>> auditEntries = [];
 
   /// Passwords set through the API: (account id, new password).
   final List<(String, String)> passwordsSet = [];
 
-  /// Adds a staff account directly, as if it already existed on the server.
+  /// Adds a staff account directly, as if it already existed on the server. [role] is an old
+  /// role name or a role code.
   Map<String, Object?> addStaff(
     String username,
     String fullName,
     String role, {
+    Map<String, Object?> organisation = headOffice,
     bool isActive = true,
     String? lastSignInAt,
   }) {
@@ -115,7 +132,8 @@ class FakeBackend {
       'id': 'user-${staff.length + 1}',
       'username': username,
       'fullName': fullName,
-      'role': role,
+      'organisation': organisation,
+      'roles': _rolesJson(legacyRoles[role] ?? [role]),
       'isActive': isActive,
       'lastSignInAt': lastSignInAt,
     };
@@ -127,11 +145,107 @@ class FakeBackend {
   final List<String> requests = [];
   int _issued = 0;
 
+  /// What each role may do: the same rows as the real database (migration 20261020090000000).
+  static const rolePermissions = <String, List<String>>{
+    'system_admin': [
+      'organisation.manage',
+      'user.manage',
+      'role.manage',
+      'audit.view',
+      'product.manage',
+      'stock.view',
+      'stock.opening_balance',
+      'stock.adjust',
+      'customer.view',
+      'customer.edit_details',
+      'customer.change_active',
+      'dispatch.view',
+      'dispatch.reverse',
+      'payment.void',
+      'report.dashboard',
+    ],
+    'hq_warehouse_officer': [
+      'label.print',
+      'stock.view',
+      'stock.receive',
+      'customer.view',
+      'dispatch.view',
+      'dispatch.draft',
+      'dispatch.confirm',
+      'report.dashboard',
+      'report.stock',
+      'forecast.use',
+    ],
+    'hq_finance_officer': [
+      'stock.view',
+      'customer.view',
+      'customer.edit_credit_limit',
+      'dispatch.view',
+      'invoice.manage',
+      'payment.manage',
+      'report.dashboard',
+      'report.financial',
+      'report.stock',
+      'forecast.use',
+    ],
+    'hq_sales_officer': [
+      'stock.view',
+      'customer.view',
+      'customer.edit_details',
+      'dispatch.view',
+      'dispatch.draft',
+      'report.dashboard',
+    ],
+    'subsidiary_manager': ['stock.view'],
+    'subsidiary_storekeeper': ['stock.view'],
+  };
+
+  static const roleNames = <String, String>{
+    'system_admin': 'System Administrator',
+    'hq_warehouse_officer': 'HQ Warehouse Officer',
+    'hq_finance_officer': 'HQ Finance Officer',
+    'hq_sales_officer': 'HQ Sales Officer',
+    'subsidiary_manager': 'Subsidiary Manager',
+    'subsidiary_storekeeper': 'Subsidiary Storekeeper',
+  };
+
+  /// The old single roles most tests use, and the roles they became (decision D2).
+  static const legacyRoles = <String, List<String>>{
+    'admin': ['hq_finance_officer', 'hq_sales_officer', 'hq_warehouse_officer', 'system_admin'],
+    'storekeeper': ['hq_warehouse_officer'],
+    'accounts': ['hq_finance_officer'],
+    'salesperson': ['hq_sales_officer'],
+  };
+
+  /// The signed-in user's roles: [role] is an old role name or one role code.
+  List<String> get roleCodes => legacyRoles[role] ?? [role];
+
+  Set<String> get permissions => {for (final code in roleCodes) ...?rolePermissions[code]};
+
+  bool can(String permission) => permissions.contains(permission);
+
+  static const headOffice = {'id': 'org-hq', 'code': 'HQ', 'name': 'Head Office', 'type': 'HQ'};
+  static const subsidiaryOne = {
+    'id': 'org-sub-1',
+    'code': 'SUB-01',
+    'name': 'Mbare Branch',
+    'type': 'SUBSIDIARY',
+  };
+
+  Map<String, Object?> get organisation =>
+      role.startsWith('subsidiary') ? subsidiaryOne : headOffice;
+
+  static List<Map<String, Object?>> _rolesJson(List<String> codes) => [
+    for (final code in [...codes]..sort()) {'code': code, 'name': roleNames[code]},
+  ];
+
   Map<String, Object?> get user => {
     'id': '7f9c2b1e-0000-4000-8000-000000000001',
     'username': testUsername,
     'fullName': 'Tendai Moyo',
-    'role': role,
+    'organisation': organisation,
+    'roles': _rolesJson(roleCodes),
+    'permissions': permissions.toList()..sort(),
   };
 
   /// Creates a valid session token, as the server would on sign-in.
@@ -211,6 +325,9 @@ class FakeBackend {
     }
     if (route == 'POST /api/v1/auth/change-password') return _changePassword(request);
     if (path.startsWith('/api/v1/users')) return _users(request);
+    if (path.startsWith('/api/v1/organisations')) return _organisations(request);
+    if (route == 'GET /api/v1/roles') return _roles();
+    if (route == 'GET /api/v1/audit-logs') return _audit(request);
     if (route == 'GET /api/v1/products') return _listProducts(request.url.queryParameters);
     if (path.startsWith('/api/v1/products/barcode/') ||
         path.endsWith('/barcode') ||
@@ -218,7 +335,7 @@ class FakeBackend {
       return _barcodes(request);
     }
     if (path.startsWith('/api/v1/products') && request.method != 'GET') {
-      if (role != 'admin') {
+      if (!can('product.manage')) {
         return _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
       }
       final body = jsonDecode(request.body) as Map<String, dynamic>;
@@ -250,10 +367,28 @@ class FakeBackend {
     return http.Response('', 204);
   }
 
-  /// Staff accounts: admins only; admins cannot change their own role or deactivate
-  /// themselves, nor reset their own password here.
+  http.Response get _forbidden => _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
+
+  Map<String, Object?>? _organisationById(Object? id) =>
+      organisations.where((o) => o['id'] == id).firstOrNull;
+
+  /// Roles must suit the organisation: subsidiary roles for a subsidiary's staff only.
+  http.Response? _checkRoles(List<String> codes, Map<String, Object?> organisation) {
+    final forSubsidiary = organisation['type'] == 'SUBSIDIARY';
+    final wrong = codes.where((code) => code.startsWith('subsidiary') != forSubsidiary);
+    if (wrong.isEmpty) return null;
+    final whose = forSubsidiary ? 'Head Office staff' : "a subsidiary's staff";
+    return _fieldError('roleCodes', '${wrong.join(', ')} is for $whose');
+  }
+
+  static Map<String, Object?> _organisationRef(Map<String, Object?> organisation) => {
+    for (final key in ['id', 'code', 'name', 'type']) key: organisation[key],
+  };
+
+  /// Staff accounts (user.manage). Admins cannot change their own roles or organisation, or
+  /// deactivate themselves, nor reset their own password here. Roles must suit the organisation.
   http.Response _users(http.Request request) {
-    if (role != 'admin') return _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
+    if (!can('user.manage')) return _forbidden;
     final segments = request.url.pathSegments; // api, v1, users, [id], [reset-password]
     final body = request.body.isEmpty
         ? const <String, dynamic>{}
@@ -265,7 +400,16 @@ class FakeBackend {
       if (staff.any((member) => member['username'] == username)) {
         return _error(409, 'USERNAME_TAKEN', 'The username "$username" is already taken.');
       }
-      final added = addStaff(username, body['fullName'] as String, body['role'] as String);
+      final organisation = _organisationById(body['organisationId']);
+      if (organisation == null) return _fieldError('organisationId', 'No organisation has that id');
+      final codes = [for (final code in body['roleCodes'] as List) code as String];
+      if (_checkRoles(codes, organisation) case final problem?) return problem;
+      final added = addStaff(
+        username,
+        body['fullName'] as String,
+        codes.first,
+        organisation: _organisationRef(organisation),
+      )..['roles'] = _rolesJson(codes);
       passwordsSet.add((added['id'] as String, body['password'] as String));
       return _json(201, {'user': added});
     }
@@ -282,19 +426,133 @@ class FakeBackend {
       return http.Response('', 204);
     }
 
+    final currentCodes = [
+      for (final role in member['roles'] as List) (role as Map)['code'] as String,
+    ]..sort();
+    final newCodes = body.containsKey('roleCodes')
+        ? ([for (final code in body['roleCodes'] as List) code as String]..sort())
+        : currentCodes;
+    final currentOrganisation = member['organisation'] as Map<String, Object?>;
     final changesOwnAccess =
-        (body.containsKey('role') && body['role'] != member['role']) || body['isActive'] == false;
+        newCodes.join() != currentCodes.join() ||
+        (body.containsKey('organisationId') &&
+            body['organisationId'] != currentOrganisation['id']) ||
+        body['isActive'] == false;
     if (isSelf && changesOwnAccess) {
       return _error(
         409,
         'CANNOT_CHANGE_OWN_ACCESS',
-        'You cannot change your own role or deactivate your own account. Ask another admin.',
+        'You cannot change your own roles or organisation, or deactivate your own account. '
+            'Ask another admin.',
       );
     }
-    for (final key in ['fullName', 'role', 'isActive']) {
+    final organisation = _organisationById(body['organisationId'] ?? currentOrganisation['id']);
+    if (organisation == null) return _fieldError('organisationId', 'No organisation has that id');
+    if (_checkRoles(newCodes, organisation) case final problem?) return problem;
+    member['roles'] = _rolesJson(newCodes);
+    member['organisation'] = _organisationRef(organisation);
+    for (final key in ['fullName', 'isActive']) {
       if (body.containsKey(key)) member[key] = body[key];
     }
     return _json(200, {'user': member});
+  }
+
+  http.Response _roles() {
+    if (!can('user.manage') && !can('role.manage')) return _forbidden;
+    return _json(200, {
+      'roles': [
+        for (final code in rolePermissions.keys)
+          {
+            'code': code,
+            'name': roleNames[code],
+            'description': 'What a ${roleNames[code]} does.',
+            'organisationType': code.startsWith('subsidiary') ? 'SUBSIDIARY' : 'HQ',
+            'permissions': rolePermissions[code],
+          },
+      ],
+      'permissions': <Object>[],
+    });
+  }
+
+  http.Response _audit(http.Request request) {
+    if (!can('audit.view')) return _forbidden;
+    final query = request.url.queryParameters;
+    final action = query['action'] ?? '';
+    final matching = [
+      for (final entry in auditEntries)
+        if (action.isEmpty || (entry['action'] as String).startsWith('$action.')) entry,
+    ];
+    final offset = int.parse(query['offset'] ?? '0');
+    final limit = int.parse(query['limit'] ?? '50');
+    return _json(200, {
+      'entries': matching.skip(offset).take(limit).toList(),
+      'total': matching.length,
+    });
+  }
+
+  /// Organisations: everyone sees those they may access (Head Office staff all, a subsidiary's
+  /// staff their own); adding and changing needs organisation.manage.
+  http.Response _organisations(http.Request request) {
+    final segments = request.url.pathSegments; // api, v1, organisations, [id]
+    final own = organisation;
+    final visible = [
+      for (final candidate in organisations)
+        if (own['type'] == 'HQ' || candidate['id'] == own['id']) candidate,
+    ];
+    if (request.method == 'GET') {
+      final includeInactive = request.url.queryParameters['includeInactive'] == 'true';
+      return _json(200, {
+        'organisations': [
+          for (final candidate in visible)
+            if (includeInactive || candidate['isActive'] == true) candidate,
+        ],
+      });
+    }
+    if (!can('organisation.manage')) return _forbidden;
+    final body = jsonDecode(request.body) as Map<String, dynamic>;
+    if (segments.length == 3) {
+      final code = (body['code'] as String).toUpperCase();
+      if (organisations.any((o) => o['code'] == code)) {
+        return _json(409, {
+          'error': {
+            'code': 'ORGANISATION_CODE_TAKEN',
+            'message': 'The code "$code" is already used.',
+            'details': [
+              {'field': 'code', 'message': 'Already used by another organisation'},
+            ],
+          },
+        });
+      }
+      final id = 'org-${organisations.length + 1}';
+      String customerId;
+      if (body['existingCustomerId'] case final String existing) {
+        customerId = existing;
+        customers.firstWhere((c) => c['id'] == existing)['organisationId'] = id;
+      } else {
+        addCustomer(code, body['name'] as String, phone: body['contactPhone'] as String?);
+        customers.last['organisationId'] = id;
+        customerId = customers.last['id'] as String;
+      }
+      final created = <String, Object?>{
+        ...body,
+        'id': id,
+        'code': code,
+        'type': 'SUBSIDIARY',
+        'isActive': true,
+        'customerId': customerId,
+      }..remove('existingCustomerId');
+      organisations.add(created);
+      return _json(201, {'organisation': created});
+    }
+    final target = visible.where((o) => o['id'] == segments[3]).firstOrNull;
+    if (target == null) {
+      return _error(404, 'ORGANISATION_NOT_FOUND', 'No organisation has that id.');
+    }
+    if (target['type'] == 'HQ' && body['isActive'] == false) {
+      return _error(409, 'HEAD_OFFICE_ALWAYS_ACTIVE', 'The Head Office cannot be deactivated');
+    }
+    target.addAll(body);
+    return _json(200, {'organisation': target});
   }
 
   http.Response _fieldError(String field, String message) => _json(400, {
@@ -406,11 +664,11 @@ class FakeBackend {
         });
 
       case 'POST /api/v1/stock/receipts':
-        if (role != 'admin' && role != 'storekeeper') return forbidden;
+        if (!can('stock.receive') && !can('stock.opening_balance')) return forbidden;
         final body = jsonDecode(request.body) as Map<String, dynamic>;
         final product = products.firstWhere((p) => p['id'] == body['productId']);
         if (body['isOpeningBalance'] == true) {
-          if (role != 'admin') return forbidden;
+          if (!can('stock.opening_balance')) return forbidden;
           if (movements.any((m) => m['productId'] == product['id'])) {
             return _error(
               409,
@@ -424,7 +682,7 @@ class FakeBackend {
         return _json(201, {'receipt': receipt, 'quantityOnHand': onHand(product['id'])});
 
       case 'POST /api/v1/stock/adjustments':
-        if (role != 'admin') return forbidden;
+        if (!can('stock.adjust')) return forbidden;
         final body = jsonDecode(request.body) as Map<String, dynamic>;
         final delta = body['quantityDelta'] as int;
         final before = onHand(body['productId']);
@@ -503,14 +761,14 @@ class FakeBackend {
     return _json(200, {'product': product});
   }
 
-  /// Who may change which customer fields, as on the real server.
-  static const _customerFieldRoles = {
-    'code': ['admin', 'salesperson'],
-    'name': ['admin', 'salesperson'],
-    'phone': ['admin', 'salesperson'],
-    'address': ['admin', 'salesperson'],
-    'creditLimit': ['admin', 'accounts'],
-    'isActive': ['admin'],
+  /// Which permission changes which customer field, as on the real server.
+  static const _customerFieldPermissions = {
+    'code': 'customer.edit_details',
+    'name': 'customer.edit_details',
+    'phone': 'customer.edit_details',
+    'address': 'customer.edit_details',
+    'creditLimit': 'customer.edit_credit_limit',
+    'isActive': 'customer.change_active',
   };
 
   http.Response _customers(http.Request request) {
@@ -542,7 +800,7 @@ class FakeBackend {
     final body = jsonDecode(request.body) as Map<String, dynamic>;
     for (final field in body.keys) {
       if (body[field] != null || request.method == 'PATCH') {
-        if (!(_customerFieldRoles[field] ?? const []).contains(role)) return forbidden;
+        if (!can(_customerFieldPermissions[field] ?? '-')) return forbidden;
       }
     }
     final code = (body['code'] as String?)?.toUpperCase();
@@ -640,8 +898,8 @@ class FakeBackend {
     final body = request.body.isEmpty
         ? const <String, dynamic>{}
         : jsonDecode(request.body) as Map<String, dynamic>;
-    final canCreate = role != 'accounts';
-    final canConfirm = role == 'admin' || role == 'storekeeper';
+    final canCreate = can('dispatch.draft');
+    final canConfirm = can('dispatch.confirm');
 
     if (request.method == 'GET' && dispatch == null) {
       final status = request.url.queryParameters['status'];
@@ -738,7 +996,7 @@ class FakeBackend {
         return _json(200, {'dispatch': _dispatchJson(d)});
 
       case 'reverse':
-        if (role != 'admin') return forbidden;
+        if (!can('dispatch.reverse')) return forbidden;
         if (_billedLineIds.any((lineId) => lineId.startsWith('${d['id']}#'))) {
           return _error(
             409,
@@ -919,7 +1177,7 @@ class FakeBackend {
   }
 
   http.Response _invoices(http.Request request) {
-    if (role != 'admin' && role != 'accounts') {
+    if (!can('invoice.manage')) {
       return _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
     }
     final segments = request.url.pathSegments; // api, v1, invoices, [id or word], [action]
@@ -1173,7 +1431,7 @@ class FakeBackend {
   }
 
   http.Response _payments(http.Request request) {
-    if (role != 'admin' && role != 'accounts') {
+    if (!can('payment.manage')) {
       return _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
     }
     final segments = request.url.pathSegments; // api, v1, payments, [id], [action]
@@ -1234,7 +1492,7 @@ class FakeBackend {
         final refused = _allocate(payment, body['allocations'] as List);
         return refused ?? _json(200, {'payment': _paymentJson(payment)});
       case ('POST', 'void'):
-        if (role != 'admin') {
+        if (!can('payment.void')) {
           return _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
         }
         payment.addAll({'status': 'voided', 'voidReason': body['reason']});
@@ -1295,7 +1553,7 @@ class FakeBackend {
   }
 
   http.Response _balances(http.Request request) {
-    if (role != 'admin' && role != 'accounts') {
+    if (!can('payment.manage')) {
       return _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
     }
     final segments = request.url.pathSegments; // api, v1, balances, [customerId]
@@ -1481,7 +1739,9 @@ class FakeBackend {
 
     final product = products.firstWhere((p) => p['id'] == segments[3]);
     if (segments[4] == 'barcode') {
-      if (role != 'admin') return _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
+      if (!can('product.manage')) {
+        return _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
+      }
       if (product['barcode'] != null) {
         return _error(
           409,
@@ -1494,7 +1754,7 @@ class FakeBackend {
     }
 
     // Labels.
-    if (role != 'admin' && role != 'storekeeper') {
+    if (!can('label.print')) {
       return _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
     }
     if (product['barcode'] == null) {
@@ -1523,10 +1783,10 @@ class FakeBackend {
 
   http.Response _reports(http.Request request) {
     final name = request.url.pathSegments[3];
-    final money = role == 'admin' || role == 'accounts';
+    final money = can('report.financial');
     final allowed = switch (name) {
-      'dashboard' => true,
-      'stock-received' || 'expiring' => money || role == 'storekeeper',
+      'dashboard' => can('report.dashboard'),
+      'stock-received' || 'expiring' => can('report.stock'),
       _ => money,
     };
     if (!allowed) return _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
@@ -1626,7 +1886,7 @@ class FakeBackend {
   int forecastRuns = 0;
 
   http.Response _forecasts(http.Request request) {
-    if (role != 'admin' && role != 'accounts' && role != 'storekeeper') {
+    if (!can('forecast.use')) {
       return _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
     }
     if (request.method == 'POST') {
@@ -1715,6 +1975,8 @@ Future<TestApp> pumpSnackify(
     reports: ReportsRepository(api),
     forecasts: ForecastsRepository(api),
     staff: StaffRepository(api),
+    organisations: OrganisationsRepository(api),
+    audit: AuditRepository(api),
     sharePdf: (bytes, filename) async => sharedPdfs.add((filename, utf8.decode(bytes))),
     readBarcode: scanner.read,
   );
@@ -1740,8 +2002,34 @@ Future<void> openSection(WidgetTester tester, String label) async {
     await tester.tap(menuButton);
     await tester.pumpAndSettle();
   }
-  await tester.tap(find.text(label));
+  // The menu scrolls on small screens.
+  await tester.ensureVisible(find.text(label).first);
   await tester.pumpAndSettle();
+  await tester.tap(find.text(label).first);
+  await tester.pumpAndSettle();
+}
+
+/// The sections listed in the menu (drawer on phones, sidebar on wide screens).
+Future<List<String>> menuSections(WidgetTester tester) async {
+  final menuButton = find.byTooltip('Open navigation menu');
+  final onPhone = menuButton.evaluate().isNotEmpty;
+  if (onPhone) {
+    await tester.tap(menuButton);
+    await tester.pumpAndSettle();
+  }
+  final tiles = find.descendant(
+    of: find.byType(onPhone ? Drawer : ListView).first,
+    matching: find.byType(ListTile),
+  );
+  final labels = [
+    for (final tile in tester.widgetList<ListTile>(tiles))
+      if (tile.title case Text(:final data?)) data,
+  ];
+  if (onPhone) {
+    Navigator.of(tester.element(find.byType(Drawer))).pop();
+    await tester.pumpAndSettle();
+  }
+  return labels;
 }
 
 /// Stands in for the camera: each scan returns the next queued barcode, or null (as when the

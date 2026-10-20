@@ -257,15 +257,13 @@ void main() {
     expect(find.text('No invoices found'), findsOneWidget);
   });
 
-  testWidgets('salespeople and storekeepers are told invoices are for accounts staff', (
-    tester,
-  ) async {
+  testWidgets('invoices are not offered to sales and warehouse staff', (tester) async {
     for (final role in ['salesperson', 'storekeeper']) {
       final app = await pumpSnackify(tester, signedIn: true, backend: backendForInvoices(role));
-      await openSection(tester, 'Invoices');
 
-      expect(find.text('Invoices are for accounts staff'), findsOneWidget, reason: role);
-      expect(find.text('Weekly invoicing'), findsNothing, reason: role);
+      final sections = await menuSections(tester);
+      expect(sections, containsAll(['Products', 'Dispatches']), reason: role);
+      expect(sections, isNot(contains('Invoices')), reason: role);
       expect(app.backend.requests.where((r) => r.contains('/invoices')), isEmpty, reason: role);
     }
   });

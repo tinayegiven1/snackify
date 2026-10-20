@@ -1,12 +1,13 @@
 import '../../auth/domain/app_user.dart';
 
-/// A staff account, as admins see it in Staff.
+/// A staff account, as admins see it under Users & Roles.
 class StaffMember {
   const StaffMember({
     required this.id,
     required this.username,
     required this.fullName,
-    required this.role,
+    required this.organisation,
+    required this.roles,
     required this.isActive,
     required this.lastSignInAt,
   });
@@ -15,7 +16,10 @@ class StaffMember {
     id: json['id'] as String,
     username: json['username'] as String,
     fullName: json['fullName'] as String,
-    role: StaffRole.fromApi(json['role'] as String),
+    organisation: OrganisationRef.fromJson(json['organisation'] as Map<String, dynamic>),
+    roles: [
+      for (final role in json['roles'] as List) RoleRef.fromJson(role as Map<String, dynamic>),
+    ],
     isActive: json['isActive'] as bool,
     lastSignInAt: json['lastSignInAt'] == null
         ? null
@@ -25,27 +29,43 @@ class StaffMember {
   final String id;
   final String username;
   final String fullName;
-  final StaffRole role;
+  final OrganisationRef organisation;
+  final List<RoleRef> roles;
 
   /// Deactivated accounts cannot sign in. Their history (dispatches, payments...) is kept.
   final bool isActive;
 
   /// When they last signed in, or null if they never have.
   final DateTime? lastSignInAt;
+
+  List<String> get roleCodes => [for (final role in roles) role.code]..sort();
+  String get roleNames => roles.map((role) => role.name).join(', ');
 }
 
-/// What each role may do, in a sentence, to help admins choose (spec section 5).
-String roleDescription(StaffRole role) => switch (role) {
-  StaffRole.admin =>
-    'Everything, including staff accounts, products, prices, adjustments, reversals and '
-        'voiding.',
-  StaffRole.storekeeper =>
-    'Receives stock, confirms dispatches, prints barcode labels and sees stock reports and '
-        'forecasts.',
-  StaffRole.salesperson => 'Adds customers and drafts dispatches.',
-  StaffRole.accounts =>
-    'Invoices, payments, balances, statements, credit limits, reports and forecasts.',
-};
+/// A role that can be given, with what it allows (from the server, so it matches what the
+/// server enforces).
+class RoleOption {
+  const RoleOption({
+    required this.code,
+    required this.name,
+    required this.description,
+    required this.forHeadOffice,
+  });
+
+  factory RoleOption.fromJson(Map<String, dynamic> json) => RoleOption(
+    code: json['code'] as String,
+    name: json['name'] as String,
+    description: json['description'] as String,
+    forHeadOffice: json['organisationType'] == 'HQ',
+  );
+
+  final String code;
+  final String name;
+  final String description;
+
+  /// Head Office roles; the others are for a subsidiary's staff.
+  final bool forHeadOffice;
+}
 
 // The same rules the server applies.
 final usernameFormat = RegExp(r'^[a-z0-9][a-z0-9._-]{2,31}$');

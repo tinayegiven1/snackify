@@ -42,11 +42,26 @@ describe('POST /api/v1/auth/login', () => {
 
     expect(response.status).toBe(200);
     expect(response.body.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    // Who they are, where they work, and what they may do (an old storekeeper became an HQ
+    // Warehouse Officer).
     expect(response.body.user).toEqual({
       id: expect.any(String),
       username: 'tendai',
       fullName: 'Tendai Moyo',
-      role: 'storekeeper',
+      organisation: { id: expect.any(String), code: 'HQ', name: 'Head Office', type: 'HQ' },
+      roles: [{ code: 'hq_warehouse_officer', name: 'HQ Warehouse Officer' }],
+      permissions: [
+        'customer.view',
+        'dispatch.confirm',
+        'dispatch.draft',
+        'dispatch.view',
+        'forecast.use',
+        'label.print',
+        'report.dashboard',
+        'report.stock',
+        'stock.receive',
+        'stock.view',
+      ],
     });
     const hoursLeft = (Date.parse(response.body.expiresAt) - Date.now()) / 3_600_000;
     expect(hoursLeft).toBeGreaterThan(11.9);
@@ -157,7 +172,12 @@ describe('signed-in requests', () => {
     const response = await me(token);
 
     expect(response.status).toBe(200);
-    expect(response.body.user).toMatchObject({ username: 'tendai', role: 'storekeeper' });
+    expect(response.body.user).toMatchObject({
+      username: 'tendai',
+      organisation: { code: 'HQ' },
+      roles: [{ code: 'hq_warehouse_officer' }],
+    });
+    expect(response.body.user.permissions).toContain('stock.receive');
   });
 
   it('rejects a missing, malformed or unknown token', async () => {

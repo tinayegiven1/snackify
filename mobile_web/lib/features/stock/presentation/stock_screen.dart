@@ -40,7 +40,7 @@ class _StockScreenState extends State<StockScreen> {
   int _version = 0;
 
   bool get _canReceive =>
-      widget.user.role == StaffRole.admin || widget.user.role == StaffRole.storekeeper;
+      widget.user.can('stock.receive') || widget.user.can('stock.opening_balance');
 
   Future<void> _receiveStock() async {
     // An earlier confirmation message would otherwise cover the form's button.
@@ -50,7 +50,7 @@ class _StockScreenState extends State<StockScreen> {
         builder: (_) => ReceiveStockScreen(
           stock: widget.stock,
           products: widget.products,
-          canRecordOpeningBalance: widget.user.role == StaffRole.admin,
+          canRecordOpeningBalance: widget.user.can('stock.opening_balance'),
           readBarcode: widget.readBarcode,
         ),
       ),
@@ -73,10 +73,10 @@ class _StockScreenState extends State<StockScreen> {
         builder: (_) => StockProductScreen(
           stock: widget.stock,
           balance: balance,
-          canAdjust: widget.user.role == StaffRole.admin,
+          canAdjust: widget.user.can('stock.adjust'),
           products: widget.products,
           sharePdf: widget.sharePdf,
-          canPrintLabels: _canReceive,
+          canPrintLabels: widget.user.can('label.print'),
         ),
       ),
     );

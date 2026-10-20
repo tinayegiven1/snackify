@@ -2,7 +2,7 @@ import { Router } from 'express';
 import type pg from 'pg';
 import { z } from 'zod';
 import type { AppConfig } from '../../config/env.js';
-import { getAuth, requireAuth, requireRole } from '../../middleware/authenticate.js';
+import { can, getAuth, requireAuth, requirePermission } from '../../middleware/authenticate.js';
 import { AppError } from '../../utils/app-error.js';
 import { addDays, businessToday, daysBetween } from '../../utils/dates.js';
 import { parseBody } from '../../utils/validation.js';
@@ -49,20 +49,20 @@ export function reportsRouter(db: pg.Pool, config: AppConfig): Router {
     return { from, to };
   }
 
-  router.get('/dashboard', async (_req, res) => {
-    const { role } = getAuth(res).user;
+  router.get('/dashboard', requirePermission('report.dashboard'), async (_req, res) => {
+    const { user } = getAuth(res);
     res.json({
       dashboard: await dashboard(
         db,
         today(),
         config.billingWeekStartsOn,
         config.baseCurrency,
-        role === 'admin' || role === 'accounts',
+        can(user, 'report.financial'),
       ),
     });
   });
 
-  router.get('/sales', requireRole('accounts'), async (req, res) => {
+  router.get('/sales', requirePermission('report.financial'), async (req, res) => {
     const query = parseBody(
       rangeSchema.extend({
         groupBy: z
@@ -82,7 +82,7 @@ export function reportsRouter(db: pg.Pool, config: AppConfig): Router {
     );
   });
 
-  router.get('/products', requireRole('accounts'), async (req, res) => {
+  router.get('/products', requirePermission('report.financial'), async (req, res) => {
     const query = parseBody(
       rangeSchema.extend({
         sortBy: z.enum(['value', 'packs'], { error: 'Must be value or packs' }).default('value'),
@@ -97,7 +97,7 @@ export function reportsRouter(db: pg.Pool, config: AppConfig): Router {
     });
   });
 
-  router.get('/customers', requireRole('accounts'), async (req, res) => {
+  router.get('/customers', requirePermission('report.financial'), async (req, res) => {
     const range = resolveRange(parseBody(rangeSchema, req.query));
     res.json({
       ...range,
@@ -106,12 +106,12 @@ export function reportsRouter(db: pg.Pool, config: AppConfig): Router {
     });
   });
 
-  router.get('/stock-received', requireRole('storekeeper', 'accounts'), async (req, res) => {
+  router.get('/stock-received', requirePermission('report.stock'), async (req, res) => {
     const range = resolveRange(parseBody(rangeSchema, req.query));
     res.json({ ...range, ...(await stockReceivedReport(db, range)) });
   });
 
-  router.get('/expiring', requireRole('storekeeper', 'accounts'), async (req, res) => {
+  router.get('/expiring', requirePermission('report.stock'), async (req, res) => {
     const { days } = parseBody(
       z.object({
         days: z.coerce

@@ -5,14 +5,14 @@ snacks business. One backend API and database serve a Flutter web app and a Flut
 
 The full product specification is in [Snackify_Claude_Code_Spec.md](Snackify_Claude_Code_Spec.md).
 
-## Current status: all feature stages built, plus backups
+## Current status: StockFlow Stage 3 (organisations and access) on top of all feature stages
 
 | Part                                   | Status                                                                     |
 | -------------------------------------- | -------------------------------------------------------------------------- |
 | Backend (Node.js, Express, TypeScript) | Health, sign-in, roles, staff, products, stock ledger, customers, dispatches, invoices with PDFs, payments, balances and statements, barcode lookup and label PDFs, reports (dashboard, sales trends, best sellers, customers, stock received, expiring stock), sales forecasts with accuracy and restocking suggestions, audit log, tests |
 | PostgreSQL                             | Dev + test databases, least-privilege roles, migrations, seed              |
 | Database tables                        | `products`, `users`, `sessions`, `audit_logs`, `stock_batches`, `stock_movements`, `customers`, `dispatches`, `dispatch_items`, `invoices`, `invoice_items`, `payments`, `payment_allocations`, `forecast_runs`, `forecasts` |
-| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**, **Dispatches** (drafts, confirm, cancel, reverse, credit warnings), **Invoices** (weekly run, preview, drafts, issue, void, PDF, paid/overdue), **Payments** (record and allocate payments, balances, account statements), **barcode scanning** (camera on Android; typed or USB scanner on the web) and **barcode labels**, a live **Dashboard** and **Reports** (daily/weekly/monthly sales, best sellers, customer summaries, stock received, expiring stock), **Forecasts** (next 7 and 30 days per product, how much to receive, accuracy), **Staff** (admins add staff, change roles, deactivate accounts and set new passwords) and **Change password** for everyone |
+| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**, **Dispatches** (drafts, confirm, cancel, reverse, credit warnings), **Invoices** (weekly run, preview, drafts, issue, void, PDF, paid/overdue), **Payments** (record and allocate payments, balances, account statements), **barcode scanning** (camera on Android; typed or USB scanner on the web) and **barcode labels**, a live **Dashboard** and **Reports** (daily/weekly/monthly sales, best sellers, customer summaries, stock received, expiring stock), **Forecasts** (next 7 and 30 days per product, how much to receive, accuracy), **Organisations** (the Head Office and its subsidiaries), **Users & Roles** (staff with one or more roles, per organisation), **Audit Log**, and **Change password** for everyone |
 | Backups                                | Daily-ready `npm run db:backup` with an automatic, verified test restore; guarded emergency restore ([docs/backup-and-restore.md](docs/backup-and-restore.md)) |
 
 ## Project structure
@@ -27,7 +27,7 @@ snackify/
 │   │   ├── backup/          Backups, restore checks and restores (pg_dump / pg_restore)
 │   │   ├── database/        Connection pool, transactions, migration runner
 │   │   ├── middleware/      Sign-in and role checks, 404 and error handlers
-│   │   ├── modules/         auth, users, products, stock, customers, dispatches, invoices (+ PDF), payments, reports, forecasts, audit, health
+│   │   ├── modules/         auth (+ permissions), users, organisations, roles, products, stock, customers, dispatches, invoices (+ PDF), payments, reports, forecasts, audit, health
 │   │   ├── scripts/         db:migrate, db:seed, db:backup, db:restore-check, db:restore and user:create commands
 │   │   ├── utils/           AppError, validation, JSON logger
 │   │   ├── web/             Serves the built web app on the API's address (production)
@@ -156,21 +156,36 @@ password** in the menu. (`npm run user:create` with `--role storekeeper`, `sales
 `accounts` also still works.) On Windows PowerShell, type `npm.cmd` instead of `npm` if
 PowerShell says running scripts is disabled.
 
-### Roles and sign-in rules
+### Organisations, roles and sign-in rules
 
-| Role          | Intended for (spec section 5)                                   |
-| ------------- | --------------------------------------------------------------- |
-| `admin`       | Everything, including staff accounts. Allowed on every endpoint |
-| `storekeeper` | Receiving stock, viewing stock, barcodes, preparing dispatches  |
-| `salesperson` | Customers and creating dispatches                               |
-| `accounts`    | Invoices, payments, balances and financial reports              |
+Since StockFlow Stage 3 ([docs/STAGE_3_5_PLAN.md](docs/STAGE_3_5_PLAN.md)) every user belongs to
+one organisation (the Head Office or one of its subsidiaries) and holds one or more roles. Each
+role is a set of permissions, checked on the server for every request; the menu shows only what
+a person may use.
+
+| Role                     | Organisation | Intended for |
+| ------------------------ | ------------ | ------------ |
+| System Administrator     | Head Office  | Organisations, users, roles, the product catalogue, stock corrections, the audit log |
+| HQ Warehouse Officer     | Head Office  | Receiving stock, confirming dispatches, barcode labels, stock reports, forecasts |
+| HQ Finance Officer       | Head Office  | Invoices, payments, credit limits, financial reports, forecasts |
+| HQ Sales Officer         | Head Office  | Customer details and draft dispatches |
+| Subsidiary Manager       | Subsidiary   | Its own stock (orders from StockFlow Stage 5) |
+| Subsidiary Storekeeper   | Subsidiary   | Its own stock and its history |
+
+Head Office staff see every organisation's records; a subsidiary's staff only their own. Accounts
+from before Stage 3 kept what they could do: an old `admin` holds all four Head Office roles.
+`npm run user:create` still accepts the old names (`--role admin`) as well as role codes
+(`--role hq_finance_officer,hq_sales_officer`), and `--organisation CODE` for a subsidiary's
+staff.
 
 - Passwords: at least 10 characters (a short sentence is ideal), stored as Argon2id hashes.
 - A sign-in lasts 12 hours. After 10 wrong passwords from one network address in 15 minutes,
   sign-in is paused for 15 minutes.
 - Deactivating an account or resetting its password signs that person out everywhere at once.
-- Sign-ins, failed attempts, sign-outs and every staff-account change are recorded in the
-  `audit_logs` table.
+- Sign-ins, failed attempts, sign-outs, role changes and every sensitive action are recorded in
+  the audit log, with the organisation and network address (Audit Log in the app, for System
+  Administrators).
+- A deactivated subsidiary's staff are signed out and cannot sign in.
 
 ### Run in development (auto-restarts on file changes)
 
@@ -389,6 +404,17 @@ dart format .
 ---
 
 ## Known limitations
+
+- **StockFlow Stage 3 only so far.** Organisations, roles and permissions, organisation
+  separation and the audit log are done. Until Stage 4, all stock recorded by the app belongs to
+  the Head Office (receipts cannot yet name a subsidiary as owner), and the Stock screen shows
+  the signed-in person's own organisation (the API already lets Head Office staff ask for a
+  subsidiary's). Subsidiary orders come in Stage 5.
+- **Customers are no longer added on their own** (decision D1): each subsidiary brings its
+  customer record. Customers added before Stage 3 stay as they are; an admin can link one to a
+  new subsidiary (Add subsidiary → Customer record) or deactivate it.
+- The development seed names the organisations "Sample …"; give them their real names under
+  Organisations before production.
 
 - **Payments are in USD only.** Every payment is recorded in the base currency; there is no way
   to record a ZiG payment yet, because mixing currencies needs a documented exchange-rate rule

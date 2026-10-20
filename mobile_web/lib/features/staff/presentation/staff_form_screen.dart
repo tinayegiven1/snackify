@@ -3,20 +3,32 @@ import 'package:flutter/material.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/widgets/message_view.dart';
 import '../../../shared/widgets/password_field.dart';
-import '../../auth/domain/app_user.dart';
+import '../../organisations/data/organisations_repository.dart';
+import '../../organisations/domain/organisation.dart';
 import '../data/staff_repository.dart';
 import '../domain/staff_member.dart';
 
 /// Adds a staff account, or edits [member] when it is given. Pops with a short note saying
-/// what was done, for the staff list to show.
+/// what was done, for the list to show.
 class StaffFormScreen extends StatefulWidget {
-  const StaffFormScreen({super.key, required this.repository, this.member, this.isSelf = false});
+  const StaffFormScreen({
+    super.key,
+    required this.repository,
+    required this.organisations,
+    required this.defaultOrganisationId,
+    this.member,
+    this.isSelf = false,
+  });
 
   final StaffRepository repository;
+  final OrganisationsRepository organisations;
+
+  /// Where new staff work unless another organisation is chosen.
+  final String defaultOrganisationId;
   final StaffMember? member;
 
-  /// Admins cannot change their own role, deactivate themselves or reset their own password
-  /// here (the server refuses too), so the business always keeps an admin.
+  /// Admins cannot change their own roles or organisation, deactivate themselves or reset their
+  /// own password here (the server refuses too), so the business always keeps an admin.
   final bool isSelf;
 
   @override
@@ -29,15 +41,44 @@ class _StaffFormScreenState extends State<StaffFormScreen> {
   final _username = TextEditingController();
   final _password = TextEditingController();
   final _repeat = TextEditingController();
-  late StaffRole? _role = widget.member?.role;
+  late String _organisationId = widget.member?.organisation.id ?? widget.defaultOrganisationId;
+  late Set<String> _roleCodes = {...?widget.member?.roleCodes};
   late bool _isActive = widget.member?.isActive ?? true;
 
+  List<Organisation>? _organisations;
+  List<RoleOption>? _roles;
+  String? _loadError;
+
   bool _saving = false;
+  bool _rolesTouched = false;
   String? _error;
   String? _passwordNote;
   Map<String, String> _serverErrors = {};
 
   bool get _isNew => widget.member == null;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadChoices();
+  }
+
+  Future<void> _loadChoices() async {
+    setState(() => _loadError = null);
+    try {
+      final results = await Future.wait([
+        widget.organisations.list(includeInactive: true),
+        widget.repository.roles(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _organisations = results[0] as List<Organisation>;
+        _roles = results[1] as List<RoleOption>;
+      });
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _loadError = error.message);
+    }
+  }
 
   @override
   void dispose() {
@@ -47,17 +88,36 @@ class _StaffFormScreenState extends State<StaffFormScreen> {
     super.dispose();
   }
 
+  Organisation? get _organisation =>
+      _organisations?.where((organisation) => organisation.id == _organisationId).firstOrNull;
+
+  /// Roles that suit the chosen organisation (Head Office or subsidiary).
+  List<RoleOption> get _availableRoles {
+    final organisation = _organisation;
+    if (organisation == null) return const [];
+    return [
+      for (final role in _roles ?? const <RoleOption>[])
+        if (role.forHeadOffice == organisation.isHeadOffice) role,
+    ];
+  }
+
+  String? get _rolesProblem =>
+      _roleCodes.isEmpty ? 'Choose at least one role' : _serverErrors['roleCodes'];
+
   Future<void> _save() async {
     setState(() {
       _serverErrors = {};
       _error = null;
+      _rolesTouched = true;
     });
-    if (_saving || !_formKey.currentState!.validate()) return;
+    final formValid = _formKey.currentState!.validate();
+    if (_saving || !formValid || _roleCodes.isEmpty) return;
 
     final member = widget.member;
     final deactivating = member != null && member.isActive && !_isActive;
     if (deactivating && !await _confirmDeactivate(member)) return;
 
+    final roleCodes = _roleCodes.toList()..sort();
     setState(() => _saving = true);
     try {
       final String note;
@@ -65,25 +125,29 @@ class _StaffFormScreenState extends State<StaffFormScreen> {
         final added = await widget.repository.create(
           username: _username.text.trim().toLowerCase(),
           fullName: _fullName.text.trim(),
-          role: _role!,
+          organisationId: _organisationId,
+          roleCodes: roleCodes,
           password: _password.text,
         );
         note =
-            'Added ${added.fullName} as ${added.role.label}. They sign in as '
-            '"${added.username}" with the password you chose: give it to them privately.';
+            'Added ${added.fullName} (${added.organisation.name}) as ${added.roleNames}. They '
+            'sign in as "${added.username}" with the password you chose: give it to them '
+            'privately.';
       } else {
         final fullName = _fullName.text.trim();
         final nameChanged = fullName != member.fullName;
-        final roleChanged = _role != member.role;
+        final organisationChanged = _organisationId != member.organisation.id;
+        final rolesChanged = roleCodes.join() != member.roleCodes.join();
         final activeChanged = _isActive != member.isActive;
-        if (!nameChanged && !roleChanged && !activeChanged) {
+        if (!nameChanged && !organisationChanged && !rolesChanged && !activeChanged) {
           if (mounted) Navigator.of(context).pop();
           return;
         }
         final saved = await widget.repository.update(
           member.id,
           fullName: nameChanged ? fullName : null,
-          role: roleChanged ? _role : null,
+          organisationId: organisationChanged ? _organisationId : null,
+          roleCodes: rolesChanged || organisationChanged ? roleCodes : null,
           isActive: activeChanged ? _isActive : null,
         );
         note = deactivating
@@ -153,86 +217,101 @@ class _StaffFormScreenState extends State<StaffFormScreen> {
     final member = widget.member;
     return Scaffold(
       appBar: AppBar(title: Text(_isNew ? 'Add staff member' : 'Edit staff member')),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 560),
-              child: Form(
-                key: _formKey,
-                child: AutofillGroup(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (_error != null) ...[
-                        ErrorBanner(message: _error!),
-                        const SizedBox(height: 16),
-                      ],
-                      if (member != null) ...[
-                        Text(
-                          'Signs in as "${member.username}"',
-                          style: Theme.of(context).textTheme.bodyMedium,
-                        ),
-                        const SizedBox(height: 16),
-                      ],
-                      _textField(
-                        'fullName',
-                        _fullName,
-                        'Full name',
-                        hint: 'e.g. Tendai Moyo',
-                        capitalization: TextCapitalization.words,
-                        maxLength: 100,
-                        validator: (value) => value.isEmpty ? 'Required' : null,
-                      ),
-                      if (_isNew)
-                        _textField(
-                          'username',
-                          _username,
-                          'Username',
-                          hint: 'e.g. tendai.moyo',
-                          helper: 'What they type to sign in. It cannot be changed later.',
-                          validator: (value) {
-                            if (value.isEmpty) return 'Required';
-                            return usernameFormat.hasMatch(value.toLowerCase())
-                                ? null
-                                : 'Use 3–32 letters, digits, dots, dashes or underscores, '
-                                      'starting with a letter or digit';
-                          },
-                        ),
-                      _roleField(),
-                      const SizedBox(height: 16),
-                      if (_isNew) ..._newPasswordFields(),
-                      if (!_isNew)
-                        SwitchListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: const Text('Active'),
-                          subtitle: Text(
-                            widget.isSelf
-                                ? 'You cannot deactivate your own account.'
-                                : 'Deactivated staff cannot sign in. Everything they recorded '
-                                      'is kept.',
-                          ),
-                          value: _isActive,
-                          onChanged: _saving || widget.isSelf
-                              ? null
-                              : (value) => setState(() => _isActive = value),
-                        ),
-                      const SizedBox(height: 16),
-                      FilledButton(
-                        onPressed: _saving ? null : _save,
-                        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
-                        child: _saving
-                            ? const SizedBox.square(
-                                dimension: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : Text(_isNew ? 'Add staff member' : 'Save changes'),
-                      ),
-                      if (member != null) ..._passwordSection(member),
-                    ],
+      body: SafeArea(child: _body(member)),
+    );
+  }
+
+  Widget _body(StaffMember? member) {
+    if (_loadError != null) {
+      return MessageView(
+        icon: Icons.cloud_off_outlined,
+        title: 'Could not load organisations and roles',
+        message: _loadError!,
+        action: RetryButton(onPressed: _loadChoices),
+      );
+    }
+    if (_organisations == null || _roles == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Form(
+            key: _formKey,
+            child: AutofillGroup(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (_error != null) ...[
+                    ErrorBanner(message: _error!),
+                    const SizedBox(height: 16),
+                  ],
+                  if (member != null) ...[
+                    Text(
+                      'Signs in as "${member.username}"',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                  _textField(
+                    'fullName',
+                    _fullName,
+                    'Full name',
+                    hint: 'e.g. Tendai Moyo',
+                    capitalization: TextCapitalization.words,
+                    maxLength: 100,
+                    validator: (value) => value.isEmpty ? 'Required' : null,
                   ),
-                ),
+                  if (_isNew)
+                    _textField(
+                      'username',
+                      _username,
+                      'Username',
+                      hint: 'e.g. tendai.moyo',
+                      helper: 'What they type to sign in. It cannot be changed later.',
+                      validator: (value) {
+                        if (value.isEmpty) return 'Required';
+                        return usernameFormat.hasMatch(value.toLowerCase())
+                            ? null
+                            : 'Use 3–32 letters, digits, dots, dashes or underscores, '
+                                  'starting with a letter or digit';
+                      },
+                    ),
+                  _organisationField(),
+                  const SizedBox(height: 16),
+                  _rolesField(),
+                  const SizedBox(height: 16),
+                  if (_isNew) ..._newPasswordFields(),
+                  if (!_isNew)
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Active'),
+                      subtitle: Text(
+                        widget.isSelf
+                            ? 'You cannot deactivate your own account.'
+                            : 'Deactivated staff cannot sign in. Everything they recorded '
+                                  'is kept.',
+                      ),
+                      value: _isActive,
+                      onChanged: _saving || widget.isSelf
+                          ? null
+                          : (value) => setState(() => _isActive = value),
+                    ),
+                  const SizedBox(height: 16),
+                  FilledButton(
+                    onPressed: _saving ? null : _save,
+                    style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+                    child: _saving
+                        ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(_isNew ? 'Add staff member' : 'Save changes'),
+                  ),
+                  if (member != null) ..._passwordSection(member),
+                ],
               ),
             ),
           ),
@@ -241,30 +320,85 @@ class _StaffFormScreenState extends State<StaffFormScreen> {
     );
   }
 
-  Widget _roleField() {
-    final role = _role;
-    return DropdownButtonFormField<StaffRole>(
-      initialValue: role,
+  Widget _organisationField() {
+    final choices = [
+      for (final organisation in _organisations!)
+        if (organisation.isActive || organisation.id == _organisationId) organisation,
+    ];
+    return DropdownButtonFormField<String>(
+      initialValue: _organisationId,
       isExpanded: true,
-      // Clears "Choose a role" as soon as one is chosen, revealing what the role may do.
-      autovalidateMode: AutovalidateMode.onUserInteraction,
       decoration: InputDecoration(
-        labelText: 'Role',
+        labelText: 'Organisation',
         border: const OutlineInputBorder(),
         helperText: widget.isSelf
-            ? 'You cannot change your own role. Ask another admin.'
-            : role == null
-            ? 'Decides what they can see and do.'
-            : roleDescription(role),
-        helperMaxLines: 3,
-        errorText: _serverErrors['role'],
+            ? 'You cannot move your own account. Ask another admin.'
+            : 'Where they work. A subsidiary\'s staff only ever see its own records.',
+        helperMaxLines: 2,
+        errorText: _serverErrors['organisationId'],
       ),
       items: [
-        for (final option in StaffRole.values)
-          DropdownMenuItem(value: option, child: Text(option.label)),
+        for (final organisation in choices)
+          DropdownMenuItem(
+            value: organisation.id,
+            child: Text(
+              '${organisation.name} (${organisation.typeLabel})',
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
       ],
-      onChanged: _saving || widget.isSelf ? null : (value) => setState(() => _role = value),
-      validator: (value) => value == null ? 'Choose a role' : null,
+      onChanged: _saving || widget.isSelf
+          ? null
+          : (value) {
+              if (value == null) return;
+              setState(() {
+                _organisationId = value;
+                // Roles that do not suit the new organisation are dropped.
+                final allowed = _availableRoles.map((role) => role.code).toSet();
+                _roleCodes = _roleCodes.intersection(allowed);
+                _clearServerError('roleCodes');
+              });
+            },
+    );
+  }
+
+  Widget _rolesField() {
+    final problem = _rolesTouched ? _rolesProblem : _serverErrors['roleCodes'];
+    final theme = Theme.of(context);
+    return InputDecorator(
+      decoration: InputDecoration(
+        labelText: 'Roles',
+        border: const OutlineInputBorder(),
+        helperText: widget.isSelf
+            ? 'You cannot change your own roles. Ask another admin.'
+            : 'Everything any of the chosen roles allows.',
+        helperMaxLines: 2,
+        errorText: problem,
+        errorMaxLines: 2,
+        contentPadding: const EdgeInsets.fromLTRB(4, 12, 4, 4),
+      ),
+      child: Column(
+        children: [
+          for (final role in _availableRoles)
+            CheckboxListTile(
+              dense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+              controlAffinity: ListTileControlAffinity.leading,
+              title: Text(role.name),
+              subtitle: Text(role.description, style: theme.textTheme.bodySmall),
+              value: _roleCodes.contains(role.code),
+              onChanged: _saving || widget.isSelf
+                  ? null
+                  : (checked) => setState(() {
+                      _rolesTouched = true;
+                      _clearServerError('roleCodes');
+                      _roleCodes = checked == true
+                          ? {..._roleCodes, role.code}
+                          : ({..._roleCodes}..remove(role.code));
+                    }),
+            ),
+        ],
+      ),
     );
   }
 

@@ -3,7 +3,7 @@ import type { Express } from 'express';
 import pg from 'pg';
 import request from 'supertest';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import type { Role } from '../../modules/auth/roles.js';
+import type { Role } from './db-test-helpers.js';
 import { addDays, businessToday, lastCompleteBillingWeek } from '../../utils/dates.js';
 import {
   appDatabaseUrl,

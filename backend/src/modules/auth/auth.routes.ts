@@ -66,6 +66,7 @@ export function authRouter(db: pg.Pool): Router {
       await recordAudit(db, {
         actorUserId: user?.id ?? null,
         action: 'auth.login_failed',
+        organisationId: user?.organisation.id ?? null,
         details: { username, reason },
       });
       // The same answer in every case, so callers cannot tell which part was wrong.
@@ -79,14 +80,23 @@ export function authRouter(db: pg.Pool): Router {
         action: 'auth.login',
         entityType: 'user',
         entityId: user.id,
+        organisationId: user.organisation.id,
       });
       return created;
     });
+    const publicUser = {
+      id: user.id,
+      username: user.username,
+      fullName: user.fullName,
+      organisation: user.organisation,
+      roles: user.roles,
+      permissions: user.permissions,
+    };
 
     res.json({
       token: session.token,
       expiresAt: session.expiresAt,
-      user: { id: user.id, username: user.username, fullName: user.fullName, role: user.role },
+      user: publicUser,
     });
   });
 

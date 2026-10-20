@@ -195,15 +195,24 @@ void main() {
     expect(backend.products.single['safetyStock'], 24);
   });
 
-  testWidgets('salespeople are told forecasts are for managers', (tester) async {
+  testWidgets('forecasts are not offered to sales staff', (tester) async {
     final app = await pumpSnackify(
       tester,
       signedIn: true,
       backend: FakeBackend(role: 'salesperson'),
     );
-    await openSection(tester, 'Forecasts');
 
-    expect(find.text('Forecasts are for managers'), findsOneWidget);
+    final sections = await menuSections(tester);
+    // A sales officer's menu: what the role may use, and nothing else.
+    expect(sections.sublist(0, sections.indexOf('Change password')), [
+      'Dashboard',
+      'Products',
+      'Stock',
+      'Customers',
+      'Dispatches',
+      'Organisations',
+      'Tendai Moyo',
+    ]);
     expect(app.backend.requests.where((r) => r.contains('/forecasts')), isEmpty);
   });
 

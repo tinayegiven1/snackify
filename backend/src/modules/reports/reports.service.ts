@@ -2,7 +2,7 @@ import type { Queryable } from '../../database/transaction.js';
 import { addDays, daysBetween, periods, periodStart, type GroupBy } from '../../utils/dates.js';
 import { fromCents, toCents } from '../../utils/money.js';
 import { listCustomerBalances } from '../payments/balances.service.js';
-import { listBalances } from '../stock/stock.service.js';
+import { headOfficeId, listBalances } from '../stock/stock.service.js';
 
 /*
  * Reports (spec 6.10). Every measure is defined once, here, and labelled separately; they are
@@ -271,6 +271,8 @@ export async function stockReceivedReport(
             sum(b.quantity_received)::integer AS packs
      FROM stock_batches b JOIN products p ON p.id = b.product_id
      WHERE b.received_date BETWEEN $1 AND $2 AND NOT b.is_opening_balance
+       -- The Head Office's own stock (StockFlow Stage 3).
+       AND b.owner_organisation_id = hq_organisation_id()
      GROUP BY p.id
      ORDER BY packs DESC, p.name, p.sku`,
     [range.from, range.to],
@@ -329,6 +331,8 @@ export async function expiringStock(
                 PARTITION BY b.product_id ORDER BY b.received_date DESC, b.created_at DESC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS newer
        FROM stock_batches b JOIN stock_balances s ON s.product_id = b.product_id
+       -- stock_balances is the Head Office's stock, so only its batches are counted.
+       WHERE b.owner_organisation_id = hq_organisation_id()
      )
      SELECT p.id, p.sku, p.name, p.flavour, p.size, b.batch_number, b.received_date,
             b.expiry_date,
@@ -398,7 +402,11 @@ export async function dashboard(
   const month = await salesReport(db, { from: monthStart, to: today }, 'month', 1, currency);
   const todays = days.periods[days.periods.length - 1] as SalesReport['periods'][number];
   const received = await stockReceivedReport(db, { from: today, to: today });
-  const low = await listBalances(db, { lowStockOnly: true, includeInactive: false });
+  const low = await listBalances(db, {
+    ownerOrganisationId: await headOfficeId(db),
+    lowStockOnly: true,
+    includeInactive: false,
+  });
   const expiring = await expiringStock(db, today, 30);
 
   let money: Dashboard['money'] = null;

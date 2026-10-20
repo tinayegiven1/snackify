@@ -46,8 +46,8 @@ describe('API database role (least privilege)', () => {
   it('cannot store a password that is not an Argon2id hash', async () => {
     const error = await pgErrorOf(
       pools.app.query(
-        `INSERT INTO users (username, full_name, role, password_hash)
-         VALUES ('plain', 'Plain Text', 'admin', 'my-password')`,
+        `INSERT INTO users (username, full_name, organisation_id, password_hash)
+         VALUES ('plain', 'Plain Text', hq_organisation_id(), 'my-password')`,
       ),
     );
     expect(error).toMatchObject({

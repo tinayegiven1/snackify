@@ -4,7 +4,7 @@ import request from 'supertest';
 import { createApp } from '../../app.js';
 import { loadDotEnv, readDatabaseUrl } from '../../config/env.js';
 import { runMigrations } from '../../database/migrations.js';
-import type { Role } from '../../modules/auth/roles.js';
+import { LEGACY_ROLE_ALIASES } from '../../modules/auth/permissions.js';
 import { createUser, type StaffUser } from '../../modules/users/users.service.js';
 import { testConfig } from '../test-config.js';
 
@@ -62,7 +62,38 @@ export function createDbTestApp(appPool: pg.Pool): Express {
 export async function resetDatabase(ownerPool: pg.Pool): Promise<void> {
   await ownerPool.query(`
     TRUNCATE forecasts, forecast_runs, payment_allocations, payments, invoice_items, invoices, stock_movements, stock_batches, dispatch_items, dispatches, audit_logs,
-             sessions, users, products, customers`);
+             sessions, user_roles, users, products, customers`);
+  // Only the Head Office (created by the migrations) stays, with its original details.
+  await ownerPool.query(`DELETE FROM organisations WHERE organisation_type <> 'HQ'`);
+  await ownerPool.query(`
+    UPDATE organisations
+    SET code = 'HQ', name = 'Head Office', is_active = true, contact_name = NULL,
+        contact_phone = NULL, contact_email = NULL, address = NULL, billing_name = NULL,
+        billing_address = NULL, tax_number = NULL
+    WHERE organisation_type = 'HQ'`);
+}
+
+/** The old single roles, still used by most tests; each stands for the roles it became. */
+export type Role = 'admin' | 'storekeeper' | 'salesperson' | 'accounts';
+
+/** The Head Office's id. */
+export async function headOfficeId(pool: pg.Pool): Promise<string> {
+  const { rows } = await pool.query<{ id: string }>('SELECT hq_organisation_id() AS id');
+  return (rows[0] as { id: string }).id;
+}
+
+/** Adds a subsidiary directly (as the owner) and returns its id. */
+export async function createTestSubsidiary(
+  ownerPool: pg.Pool,
+  code: string,
+  name = `Subsidiary ${code}`,
+): Promise<string> {
+  const { rows } = await ownerPool.query<{ id: string }>(
+    `INSERT INTO organisations (code, name, organisation_type) VALUES ($1, $2, 'SUBSIDIARY')
+     RETURNING id`,
+    [code, name],
+  );
+  return (rows[0] as { id: string }).id;
 }
 
 /** Adds a product directly (as the owner) and returns its id. */
@@ -94,13 +125,31 @@ export async function createTestProduct(
   return (rows[0] as { id: string }).id;
 }
 
-export function createTestUser(
+/**
+ * Creates a staff account. Give either an old `role` (a Head Office user with the roles it
+ * became) or `roleCodes` plus `organisationId`.
+ */
+export async function createTestUser(
   appPool: pg.Pool,
-  user: { username: string; fullName?: string; role: Role; password: string },
+  user: {
+    username: string;
+    fullName?: string;
+    password: string;
+    role?: Role;
+    roleCodes?: string[];
+    organisationId?: string;
+  },
 ): Promise<StaffUser> {
+  const roleCodes = user.roleCodes ?? LEGACY_ROLE_ALIASES[user.role ?? 'salesperson'] ?? [];
   return createUser(
     appPool,
-    { fullName: `Test ${user.username}`, ...user },
+    {
+      username: user.username,
+      fullName: user.fullName ?? `Test ${user.username}`,
+      password: user.password,
+      roleCodes: [...roleCodes].sort(),
+      organisationId: user.organisationId ?? (await headOfficeId(appPool)),
+    },
     { actorUserId: null, via: 'cli' },
   );
 }

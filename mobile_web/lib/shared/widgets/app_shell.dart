@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/app_services.dart';
 import '../../core/routing/app_destinations.dart';
 import '../../core/theme/app_theme.dart';
+import '../../features/audit/presentation/audit_log_screen.dart';
 import '../../features/auth/domain/app_user.dart';
 import '../../features/auth/presentation/change_password_screen.dart';
 import '../../features/customers/domain/customer.dart';
@@ -10,19 +11,15 @@ import '../../features/customers/presentation/customers_screen.dart';
 import '../../features/dashboard/presentation/dashboard_screen.dart';
 import '../../features/dispatches/domain/dispatch_models.dart';
 import '../../features/dispatches/presentation/dispatches_screen.dart';
-import '../../features/forecasts/domain/forecast_models.dart';
 import '../../features/forecasts/presentation/forecasts_screen.dart';
-import '../../features/invoices/domain/invoice_models.dart';
 import '../../features/invoices/presentation/invoices_screen.dart';
-import '../../features/payments/domain/payment_models.dart';
+import '../../features/organisations/presentation/organisations_screen.dart';
 import '../../features/payments/presentation/payments_screen.dart';
 import '../../features/products/presentation/products_screen.dart';
-import '../../features/reports/domain/report_models.dart';
 import '../../features/reports/presentation/reports_screen.dart';
 import '../../features/staff/presentation/staff_screen.dart';
 import '../../features/stock/presentation/stock_screen.dart';
 import 'api_status_indicator.dart';
-import 'message_view.dart';
 import 'snackify_logo.dart';
 
 /// Screen width at which navigation moves from a drawer (phones) to a permanent sidebar.
@@ -56,12 +53,71 @@ class _AppShellState extends State<AppShell> {
     _scaffoldKey.currentState?.closeDrawer();
   }
 
+  Widget _pageFor(String label) {
+    final user = widget.user;
+    final services = widget.services;
+    return switch (label) {
+      'Dashboard' => DashboardScreen(reports: services.reports),
+      'Products' => ProductsScreen(
+        repository: services.products,
+        canEdit: user.can('product.manage'),
+        readBarcode: services.readBarcode,
+      ),
+      'Stock' => StockScreen(
+        stock: services.stock,
+        products: services.products,
+        user: user,
+        readBarcode: services.readBarcode,
+        sharePdf: services.sharePdf,
+      ),
+      'Customers' => CustomersScreen(
+        repository: services.customers,
+        permissions: CustomerPermissions.forUser(user),
+      ),
+      'Dispatches' => DispatchesScreen(
+        dispatches: services.dispatches,
+        customers: services.customers,
+        products: services.products,
+        permissions: DispatchPermissions.forUser(user),
+        readBarcode: services.readBarcode,
+      ),
+      'Invoices' => InvoicesScreen(invoices: services.invoices, sharePdf: services.sharePdf),
+      'Payments' => PaymentsScreen(
+        payments: services.payments,
+        customers: services.customers,
+        invoices: services.invoices,
+        sharePdf: services.sharePdf,
+        canVoid: user.can('payment.void'),
+      ),
+      'Reports' => ReportsScreen(
+        reports: services.reports,
+        financial: user.can('report.financial'),
+      ),
+      'Forecasts' => ForecastsScreen(forecasts: services.forecasts),
+      'Organisations' => OrganisationsScreen(
+        repository: services.organisations,
+        customers: services.customers,
+        canManage: user.can('organisation.manage'),
+      ),
+      'Users & Roles' => StaffScreen(
+        repository: services.staff,
+        organisations: services.organisations,
+        currentUser: user,
+      ),
+      'Audit Log' => AuditLogScreen(repository: services.audit),
+      _ => throw StateError('No screen for $label'),
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     final isWide = MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint;
-    final destination = appDestinations[_selectedIndex];
+    final destinations = destinationsFor(widget.user);
+    final selected = _selectedIndex.clamp(0, destinations.length - 1);
+    final destination = destinations[selected];
     final navigation = _NavigationList(
-      selectedIndex: _selectedIndex,
+      destinations: destinations,
+      selectedIndex: selected,
       onSelected: _onDestinationSelected,
       user: widget.user,
       onChangePassword: () {
@@ -77,84 +133,7 @@ class _AppShellState extends State<AppShell> {
         widget.onSignOut();
       },
     );
-    final page = switch (destination.label) {
-      'Dashboard' => DashboardScreen(reports: widget.services.reports),
-      // Only admins manage products (spec section 5); the server enforces this too.
-      'Products' => ProductsScreen(
-        repository: widget.services.products,
-        canEdit: widget.user.role == StaffRole.admin,
-        readBarcode: widget.services.readBarcode,
-      ),
-      'Stock' => StockScreen(
-        stock: widget.services.stock,
-        products: widget.services.products,
-        user: widget.user,
-        readBarcode: widget.services.readBarcode,
-        sharePdf: widget.services.sharePdf,
-      ),
-      'Customers' => CustomersScreen(
-        repository: widget.services.customers,
-        permissions: CustomerPermissions.forRole(widget.user.role),
-      ),
-      'Dispatches' => DispatchesScreen(
-        dispatches: widget.services.dispatches,
-        customers: widget.services.customers,
-        products: widget.services.products,
-        permissions: DispatchPermissions.forRole(widget.user.role),
-        readBarcode: widget.services.readBarcode,
-      ),
-      'Invoices' when canUseInvoices(widget.user.role) => InvoicesScreen(
-        invoices: widget.services.invoices,
-        sharePdf: widget.services.sharePdf,
-      ),
-      'Invoices' => const MessageView(
-        icon: Icons.lock_outline,
-        title: 'Invoices are for accounts staff',
-        message: 'Ask an administrator or a member of the accounts team for invoice details.',
-      ),
-      'Payments' when canUsePayments(widget.user.role) => PaymentsScreen(
-        payments: widget.services.payments,
-        customers: widget.services.customers,
-        invoices: widget.services.invoices,
-        sharePdf: widget.services.sharePdf,
-        canVoid: canVoidPayments(widget.user.role),
-      ),
-      'Payments' => const MessageView(
-        icon: Icons.lock_outline,
-        title: 'Payments are for accounts staff',
-        message: 'Ask an administrator or a member of the accounts team about payments.',
-      ),
-      'Reports' when canSeeStockReports(widget.user.role) => ReportsScreen(
-        reports: widget.services.reports,
-        financial: canSeeFinancialReports(widget.user.role),
-      ),
-      'Reports' => const MessageView(
-        icon: Icons.lock_outline,
-        title: 'Reports are for managers',
-        message: 'Admins, accounts staff and storekeepers can open reports.',
-      ),
-      'Forecasts' when canUseForecasts(widget.user.role) => ForecastsScreen(
-        forecasts: widget.services.forecasts,
-      ),
-      'Forecasts' => const MessageView(
-        icon: Icons.lock_outline,
-        title: 'Forecasts are for managers',
-        message: 'Admins, accounts staff and storekeepers can see forecasts.',
-      ),
-      // Staff accounts are for admins only; the server enforces this too.
-      'Staff' when widget.user.role == StaffRole.admin => StaffScreen(
-        repository: widget.services.staff,
-        currentUserId: widget.user.id,
-      ),
-      'Staff' => const MessageView(
-        icon: Icons.lock_outline,
-        title: 'Staff accounts are managed by admins',
-        message:
-            'Ask an administrator to add staff or reset a password. To change your own '
-            'password, use Change password in the menu.',
-      ),
-      _ => throw StateError('No screen for ${destination.label}'),
-    };
+    final page = _pageFor(destination.label);
 
     return Scaffold(
       key: _scaffoldKey,
@@ -182,6 +161,7 @@ class _AppShellState extends State<AppShell> {
 
 class _NavigationList extends StatelessWidget {
   const _NavigationList({
+    required this.destinations,
     required this.selectedIndex,
     required this.onSelected,
     required this.user,
@@ -189,6 +169,7 @@ class _NavigationList extends StatelessWidget {
     required this.onSignOut,
   });
 
+  final List<AppDestination> destinations;
   final int selectedIndex;
   final ValueChanged<int> onSelected;
   final AppUser user;
@@ -216,14 +197,16 @@ class _NavigationList extends StatelessWidget {
             ],
           ),
         ),
-        for (var i = 0; i < appDestinations.length; i++)
+        for (var i = 0; i < destinations.length; i++)
           Padding(
             padding: const EdgeInsets.only(bottom: 4),
             child: ListTile(
+              // Compact, so all twelve sections fit on a laptop screen without scrolling.
+              visualDensity: VisualDensity.compact,
               leading: Icon(
-                i == selectedIndex ? appDestinations[i].selectedIcon : appDestinations[i].icon,
+                i == selectedIndex ? destinations[i].selectedIcon : destinations[i].icon,
               ),
-              title: Text(appDestinations[i].label),
+              title: Text(destinations[i].label),
               selected: i == selectedIndex,
               onTap: () => onSelected(i),
             ),
@@ -232,7 +215,8 @@ class _NavigationList extends StatelessWidget {
         ListTile(
           leading: CircleAvatar(child: Text(user.initials)),
           title: Text(user.fullName, overflow: TextOverflow.ellipsis),
-          subtitle: Text(user.role.label),
+          subtitle: Text('${user.roleNames}\n${user.organisation.name}'),
+          isThreeLine: true,
         ),
         ListTile(
           leading: const Icon(Icons.password),

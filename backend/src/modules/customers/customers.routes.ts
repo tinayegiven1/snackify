@@ -1,13 +1,13 @@
 import { Router } from 'express';
 import type pg from 'pg';
 import { z } from 'zod';
-import { getAuth, requireAuth, requireRole } from '../../middleware/authenticate.js';
-import type { Role } from '../auth/roles.js';
+import { can, getAuth, requireAuth, requirePermission } from '../../middleware/authenticate.js';
 import { AppError } from '../../utils/app-error.js';
+import type { Permission } from '../auth/permissions.js';
+import type { PublicUser } from '../auth/roles.js';
 import { moneySchema, optionalText, parseIdParam } from '../../utils/schemas.js';
 import { parseBody } from '../../utils/validation.js';
 import {
-  createCustomer,
   getCustomer,
   listCustomers,
   updateCustomer,
@@ -39,18 +39,6 @@ const addressSchema = optionalText(300);
 /** A credit limit in the base currency, or null for "no limit set". */
 const creditLimitSchema = moneySchema.nullable();
 
-const createCustomerSchema = z.object({
-  // Empty or missing: the next code (C0001, C0002, ...) is generated.
-  code: z.preprocess(
-    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
-    codeSchema.optional(),
-  ),
-  name: nameSchema,
-  phone: phoneSchema,
-  address: addressSchema,
-  creditLimit: creditLimitSchema.optional().transform((value) => value ?? null),
-});
-
 const updateCustomerSchema = z
   .strictObject(
     {
@@ -77,25 +65,22 @@ const listQuerySchema = z.object({
 
 const customerNotFound = () => new AppError(404, 'CUSTOMER_NOT_FOUND', 'No customer has that id.');
 
-/**
- * Who may change which customer fields (spec section 5: salespeople manage "permitted"
- * customer information). Admins may change everything.
- */
-const FIELD_ROLES: Record<keyof CustomerChanges, { roles: Role[]; label: string }> = {
-  code: { roles: ['salesperson'], label: 'customer details' },
-  name: { roles: ['salesperson'], label: 'customer details' },
-  phone: { roles: ['salesperson'], label: 'customer details' },
-  address: { roles: ['salesperson'], label: 'customer details' },
-  creditLimit: { roles: ['accounts'], label: 'credit limits' },
-  isActive: { roles: [], label: 'whether a customer is active' },
-};
+/** Which permission changes which customer field (sales staff manage the details). */
+const FIELD_PERMISSIONS: Record<keyof CustomerChanges, { permission: Permission; label: string }> =
+  {
+    code: { permission: 'customer.edit_details', label: 'customer details' },
+    name: { permission: 'customer.edit_details', label: 'customer details' },
+    phone: { permission: 'customer.edit_details', label: 'customer details' },
+    address: { permission: 'customer.edit_details', label: 'customer details' },
+    creditLimit: { permission: 'customer.edit_credit_limit', label: 'credit limits' },
+    isActive: { permission: 'customer.change_active', label: 'whether a customer is active' },
+  };
 
-function checkFieldPermissions(role: Role, changes: CustomerChanges): void {
-  if (role === 'admin') return;
+function checkFieldPermissions(user: PublicUser, changes: CustomerChanges): void {
   for (const field of Object.keys(changes) as (keyof CustomerChanges)[]) {
     if (changes[field] === undefined) continue;
-    const rule = FIELD_ROLES[field];
-    if (!rule.roles.includes(role)) {
+    const rule = FIELD_PERMISSIONS[field];
+    if (!can(user, rule.permission)) {
       throw new AppError(403, 'FORBIDDEN', `Your role does not allow changing ${rule.label}.`, [
         { field, message: 'Your role cannot change this' },
       ]);
@@ -104,13 +89,13 @@ function checkFieldPermissions(role: Role, changes: CustomerChanges): void {
 }
 
 /**
- * Customers (spec 6.5). Everyone signed in can view them. Salespeople and admins add
- * customers and edit their details; accounts staff and admins set credit limits;
- * only admins deactivate customers. Customers are never deleted.
+ * Customers (spec 6.5): the Head Office's buyers, seen by Head Office staff only. Since
+ * StockFlow Stage 3 (decision D1) the buyers are the subsidiaries: a customer record is created
+ * with each subsidiary under Organisations, never on its own. Customers are never deleted.
  */
 export function customersRouter(db: pg.Pool): Router {
   const router = Router();
-  router.use(requireAuth(db));
+  router.use(requireAuth(db), requirePermission('customer.view'));
 
   router.get('/', async (req, res) => {
     const search = parseBody(listQuerySchema, req.query);
@@ -122,25 +107,31 @@ export function customersRouter(db: pg.Pool): Router {
     res.json({ customer: await getCustomer(db, id) });
   });
 
-  router.post('/', requireRole('salesperson'), async (req, res) => {
-    const input = parseBody(createCustomerSchema, req.body);
-    const { user } = getAuth(res);
-    if (input.creditLimit !== null)
-      checkFieldPermissions(user.role, { creditLimit: input.creditLimit });
-
-    const customer = await createCustomer(db, input, user.id);
-    res.status(201).json({ customer });
+  router.post('/', () => {
+    throw new AppError(
+      409,
+      'ADD_AS_SUBSIDIARY',
+      'Customers are now the subsidiaries: add a new buyer under Organisations.',
+    );
   });
 
-  router.patch('/:id', requireRole('salesperson', 'accounts'), async (req, res) => {
-    const id = parseIdParam(req.params.id, customerNotFound);
-    const changes = parseBody(updateCustomerSchema, req.body);
-    const { user } = getAuth(res);
-    checkFieldPermissions(user.role, changes);
+  router.patch(
+    '/:id',
+    requirePermission(
+      'customer.edit_details',
+      'customer.edit_credit_limit',
+      'customer.change_active',
+    ),
+    async (req, res) => {
+      const id = parseIdParam(req.params.id, customerNotFound);
+      const changes = parseBody(updateCustomerSchema, req.body);
+      const { user } = getAuth(res);
+      checkFieldPermissions(user, changes);
 
-    const customer = await updateCustomer(db, id, changes, user.id);
-    res.json({ customer });
-  });
+      const customer = await updateCustomer(db, id, changes, user.id);
+      res.json({ customer });
+    },
+  );
 
   return router;
 }

@@ -1,7 +1,9 @@
+import '../features/audit/data/audit_repository.dart';
 import '../features/customers/data/customers_repository.dart';
 import '../features/dispatches/data/dispatches_repository.dart';
 import '../features/forecasts/data/forecasts_repository.dart';
 import '../features/invoices/data/invoices_repository.dart';
+import '../features/organisations/data/organisations_repository.dart';
 import '../features/payments/data/payments_repository.dart';
 import '../features/products/data/products_repository.dart';
 import '../features/reports/data/reports_repository.dart';
@@ -23,6 +25,8 @@ class AppServices {
     required this.reports,
     required this.forecasts,
     required this.staff,
+    required this.organisations,
+    required this.audit,
     required this.sharePdf,
     required this.readBarcode,
   });
@@ -38,8 +42,10 @@ class AppServices {
   final ReportsRepository reports;
   final ForecastsRepository forecasts;
 
-  /// Staff accounts (admins only).
+  /// Staff accounts and roles (user.manage).
   final StaffRepository staff;
+  final OrganisationsRepository organisations;
+  final AuditRepository audit;
 
   /// Downloads (web) or shares (phones) a PDF such as an invoice.
   final PdfSharer sharePdf;

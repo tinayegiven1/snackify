@@ -10,10 +10,12 @@ import 'core/network/backend_health_service.dart';
 import 'features/auth/data/auth_repository.dart';
 import 'features/auth/data/token_store.dart';
 import 'features/auth/presentation/auth_controller.dart';
+import 'features/audit/data/audit_repository.dart';
 import 'features/customers/data/customers_repository.dart';
 import 'features/dispatches/data/dispatches_repository.dart';
 import 'features/forecasts/data/forecasts_repository.dart';
 import 'features/invoices/data/invoices_repository.dart';
+import 'features/organisations/data/organisations_repository.dart';
 import 'features/payments/data/payments_repository.dart';
 import 'features/products/data/products_repository.dart';
 import 'features/reports/data/reports_repository.dart';
@@ -34,6 +36,8 @@ void main() {
     reports: ReportsRepository(api),
     forecasts: ForecastsRepository(api),
     staff: StaffRepository(api),
+    organisations: OrganisationsRepository(api),
+    audit: AuditRepository(api),
     sharePdf: sharePdfWithDevice,
     readBarcode: readBarcodeWithDevice,
   );

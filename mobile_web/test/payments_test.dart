@@ -301,15 +301,11 @@ void main() {
     expect(find.text('USD 3.00'), findsOneWidget); // balance due
   });
 
-  testWidgets('salespeople and storekeepers are told payments are for accounts staff', (
-    tester,
-  ) async {
+  testWidgets('payments are not offered to sales and warehouse staff', (tester) async {
     for (final role in ['salesperson', 'storekeeper']) {
       final app = await pumpSnackify(tester, signedIn: true, backend: backendForPayments(role));
-      await openSection(tester, 'Payments');
 
-      expect(find.text('Payments are for accounts staff'), findsOneWidget, reason: role);
-      expect(find.text('Record payment'), findsNothing, reason: role);
+      expect(await menuSections(tester), isNot(contains('Payments')), reason: role);
       expect(
         app.backend.requests.where((r) => r.contains('/payments') || r.contains('/balances')),
         isEmpty,

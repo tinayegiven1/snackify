@@ -1,40 +1,76 @@
-/// Staff roles, matching the backend (spec section 5).
-enum StaffRole {
-  admin('Admin'),
-  storekeeper('Storekeeper'),
-  salesperson('Salesperson'),
-  accounts('Accounts');
+/// The Head Office or a subsidiary, as shown with a user.
+class OrganisationRef {
+  const OrganisationRef({
+    required this.id,
+    required this.code,
+    required this.name,
+    required this.isHeadOffice,
+  });
 
-  const StaffRole(this.label);
-
-  final String label;
-
-  static StaffRole fromApi(String value) => StaffRole.values.firstWhere(
-    (role) => role.name == value,
-    orElse: () => StaffRole.salesperson,
+  factory OrganisationRef.fromJson(Map<String, dynamic> json) => OrganisationRef(
+    id: json['id'] as String,
+    code: json['code'] as String,
+    name: json['name'] as String,
+    isHeadOffice: json['type'] == 'HQ',
   );
+
+  final String id;
+  final String code;
+  final String name;
+  final bool isHeadOffice;
 }
 
-/// The signed-in staff member.
+/// A role a user holds, e.g. HQ Warehouse Officer.
+class RoleRef {
+  const RoleRef({required this.code, required this.name});
+
+  factory RoleRef.fromJson(Map<String, dynamic> json) =>
+      RoleRef(code: json['code'] as String, name: json['name'] as String);
+
+  final String code;
+  final String name;
+}
+
+/// The signed-in staff member: who they are, where they work and what they may do.
+///
+/// What the app shows follows [permissions] (from all their roles); the server checks the same
+/// permissions on every request, so hiding a button is never the only protection.
 class AppUser {
   const AppUser({
     required this.id,
     required this.username,
     required this.fullName,
-    required this.role,
+    required this.organisation,
+    required this.roles,
+    required this.permissions,
   });
 
   factory AppUser.fromJson(Map<String, dynamic> json) => AppUser(
     id: json['id'] as String,
     username: json['username'] as String,
     fullName: json['fullName'] as String,
-    role: StaffRole.fromApi(json['role'] as String),
+    organisation: OrganisationRef.fromJson(json['organisation'] as Map<String, dynamic>),
+    roles: [
+      for (final role in json['roles'] as List) RoleRef.fromJson(role as Map<String, dynamic>),
+    ],
+    permissions: {for (final code in json['permissions'] as List) code as String},
   );
 
   final String id;
   final String username;
   final String fullName;
-  final StaffRole role;
+  final OrganisationRef organisation;
+  final List<RoleRef> roles;
+  final Set<String> permissions;
+
+  /// True when one of the user's roles allows [permission], e.g. 'stock.receive'.
+  bool can(String permission) => permissions.contains(permission);
+
+  /// Head Office staff may see every organisation's records; a subsidiary's only their own.
+  bool get seesAllOrganisations => organisation.isHeadOffice;
+
+  /// "HQ Warehouse Officer, HQ Sales Officer".
+  String get roleNames => roles.map((role) => role.name).join(', ');
 
   String get initials => initialsOf(fullName);
 }

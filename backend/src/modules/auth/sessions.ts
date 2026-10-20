@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Queryable } from '../../database/transaction.js';
-import type { PublicUser, Role } from './roles.js';
+import type { PublicUser } from './roles.js';
+import { toPublicUser, USER_ACCESS_COLUMNS, type UserAccessRow } from './user-access.js';
 
 /** A session lasts one working day; staff sign in again after that. */
 export const SESSION_LIFETIME_HOURS = 12;
@@ -37,33 +38,30 @@ export interface AuthContext {
   user: PublicUser;
 }
 
-/** Finds the user for a token, if the session is current and the account is active. */
+/**
+ * Finds the user for a token, if the session is current and both the account and its
+ * organisation are active. Roles and permissions are read fresh on every request, so a change
+ * an admin makes applies at once.
+ */
 export async function findActiveSession(db: Queryable, token: string): Promise<AuthContext | null> {
   if (!TOKEN_FORMAT.test(token)) {
     return null;
   }
-  const { rows } = await db.query<{
-    session_id: string;
-    id: string;
-    username: string;
-    full_name: string;
-    role: Role;
-  }>(
-    `SELECT s.id AS session_id, u.id, u.username, u.full_name, u.role
+  const { rows } = await db.query<UserAccessRow & { session_id: string }>(
+    `SELECT s.id AS session_id, u.id, u.username, u.full_name, ${USER_ACCESS_COLUMNS}
      FROM sessions s
      JOIN users u ON u.id = s.user_id
+     JOIN organisations o ON o.id = u.organisation_id
      WHERE s.token_hash = $1
        AND s.revoked_at IS NULL
        AND s.expires_at > now()
-       AND u.is_active`,
+       AND u.is_active
+       AND o.is_active`,
     [hashToken(token)],
   );
   const row = rows[0];
   if (!row) return null;
-  return {
-    sessionId: row.session_id,
-    user: { id: row.id, username: row.username, fullName: row.full_name, role: row.role },
-  };
+  return { sessionId: row.session_id, user: toPublicUser(row) };
 }
 
 export async function revokeSession(db: Queryable, sessionId: string): Promise<void> {

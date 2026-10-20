@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type pg from 'pg';
 import { z } from 'zod';
-import { getAuth, requireAuth, requireRole } from '../../middleware/authenticate.js';
+import { getAuth, requireAuth, requirePermission } from '../../middleware/authenticate.js';
 import { AppError } from '../../utils/app-error.js';
 import { moneySchema, parseIdParam } from '../../utils/schemas.js';
 import { parseBody } from '../../utils/validation.js';
@@ -147,13 +147,13 @@ export function productsRouter(db: pg.Pool): Router {
     res.json({ product: await getProduct(db, parseIdParam(req.params.id, productNotFound)) });
   });
 
-  router.post('/', requireRole('admin'), async (req, res) => {
+  router.post('/', requirePermission('product.manage'), async (req, res) => {
     const input = parseBody(createProductSchema, req.body);
     const product = await createProduct(db, input, getAuth(res).user.id);
     res.status(201).json({ product });
   });
 
-  router.patch('/:id', requireRole('admin'), async (req, res) => {
+  router.patch('/:id', requirePermission('product.manage'), async (req, res) => {
     const id = parseIdParam(req.params.id, productNotFound);
     const changes = parseBody(updateProductSchema, req.body);
     const product = await updateProduct(db, id, changes, getAuth(res).user.id);
@@ -161,13 +161,13 @@ export function productsRouter(db: pg.Pool): Router {
   });
 
   /** Gives a product without a barcode one of Snackify's own EAN-13 barcodes. */
-  router.post('/:id/barcode', requireRole('admin'), async (req, res) => {
+  router.post('/:id/barcode', requirePermission('product.manage'), async (req, res) => {
     const id = parseIdParam(req.params.id, productNotFound);
     res.json({ product: await assignInternalBarcode(db, id, getAuth(res).user.id) });
   });
 
   /** Printable barcode labels (A4, 24 per sheet) for storekeepers and admins. */
-  router.get('/:id/labels', requireRole('storekeeper'), async (req, res) => {
+  router.get('/:id/labels', requirePermission('label.print'), async (req, res) => {
     const id = parseIdParam(req.params.id, productNotFound);
     const options = parseBody(labelsQuerySchema, req.query);
     const product = await getProduct(db, id);

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type pg from 'pg';
 import type { AppConfig } from '../../config/env.js';
-import { getAuth, requireAuth, requireRole } from '../../middleware/authenticate.js';
+import { getAuth, requireAuth, requirePermission } from '../../middleware/authenticate.js';
 import { businessToday } from '../../utils/dates.js';
 import { latestForecast, runForecast } from './forecasts.service.js';
 
@@ -11,7 +11,7 @@ import { latestForecast, runForecast } from './forecasts.service.js';
  */
 export function forecastsRouter(db: pg.Pool, config: AppConfig): Router {
   const router = Router();
-  router.use(requireAuth(db), requireRole('storekeeper', 'accounts'));
+  router.use(requireAuth(db), requirePermission('forecast.use'));
   const today = () => businessToday(config.businessTimezone);
 
   router.get('/', async (_req, res) => {

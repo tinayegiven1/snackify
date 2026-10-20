@@ -2,7 +2,7 @@ import { Router } from 'express';
 import type pg from 'pg';
 import { z } from 'zod';
 import type { AppConfig } from '../../config/env.js';
-import { getAuth, requireAuth, requireRole } from '../../middleware/authenticate.js';
+import { getAuth, requireAuth, requirePermission } from '../../middleware/authenticate.js';
 import { AppError } from '../../utils/app-error.js';
 import { businessToday, daysBetween, lastCompleteBillingWeek } from '../../utils/dates.js';
 import { parseIdParam } from '../../utils/schemas.js';
@@ -60,7 +60,7 @@ function fieldError(field: string, message: string): AppError {
  */
 export function invoicesRouter(db: pg.Pool, config: AppConfig): Router {
   const router = Router();
-  router.use(requireAuth(db), requireRole('accounts'));
+  router.use(requireAuth(db), requirePermission('invoice.manage'));
   const today = () => businessToday(config.businessTimezone);
 
   /** The requested period, or the last complete billing week; checked for sense. */

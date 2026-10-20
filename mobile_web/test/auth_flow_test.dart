@@ -92,7 +92,8 @@ void main() {
     await tester.tap(find.byTooltip('Open navigation menu'));
     await tester.pumpAndSettle();
     expect(find.text('Tendai Moyo'), findsOneWidget);
-    expect(find.text('Storekeeper'), findsOneWidget);
+    // Their roles and organisation.
+    expect(find.text('HQ Warehouse Officer\nHead Office'), findsOneWidget);
 
     // The menu scrolls on a small phone.
     await tester.ensureVisible(find.text('Sign out'));

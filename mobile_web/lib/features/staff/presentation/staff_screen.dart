@@ -4,18 +4,28 @@ import '../../../core/formatting/dates.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/widgets/message_view.dart';
 import '../../auth/domain/app_user.dart';
+import '../../organisations/data/organisations_repository.dart';
 import '../data/staff_repository.dart';
 import '../domain/staff_member.dart';
 import 'staff_form_screen.dart';
 
-/// Staff accounts (admins only): who can sign in, with which role.
+/// Users & Roles (permission user.manage): who can sign in, for which organisation, with
+/// which roles.
 class StaffScreen extends StatefulWidget {
-  const StaffScreen({super.key, required this.repository, required this.currentUserId});
+  const StaffScreen({
+    super.key,
+    required this.repository,
+    required this.organisations,
+    required this.currentUser,
+  });
 
   final StaffRepository repository;
+  final OrganisationsRepository organisations;
 
-  /// The signed-in admin, who may not change their own role or deactivate themselves.
-  final String currentUserId;
+  /// The signed-in admin, who may not change their own roles or deactivate themselves.
+  final AppUser currentUser;
+
+  String get currentUserId => currentUser.id;
 
   @override
   State<StaffScreen> createState() => _StaffScreenState();
@@ -61,6 +71,8 @@ class _StaffScreenState extends State<StaffScreen> {
       MaterialPageRoute(
         builder: (_) => StaffFormScreen(
           repository: widget.repository,
+          organisations: widget.organisations,
+          defaultOrganisationId: widget.currentUser.organisation.id,
           member: member,
           isSelf: member?.id == widget.currentUserId,
         ),
@@ -156,8 +168,11 @@ class _StaffTile extends StatelessWidget {
       ),
       title: Text(isSelf ? '${member.fullName} (you)' : member.fullName),
       subtitle: Text(
-        '${member.username} · ${member.role.label}\n'
+        '${member.username} · ${member.roleNames}\n'
+        '${member.organisation.name} · '
         '${lastSignIn == null ? 'Never signed in' : 'Last signed in ${formatApiDate(toApiDate(lastSignIn))}'}',
+        maxLines: 3,
+        overflow: TextOverflow.ellipsis,
       ),
       isThreeLine: true,
       trailing: member.isActive ? null : const StatusBadge('Deactivated'),

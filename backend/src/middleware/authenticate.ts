@@ -1,8 +1,10 @@
 import type { RequestHandler, Response } from 'express';
 import type pg from 'pg';
-import type { Role } from '../modules/auth/roles.js';
+import type { Permission } from '../modules/auth/permissions.js';
+import type { PublicUser } from '../modules/auth/roles.js';
 import { findActiveSession, type AuthContext } from '../modules/auth/sessions.js';
 import { AppError } from '../utils/app-error.js';
+import { currentRequest } from '../utils/request-context.js';
 
 /** Reads "Authorization: Bearer <token>". */
 function bearerToken(header: string | undefined): string | null {
@@ -10,7 +12,11 @@ function bearerToken(header: string | undefined): string | null {
   return match?.[1] ?? null;
 }
 
-/** Rejects the request with 401 unless it carries a current session token. */
+/**
+ * Rejects the request with 401 unless it carries a current session token. Only the
+ * Authorization header is read, never cookies, so another website cannot make a signed-in
+ * browser act on Snackify (no cross-site request forgery).
+ */
 export function requireAuth(db: pg.Pool): RequestHandler {
   return async (req, res, next) => {
     const token = bearerToken(req.headers.authorization);
@@ -22,20 +28,28 @@ export function requireAuth(db: pg.Pool): RequestHandler {
       throw new AppError(401, 'UNAUTHENTICATED', 'Your session has ended. Please sign in again.');
     }
     res.locals.auth = auth;
+    const request = currentRequest();
+    if (request) request.organisationId = auth.user.organisation.id;
     next();
   };
 }
 
+/** True when the user holds `permission` through any of their roles. */
+export function can(user: PublicUser, permission: Permission): boolean {
+  return user.permissions.includes(permission);
+}
+
+export const forbidden = () =>
+  new AppError(403, 'FORBIDDEN', 'Your role does not allow this action.');
+
 /**
- * Rejects the request with 403 unless the user has one of `roles`. Admins are always allowed.
- * Must come after requireAuth. Permissions are enforced here, never only by hiding buttons.
+ * Rejects the request with 403 unless the user has at least one of `permissions`. Must come
+ * after requireAuth. Permissions are enforced here, never only by hiding buttons.
  */
-export function requireRole(...roles: Role[]): RequestHandler {
+export function requirePermission(...permissions: Permission[]): RequestHandler {
   return (_req, res, next) => {
     const { user } = getAuth(res);
-    if (user.role !== 'admin' && !roles.includes(user.role)) {
-      throw new AppError(403, 'FORBIDDEN', 'Your role does not allow this action.');
-    }
+    if (!permissions.some((permission) => can(user, permission))) throw forbidden();
     next();
   };
 }
