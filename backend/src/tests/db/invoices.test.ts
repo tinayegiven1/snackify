@@ -9,6 +9,7 @@ import {
   auditEntries,
   createDbTestApp,
   createTestPools,
+  receiveTestStock,
   createTestProduct,
   createTestUser,
   PG,
@@ -87,7 +88,7 @@ beforeEach(async () => {
   });
   // Received well before last week, so every dispatch below has stock.
   for (const productId of [bbq, cheese]) {
-    await as('admin').post('/api/v1/stock/receipts', {
+    await receiveTestStock(pools.app, {
       productId,
       quantity: 1000,
       receivedDate: addDays(lastWeek().from, -1),

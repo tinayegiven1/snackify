@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:snackify/core/formatting/dates.dart';
 
+import 'helpers/receipt_steps.dart';
 import 'helpers/test_app.dart';
 
 /// Two products: BBQ crisps with plenty of stock, cheese puffs below their reorder level.
@@ -10,7 +11,8 @@ FakeBackend backendWithStock({String role = 'storekeeper'}) {
     ..addProduct('PC-BBQ-S', 'Potato Crisps', 'BBQ', 'Small', '0.50', barcode: '2000000000015')
     ..addProduct('MP-CH-S', 'Maize Puffs', 'Cheese', 'Small', '0.30', reorderLevel: 50)
     ..addStock('PC-BBQ-S', 100)
-    ..addStock('MP-CH-S', 20);
+    ..addStock('MP-CH-S', 20)
+    ..addSupplier('SUP-01', 'Harare Potato Co-op');
 }
 
 Future<void> openReceiveForm(WidgetTester tester) async {
@@ -22,13 +24,6 @@ Future<void> chooseProduct(WidgetTester tester, String description) async {
   await tester.tap(find.text('Choose or scan a product'));
   await tester.pumpAndSettle();
   await tester.tap(find.text(description));
-  await tester.pumpAndSettle();
-}
-
-Future<void> submitReceipt(WidgetTester tester) async {
-  await tester.ensureVisible(find.text('Record receipt'));
-  await tester.pumpAndSettle();
-  await tester.tap(find.text('Record receipt'));
   await tester.pumpAndSettle();
 }
 
@@ -49,27 +44,30 @@ void main() {
     expect(find.text('Maize Puffs — Cheese — Small'), findsOneWidget);
   });
 
-  testWidgets('a storekeeper receives stock and sees the new total', (tester) async {
+  testWidgets('a storekeeper receives stock with a goods-received note and sees the new total', (
+    tester,
+  ) async {
     final app = await pumpSnackify(tester, signedIn: true, backend: backendWithStock());
     await openSection(tester, 'Stock');
+    expect(find.text('Opening balance'), findsNothing); // administrators only
 
     await openReceiveForm(tester);
-    expect(find.text('Opening balance'), findsNothing); // admins only
-    await chooseProduct(tester, 'Maize Puffs — Cheese — Small');
-    await tester.enterText(find.widgetWithText(TextFormField, 'Quantity received (packs)'), '48');
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Batch or lot number (optional)'),
-      'L2026-10A',
-    );
-    await submitReceipt(tester);
+    await chooseOption(tester, 'Supplier', 'Harare Potato Co-op (SUP-01)');
+    await addLine(tester, product: 'Maize Puffs — Cheese — Small', bought: 48, batch: 'L2026-10A');
+    app.documents.willPick([pdfDocument()]);
+    await press(tester, find.text('Attach document'));
+    expect(find.text('invoice.pdf'), findsOneWidget);
+    await press(tester, find.text('Submit for verification'));
 
     expect(
-      find.text('Received 48 × Maize Puffs — Cheese — Small. In stock now: 68'),
+      find.text('Submitted GRN000001. Stock added to Head Office; it will be verified by finance.'),
       findsOneWidget,
     );
     expect(find.text('68'), findsOneWidget);
-    expect(app.backend.receipts.last, containsPair('receivedDate', toApiDate(today())));
-    expect(app.backend.receipts.last, containsPair('batchNumber', 'L2026-10A'));
+    final grn = app.backend.grns.single;
+    expect(grn, containsPair('receivedDate', toApiDate(today())));
+    expect((grn['lines'] as List).single, containsPair('batchNumber', 'L2026-10A'));
+    expect((grn['documents'] as List).single, containsPair('filename', 'invoice.pdf'));
   });
 
   testWidgets('the receive form checks fields before sending anything', (tester) async {
@@ -77,28 +75,44 @@ void main() {
     await openSection(tester, 'Stock');
     await openReceiveForm(tester);
 
-    await submitReceipt(tester);
-    expect(find.text('Choose a product'), findsOneWidget);
-    expect(find.text('Required'), findsOneWidget);
+    await press(tester, find.text('Submit for verification'));
+    expect(find.text('Add at least one product.'), findsOneWidget);
 
-    await chooseProduct(tester, 'Potato Crisps — BBQ — Small');
-    await tester.enterText(find.widgetWithText(TextFormField, 'Quantity received (packs)'), '0');
-    await submitReceipt(tester);
-    expect(find.text('Must be at least 1'), findsOneWidget);
+    await press(tester, find.text('Add product'));
+    await press(tester, find.text('Done')); // disabled until a product is chosen
+    await tester.tap(find.widgetWithText(InputDecorator, 'Product'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Potato Crisps — BBQ — Small').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextFormField, 'Bought'), '24');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Received'), '20');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Cost per unit'), '0.12345');
+    await press(tester, find.text('Done'));
+    expect(find.text('Choose a reason'), findsOneWidget);
+    expect(find.text('Use an amount with up to 4 decimal places'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
 
-    expect(app.backend.requests, isNot(contains('POST /api/v1/stock/receipts')));
+    // A storekeeper cannot submit without a supplier document.
+    await addLine(tester, product: 'Potato Crisps — BBQ — Small', bought: 24);
+    await press(tester, find.text('Submit for verification'));
+    expect(
+      find.text('Attach the supplier invoice or delivery note before submitting.'),
+      findsOneWidget,
+    );
+    expect(app.backend.requests.where((r) => r.startsWith('POST /api/v1/receipts')), isEmpty);
   });
 
-  testWidgets("shows the server's reason when a receipt is refused", (tester) async {
+  testWidgets("an admin records an opening balance, and sees the server's reason when refused", (
+    tester,
+  ) async {
     await pumpSnackify(tester, signedIn: true, backend: backendWithStock(role: 'admin'));
     await openSection(tester, 'Stock');
-    await openReceiveForm(tester);
+    await press(tester, find.text('Opening balance'));
 
     await chooseProduct(tester, 'Potato Crisps — BBQ — Small');
-    await tester.enterText(find.widgetWithText(TextFormField, 'Quantity received (packs)'), '10');
-    await tester.ensureVisible(find.text('Opening balance'));
-    await tester.tap(find.text('Opening balance'));
-    await submitReceipt(tester);
+    await tester.enterText(find.widgetWithText(TextFormField, 'Quantity on hand (packs)'), '10');
+    await press(tester, find.text('Record opening balance'));
 
     expect(
       find.text(
@@ -106,7 +120,7 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(find.text('Receive stock'), findsOneWidget); // still on the form
+    expect(find.text('Record opening balance'), findsOneWidget); // still on the form
   });
 
   testWidgets('salespeople can view stock but not receive it', (tester) async {
@@ -205,7 +219,12 @@ void main() {
     await tester.pumpAndSettle();
 
     await openReceiveForm(tester);
-    expect(find.text('Record receipt'), findsOneWidget);
+    expect(find.text('Submit for verification'), findsOneWidget);
+    await addLine(tester, product: 'Potato Crisps — BBQ — Small', bought: 24);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await press(tester, find.text('Opening balance'));
+    expect(find.text('Record opening balance'), findsOneWidget);
     await tester.pageBack();
     await tester.pumpAndSettle();
 

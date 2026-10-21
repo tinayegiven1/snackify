@@ -9,6 +9,7 @@ import {
   auditEntries,
   createDbTestApp,
   createTestPools,
+  receiveTestStock,
   createTestProduct,
   createTestUser,
   PG,
@@ -59,7 +60,7 @@ const confirm = (id: string, body: object = {}, role: Role = 'storekeeper') =>
 
 async function onHand(productId: string): Promise<number> {
   const { rows } = await pools.owner.query<{ quantity_on_hand: number }>(
-    'SELECT quantity_on_hand FROM stock_balances WHERE product_id = $1',
+    'SELECT quantity_on_hand FROM hq_stock_on_hand WHERE product_id = $1',
     [productId],
   );
   return rows[0]?.quantity_on_hand ?? NaN;
@@ -88,7 +89,7 @@ beforeEach(async () => {
     [bbq, 100],
     [cheese, 50],
   ] as const) {
-    await as('storekeeper').post('/api/v1/stock/receipts', { productId, quantity });
+    await receiveTestStock(pools.app, { productId, quantity });
   }
   const { rows } = await pools.owner.query<{ id: string }>(
     `INSERT INTO customers (code, name, credit_limit) VALUES
@@ -323,7 +324,7 @@ describe('confirming', () => {
     await withBusyApp(async (busyApp) => {
       for (let round = 0; round < 3; round++) {
         if (round > 0) {
-          await as('storekeeper').post('/api/v1/stock/receipts', { productId: bbq, quantity: 90 });
+          await receiveTestStock(pools.app, { productId: bbq, quantity: 90 });
         }
         const drafts = [];
         for (const row of rows.slice(round * 10, round * 10 + 10)) {

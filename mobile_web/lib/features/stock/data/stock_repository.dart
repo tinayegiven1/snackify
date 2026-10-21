@@ -7,11 +7,17 @@ class StockRepository {
 
   final ApiClient _api;
 
-  Future<List<StockBalance>> balances({String search = '', bool lowStockOnly = false}) async {
+  /// Stock on hand for one organisation (default: the user's own).
+  Future<List<StockBalance>> balances({
+    String search = '',
+    bool lowStockOnly = false,
+    String? organisationId,
+  }) async {
     final query = Uri(
       queryParameters: {
         if (search.trim().isNotEmpty) 'q': search.trim(),
         if (lowStockOnly) 'lowStockOnly': 'true',
+        'organisationId': ?organisationId,
       },
     ).query;
     final body = await _api.getJson('/api/v1/stock/balance?$query');
@@ -35,16 +41,18 @@ class StockRepository {
     );
   }
 
-  /// A product's ledger, newest first.
-  Future<List<StockMovement>> movements(String productId) async {
-    final query = Uri(queryParameters: {'productId': productId, 'limit': '200'}).query;
+  /// A product's ledger, newest first, for one organisation (default: the user's own).
+  Future<List<StockMovement>> movements(String productId, {String? organisationId}) async {
+    final query = Uri(
+      queryParameters: {'productId': productId, 'limit': '200', 'organisationId': ?organisationId},
+    ).query;
     final body = await _api.getJson('/api/v1/stock/movements?$query');
     return (body['movements'] as List)
         .map((item) => StockMovement.fromJson(item as Map<String, dynamic>))
         .toList();
   }
 
-  /// Records stock received. Returns the receipt and the product's new stock on hand.
+  /// Records an opening balance (deliveries use goods-received notes). Returns the receipt and the product's new stock on hand.
   Future<({StockReceipt receipt, int quantityOnHand})> receive(ReceiptInput input) async {
     final body = await _api.postJson('/api/v1/stock/receipts', input.toJson());
     return (

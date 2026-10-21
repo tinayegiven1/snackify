@@ -6,6 +6,7 @@ import '../../core/theme/app_theme.dart';
 import '../../features/audit/presentation/audit_log_screen.dart';
 import '../../features/auth/domain/app_user.dart';
 import '../../features/auth/presentation/change_password_screen.dart';
+import '../../features/catalogue/presentation/catalogue_screen.dart';
 import '../../features/customers/domain/customer.dart';
 import '../../features/customers/presentation/customers_screen.dart';
 import '../../features/dashboard/presentation/dashboard_screen.dart';
@@ -16,6 +17,8 @@ import '../../features/invoices/presentation/invoices_screen.dart';
 import '../../features/organisations/presentation/organisations_screen.dart';
 import '../../features/payments/presentation/payments_screen.dart';
 import '../../features/products/presentation/products_screen.dart';
+import '../../features/receipts/presentation/receipt_services.dart';
+import '../../features/receipts/presentation/receipts_screen.dart';
 import '../../features/reports/presentation/reports_screen.dart';
 import '../../features/staff/presentation/staff_screen.dart';
 import '../../features/stock/presentation/stock_screen.dart';
@@ -56,11 +59,22 @@ class _AppShellState extends State<AppShell> {
   Widget _pageFor(String label) {
     final user = widget.user;
     final services = widget.services;
+    final receiptServices = ReceiptServices(
+      receipts: services.receipts,
+      catalogue: services.catalogue,
+      organisations: services.organisations,
+      products: services.products,
+      user: user,
+      pickDocuments: services.pickDocuments,
+      sharePdf: services.sharePdf,
+      readBarcode: services.readBarcode,
+    );
     return switch (label) {
       'Dashboard' => DashboardScreen(reports: services.reports),
       'Products' => ProductsScreen(
         repository: services.products,
         canEdit: user.can('product.manage'),
+        catalogue: services.catalogue,
         readBarcode: services.readBarcode,
       ),
       'Stock' => StockScreen(
@@ -69,7 +83,10 @@ class _AppShellState extends State<AppShell> {
         user: user,
         readBarcode: services.readBarcode,
         sharePdf: services.sharePdf,
+        receiptServices: receiptServices,
       ),
+      'Goods Received' => ReceiptsScreen(services: receiptServices),
+      'Catalogue' => CatalogueScreen(repository: services.catalogue, user: user),
       'Customers' => CustomersScreen(
         repository: services.customers,
         permissions: CustomerPermissions.forUser(user),

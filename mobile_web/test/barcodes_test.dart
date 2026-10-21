@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:snackify/core/scanning/manual_barcode_dialog.dart';
 
+import 'helpers/receipt_steps.dart';
 import 'helpers/test_app.dart';
 
 const bbqBarcode = '5901234123457';
@@ -24,7 +25,8 @@ FakeBackend backendForBarcodes(String role) => FakeBackend(role: role)
   )
   ..addStock('PC-BBQ-S', 100)
   ..addStock('MP-CH-S', 50)
-  ..addCustomer('C0001', 'Avondale Tuckshop');
+  ..addCustomer('C0001', 'Avondale Tuckshop')
+  ..addSupplier('SUP-01', 'Harare Potato Co-op');
 
 Future<void> tapButton(WidgetTester tester, Finder finder) async {
   await tester.ensureVisible(finder);
@@ -167,12 +169,16 @@ void main() {
     await tester.tap(find.text('Receive stock'));
     await tester.pumpAndSettle();
 
+    await tapButton(tester, find.text('Add product'));
     app.scanner.willRead([cheeseBarcode]);
     await tapButton(tester, find.text('Scan barcode'));
     expect(find.text('Maize Puffs — Cheese — Small'), findsOneWidget);
 
-    await tester.enterText(find.widgetWithText(TextFormField, 'Quantity received (packs)'), '24');
-    await tapButton(tester, find.text('Record receipt'));
+    await fillLine(tester, bought: 24);
+    await chooseOption(tester, 'Supplier', 'Harare Potato Co-op (SUP-01)');
+    app.documents.willPick([pdfDocument()]);
+    await tapButton(tester, find.text('Attach document'));
+    await tapButton(tester, find.text('Submit for verification'));
     expect(app.backend.onHand('product-2'), 74);
   });
 

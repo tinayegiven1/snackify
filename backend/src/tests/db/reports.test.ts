@@ -7,6 +7,7 @@ import { fromCents, toCents } from '../../utils/money.js';
 import {
   createDbTestApp,
   createTestPools,
+  receiveTestStock,
   createTestProduct,
   createTestUser,
   resetDatabase,
@@ -143,7 +144,7 @@ afterAll(() => pools.close());
 /** Six weeks of trading: dispatches, invoices and payments, plus records that must not count. */
 async function sixWeeksOfTrading() {
   for (const productId of [bbq, cheese]) {
-    await as('admin').post('/api/v1/stock/receipts', {
+    await receiveTestStock(pools.app, {
       productId,
       quantity: 500,
       receivedDate: T(-50),
@@ -320,17 +321,17 @@ describe('stock reports', () => {
       receivedDate: T(-6), // inside the report's dates, but not a delivery
       isOpeningBalance: true,
     });
-    await as('storekeeper').post('/api/v1/stock/receipts', {
+    await receiveTestStock(pools.app, {
       productId: bbq,
       quantity: 24,
       receivedDate: T(-5),
     });
-    await as('storekeeper').post('/api/v1/stock/receipts', {
+    await receiveTestStock(pools.app, {
       productId: bbq,
       quantity: 12,
       receivedDate: T(-1),
     });
-    await as('storekeeper').post('/api/v1/stock/receipts', {
+    await receiveTestStock(pools.app, {
       productId: cheese,
       quantity: 50,
       receivedDate: T(-1),
@@ -361,7 +362,7 @@ describe('stock reports', () => {
       expiryDate: string,
       batchNumber: string,
     ) =>
-      as('admin').post('/api/v1/stock/receipts', {
+      receiveTestStock(pools.app, {
         productId,
         quantity,
         receivedDate,
@@ -408,7 +409,7 @@ describe('the dashboard', () => {
   it('shows everyone today at a glance, and money only to admins and accounts staff', async () => {
     await sixWeeksOfTrading();
     await pools.owner.query('UPDATE products SET reorder_level = 600 WHERE id = $1', [cheese]);
-    await as('storekeeper').post('/api/v1/stock/receipts', {
+    await receiveTestStock(pools.app, {
       productId: bbq,
       quantity: 7,
       receivedDate: T(0),

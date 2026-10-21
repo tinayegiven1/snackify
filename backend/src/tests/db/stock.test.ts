@@ -8,6 +8,7 @@ import {
   auditEntries,
   createDbTestApp,
   createTestPools,
+  receiveTestStock,
   createTestProduct,
   createTestUser,
   PG,
@@ -40,15 +41,14 @@ const as = (token: string) => ({
     request(app).patch(path).set('Authorization', `Bearer ${token}`).send(body),
 });
 
-async function receive(quantity: number, extra: object = {}, token = storekeeperToken) {
-  const response = await as(token).post('/api/v1/stock/receipts', {
-    productId,
-    quantity,
-    ...extra,
-  });
-  if (response.status !== 201) throw new Error(`Receipt failed: ${JSON.stringify(response.body)}`);
-  return response.body;
+/** Stock received directly (deliveries normally come in through goods-received notes). */
+function receive(quantity: number, extra: object = {}) {
+  return receiveTestStock(pools.app, { productId, quantity, ...extra });
 }
+
+/** The old quick receipt: since StockFlow Stage 4, for opening balances only. */
+const postOpening = (body: object, token = adminToken) =>
+  as(token).post('/api/v1/stock/receipts', { productId, isOpeningBalance: true, ...body });
 
 function adjust(quantityDelta: number, type = 'adjustment', reason = 'Stock count correction') {
   return as(adminToken).post('/api/v1/stock/adjustments', {
@@ -61,7 +61,7 @@ function adjust(quantityDelta: number, type = 'adjustment', reason = 'Stock coun
 
 async function onHand(id = productId): Promise<number> {
   const { rows } = await pools.owner.query<{ quantity_on_hand: number }>(
-    'SELECT quantity_on_hand FROM stock_balances WHERE product_id = $1',
+    'SELECT quantity_on_hand FROM hq_stock_on_hand WHERE product_id = $1',
     [id],
   );
   return rows[0]?.quantity_on_hand ?? NaN;
@@ -90,7 +90,7 @@ beforeEach(async () => {
 });
 afterAll(() => pools.close());
 
-describe('receiving stock (POST /api/v1/stock/receipts)', () => {
+describe('receiving stock directly', () => {
   it('increases stock by exactly the quantity received', async () => {
     const result = await receive(100);
 
@@ -100,7 +100,7 @@ describe('receiving stock (POST /api/v1/stock/receipts)', () => {
       quantity: 100,
       receivedDate: businessDate(),
       isOpeningBalance: false,
-      receivedBy: { fullName: 'Sam Storekeeper' },
+      receivedBy: { fullName: 'Ada Admin' },
       product: { sku: 'PC-BBQ-S', name: 'Potato Crisps' },
     });
 
@@ -119,7 +119,7 @@ describe('receiving stock (POST /api/v1/stock/receipts)', () => {
   it('keeps the batch number, expiry date and supplier reference', async () => {
     const { receipt } = await receive(48, {
       receivedDate: businessDate(-1),
-      batchNumber: ' L2026-10A ',
+      batchNumber: 'L2026-10A',
       expiryDate: businessDate(90),
       supplierReference: 'Delivery note 1042',
     });
@@ -138,10 +138,7 @@ describe('receiving stock (POST /api/v1/stock/receipts)', () => {
 
   it('rejects invalid quantities and stores nothing', async () => {
     for (const quantity of [0, -5, 1.5, '10', 1_000_001, null, undefined]) {
-      const response = await as(storekeeperToken).post('/api/v1/stock/receipts', {
-        productId,
-        quantity,
-      });
+      const response = await postOpening({ quantity });
       expect(response.status, `quantity ${String(quantity)}`).toBe(400);
       expect(response.body.error.details[0].field).toBe('quantity');
     }
@@ -150,8 +147,7 @@ describe('receiving stock (POST /api/v1/stock/receipts)', () => {
   });
 
   it('rejects impossible dates', async () => {
-    const post = (body: object) =>
-      as(storekeeperToken).post('/api/v1/stock/receipts', { productId, quantity: 5, ...body });
+    const post = (body: object) => postOpening({ quantity: 5, ...body });
 
     const future = await post({ receivedDate: businessDate(1) });
     expect(future.status).toBe(400);
@@ -169,16 +165,15 @@ describe('receiving stock (POST /api/v1/stock/receipts)', () => {
     expect(await onHand()).toBe(0);
   });
 
-  it('is allowed for storekeepers and admins only', async () => {
-    const asSalesperson = await as(salespersonToken).post('/api/v1/stock/receipts', {
-      productId,
-      quantity: 5,
-    });
+  it('is refused through the quick receipt: deliveries need a goods-received note', async () => {
+    for (const token of [storekeeperToken, adminToken]) {
+      const response = await as(token).post('/api/v1/stock/receipts', { productId, quantity: 5 });
+      expect(response.status).toBe(409);
+      expect(response.body.error.code).toBe('USE_GOODS_RECEIVED_NOTE');
+    }
+    const asSalesperson = await postOpening({ quantity: 5 }, salespersonToken);
     expect(asSalesperson.status).toBe(403);
-
-    await receive(5, {}, storekeeperToken);
-    await receive(5, {}, adminToken);
-    expect(await onHand()).toBe(10);
+    expect(await onHand()).toBe(0);
   });
 
   it('refuses stock for an inactive or unknown product', async () => {
@@ -188,14 +183,11 @@ describe('receiving stock (POST /api/v1/stock/receipts)', () => {
       isActive: false,
     });
 
-    const inactive = await as(storekeeperToken).post('/api/v1/stock/receipts', {
-      productId: inactiveId,
-      quantity: 5,
-    });
+    const inactive = await postOpening({ productId: inactiveId, quantity: 5 });
     expect(inactive.status).toBe(409);
     expect(inactive.body.error.code).toBe('PRODUCT_INACTIVE');
 
-    const unknown = await as(storekeeperToken).post('/api/v1/stock/receipts', {
+    const unknown = await postOpening({
       productId: '00000000-0000-4000-8000-000000000000',
       quantity: 5,
     });
@@ -329,6 +321,8 @@ describe('damage and adjustments (POST /api/v1/stock/adjustments)', () => {
       reason: 'Water damage',
       balanceBefore: 10,
       balanceAfter: 7,
+      // Which delivery the damaged packs came from (the one that expires first).
+      parts: [{ batchId: expect.any(String), warehouseId: expect.any(String), quantity: -3 }],
     });
   });
 
@@ -377,7 +371,7 @@ describe('stock on hand and history', () => {
     });
     await createTestProduct(pools.owner, { sku: 'PC-SV-S', flavour: 'Salt & Vinegar' });
     await receive(30); // BBQ: no reorder level, so never "low"
-    await as(storekeeperToken).post('/api/v1/stock/receipts', { productId: lowId, quantity: 20 });
+    await receiveTestStock(pools.app, { productId: lowId, quantity: 20 });
 
     const response = await as(salespersonToken).get('/api/v1/stock/balance');
     expect(response.status).toBe(200);
@@ -464,6 +458,6 @@ describe('stock on hand and history', () => {
       ['damage', -1, 99],
       ['receipt', 100, 100],
     ]);
-    expect(response.body.movements[2].createdBy.fullName).toBe('Sam Storekeeper');
+    expect(response.body.movements[2].createdBy.fullName).toBe('Ada Admin');
   });
 });

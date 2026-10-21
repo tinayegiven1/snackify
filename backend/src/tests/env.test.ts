@@ -17,6 +17,11 @@ describe('loadConfig', () => {
       business: { name: 'Snackify', contact: null },
       webAppDir: null,
       trustProxyHops: 0,
+      receipts: { stockAvailableBeforeVerification: true, documentRequired: true },
+      attachments: {
+        storageDir: expect.stringMatching(/storage[\\/]attachments$/),
+        maxBytes: 10485760,
+      },
     });
   });
 

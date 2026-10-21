@@ -7,6 +7,7 @@ import {
   auditEntries,
   createDbTestApp,
   createTestPools,
+  receiveTestStock,
   createTestProduct,
   createTestUser,
   PG,
@@ -63,7 +64,7 @@ async function dispatch(
 }
 
 const receive = (productId: string, quantity: number, receivedDate = T(-70)) =>
-  as('admin').post('/api/v1/stock/receipts', { productId, quantity, receivedDate });
+  receiveTestStock(pools.app, { productId, quantity, receivedDate });
 
 /** BBQ: 10 packs every 7 days for 8 weeks, always on today's weekday, plus records that are not demand. */
 async function bbqHistory() {

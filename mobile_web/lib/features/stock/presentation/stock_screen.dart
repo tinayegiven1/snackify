@@ -8,13 +8,20 @@ import '../../../core/network/api_client.dart';
 import '../../../core/scanning/barcode_reader.dart';
 import '../../../shared/widgets/message_view.dart';
 import '../../auth/domain/app_user.dart';
+import '../../organisations/domain/organisation.dart';
 import '../../products/data/products_repository.dart';
+import '../../receipts/domain/receipt_models.dart';
+import '../../receipts/presentation/receipt_editor_screen.dart';
+import '../../receipts/presentation/receipt_services.dart';
+import '../../receipts/presentation/receipts_screen.dart' show receivedMessage;
 import '../data/stock_repository.dart';
 import '../domain/stock_models.dart';
 import 'receive_stock_screen.dart';
 import 'stock_product_screen.dart';
 
-/// Stock on hand and stock received. Storekeepers and admins can record deliveries.
+/// Stock on hand and stock received. Warehouse staff record deliveries as goods-received
+/// notes; administrators record opening balances. Head Office staff can look at any
+/// organisation's stock.
 class StockScreen extends StatefulWidget {
   const StockScreen({
     super.key,
@@ -23,6 +30,7 @@ class StockScreen extends StatefulWidget {
     required this.user,
     required this.readBarcode,
     required this.sharePdf,
+    required this.receiptServices,
   });
 
   final StockRepository stock;
@@ -30,6 +38,7 @@ class StockScreen extends StatefulWidget {
   final AppUser user;
   final BarcodeReader readBarcode;
   final PdfSharer sharePdf;
+  final ReceiptServices receiptServices;
 
   @override
   State<StockScreen> createState() => _StockScreenState();
@@ -39,18 +48,45 @@ class _StockScreenState extends State<StockScreen> {
   /// Changing this rebuilds both tabs, so they reload after stock changes.
   int _version = 0;
 
-  bool get _canReceive =>
-      widget.user.can('stock.receive') || widget.user.can('stock.opening_balance');
+  /// Whose stock "On hand" shows; null for the user's own organisation.
+  String? _organisationId;
+  List<Organisation>? _organisations;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.user.seesAllOrganisations) _loadOrganisations();
+  }
+
+  Future<void> _loadOrganisations() async {
+    try {
+      final organisations = await widget.receiptServices.organisations.list();
+      if (mounted) setState(() => _organisations = organisations);
+    } on ApiException {
+      // Without the list, the Head Office's own stock is still shown.
+    }
+  }
+
+  bool get _ownStock => _organisationId == null || _organisationId == widget.user.organisation.id;
 
   Future<void> _receiveStock() async {
     // An earlier confirmation message would otherwise cover the form's button.
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    final receipt = await Navigator.of(context).push<GoodsReceipt>(
+      MaterialPageRoute(builder: (_) => ReceiptEditorScreen(services: widget.receiptServices)),
+    );
+    if (receipt == null || !mounted) return;
+    setState(() => _version++);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(receivedMessage(receipt))));
+  }
+
+  Future<void> _recordOpeningBalance() async {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     final result = await Navigator.of(context).push<ReceivedStock>(
       MaterialPageRoute(
         builder: (_) => ReceiveStockScreen(
           stock: widget.stock,
           products: widget.products,
-          canRecordOpeningBalance: widget.user.can('stock.opening_balance'),
           readBarcode: widget.readBarcode,
         ),
       ),
@@ -60,7 +96,7 @@ class _StockScreenState extends State<StockScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Received ${result.receipt.quantity} × ${result.receipt.product.description}. '
+          'Opening balance: ${result.receipt.quantity} × ${result.receipt.product.description}. '
           'In stock now: ${result.quantityOnHand}',
         ),
       ),
@@ -73,7 +109,9 @@ class _StockScreenState extends State<StockScreen> {
         builder: (_) => StockProductScreen(
           stock: widget.stock,
           balance: balance,
-          canAdjust: widget.user.can('stock.adjust'),
+          // Only the user's own organisation's stock is adjusted from here.
+          canAdjust: widget.user.can('stock.adjust') && _ownStock,
+          organisationId: _organisationId,
           products: widget.products,
           sharePdf: widget.sharePdf,
           canPrintLabels: widget.user.can('label.print'),
@@ -88,8 +126,9 @@ class _StockScreenState extends State<StockScreen> {
     return DefaultTabController(
       length: 2,
       child: Scaffold(
-        floatingActionButton: _canReceive
+        floatingActionButton: widget.user.can('stock.receive')
             ? FloatingActionButton.extended(
+                heroTag: 'stock-receive',
                 onPressed: _receiveStock,
                 icon: const Icon(Icons.move_to_inbox_outlined),
                 label: const Text('Receive stock'),
@@ -103,12 +142,54 @@ class _StockScreenState extends State<StockScreen> {
                 Tab(text: 'Receipts'),
               ],
             ),
+            if (_organisations != null || widget.user.can('stock.opening_balance'))
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                child: Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    if (_organisations case final organisations?)
+                      SizedBox(
+                        width: 320,
+                        child: DropdownButtonFormField<String>(
+                          initialValue: _organisationId ?? widget.user.organisation.id,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Whose stock',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          items: [
+                            for (final organisation in organisations)
+                              DropdownMenuItem(
+                                value: organisation.id,
+                                child: Text('${organisation.name} (${organisation.code})'),
+                              ),
+                          ],
+                          onChanged: (value) => setState(() {
+                            _organisationId = value;
+                            _version++;
+                          }),
+                        ),
+                      ),
+                    if (widget.user.can('stock.opening_balance'))
+                      TextButton.icon(
+                        onPressed: _recordOpeningBalance,
+                        icon: const Icon(Icons.playlist_add_outlined),
+                        label: const Text('Opening balance'),
+                      ),
+                  ],
+                ),
+              ),
             Expanded(
               child: TabBarView(
                 children: [
                   _OnHandTab(
                     key: ValueKey('on-hand-$_version'),
                     stock: widget.stock,
+                    organisationId: _organisationId,
                     onOpen: _openProduct,
                   ),
                   _ReceiptsTab(key: ValueKey('receipts-$_version'), stock: widget.stock),
@@ -125,9 +206,15 @@ class _StockScreenState extends State<StockScreen> {
 // ------------------------------------------------------------------ On hand
 
 class _OnHandTab extends StatefulWidget {
-  const _OnHandTab({super.key, required this.stock, required this.onOpen});
+  const _OnHandTab({
+    super.key,
+    required this.stock,
+    required this.organisationId,
+    required this.onOpen,
+  });
 
   final StockRepository stock;
+  final String? organisationId;
   final ValueChanged<StockBalance> onOpen;
 
   @override
@@ -166,6 +253,7 @@ class _OnHandTabState extends State<_OnHandTab> {
       final balances = await widget.stock.balances(
         search: _search.text,
         lowStockOnly: _lowStockOnly,
+        organisationId: widget.organisationId,
       );
       if (!mounted || request != _latestRequest) return;
       setState(() {

@@ -28,6 +28,7 @@ void main() {
     expect(sections.sublist(0, sections.indexOf('Change password')), [
       'Products',
       'Stock',
+      'Goods Received',
       'Organisations',
       'Tendai Moyo',
     ]);

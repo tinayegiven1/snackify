@@ -61,6 +61,7 @@ describe('POST /api/v1/auth/login', () => {
         'report.stock',
         'stock.receive',
         'stock.view',
+        'supplier.manage',
       ],
     });
     const hoursLeft = (Date.parse(response.body.expiresAt) - Date.now()) / 3_600_000;

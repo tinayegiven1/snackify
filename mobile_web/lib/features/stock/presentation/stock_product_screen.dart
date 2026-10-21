@@ -20,6 +20,7 @@ class StockProductScreen extends StatefulWidget {
     required this.products,
     required this.sharePdf,
     required this.canPrintLabels,
+    this.organisationId,
   });
 
   final StockRepository stock;
@@ -30,6 +31,9 @@ class StockProductScreen extends StatefulWidget {
 
   /// Storekeepers and admins print barcode labels.
   final bool canPrintLabels;
+
+  /// Whose stock is shown; null for the user's own organisation.
+  final String? organisationId;
 
   @override
   State<StockProductScreen> createState() => _StockProductScreenState();
@@ -53,7 +57,10 @@ class _StockProductScreenState extends State<StockProductScreen> {
       _error = null;
     });
     try {
-      final movements = await widget.stock.movements(widget.balance.product.id);
+      final movements = await widget.stock.movements(
+        widget.balance.product.id,
+        organisationId: widget.organisationId,
+      );
       if (!mounted) return;
       setState(() {
         _movements = movements;

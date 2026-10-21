@@ -29,6 +29,12 @@ export const PERMISSIONS = [
   'report.financial',
   'report.stock',
   'forecast.use',
+  // StockFlow Stage 4.
+  'catalogue.manage',
+  'supplier.manage',
+  'receipt.verify',
+  'receipt.no_document',
+  'receipt.reverse',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];

@@ -5,14 +5,14 @@ snacks business. One backend API and database serve a Flutter web app and a Flut
 
 The full product specification is in [Snackify_Claude_Code_Spec.md](Snackify_Claude_Code_Spec.md).
 
-## Current status: StockFlow Stage 3 (organisations and access) on top of all feature stages
+## Current status: StockFlow Stage 4 (stock ownership and goods-received notes) on top of all feature stages
 
 | Part                                   | Status                                                                     |
 | -------------------------------------- | -------------------------------------------------------------------------- |
 | Backend (Node.js, Express, TypeScript) | Health, sign-in, roles, staff, products, stock ledger, customers, dispatches, invoices with PDFs, payments, balances and statements, barcode lookup and label PDFs, reports (dashboard, sales trends, best sellers, customers, stock received, expiring stock), sales forecasts with accuracy and restocking suggestions, audit log, tests |
 | PostgreSQL                             | Dev + test databases, least-privilege roles, migrations, seed              |
-| Database tables                        | `products`, `users`, `sessions`, `audit_logs`, `stock_batches`, `stock_movements`, `customers`, `dispatches`, `dispatch_items`, `invoices`, `invoice_items`, `payments`, `payment_allocations`, `forecast_runs`, `forecasts` |
-| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**, **Dispatches** (drafts, confirm, cancel, reverse, credit warnings), **Invoices** (weekly run, preview, drafts, issue, void, PDF, paid/overdue), **Payments** (record and allocate payments, balances, account statements), **barcode scanning** (camera on Android; typed or USB scanner on the web) and **barcode labels**, a live **Dashboard** and **Reports** (daily/weekly/monthly sales, best sellers, customer summaries, stock received, expiring stock), **Forecasts** (next 7 and 30 days per product, how much to receive, accuracy), **Organisations** (the Head Office and its subsidiaries), **Users & Roles** (staff with one or more roles, per organisation), **Audit Log**, and **Change password** for everyone |
+| Database tables                        | `products`, `users`, `sessions`, `audit_logs`, `stock_batches`, `stock_movements`, `customers`, `dispatches`, `dispatch_items`, `invoices`, `invoice_items`, `payments`, `payment_allocations`, `forecast_runs`, `forecasts`, `organisations`, roles and permissions, `stock_balances`, `product_categories`, `units`, `unit_conversions`, `suppliers`, `warehouses`, `stock_receipts`, `stock_receipt_lines`, `stock_receipt_attachments` |
+| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**, **Dispatches** (drafts, confirm, cancel, reverse, credit warnings), **Invoices** (weekly run, preview, drafts, issue, void, PDF, paid/overdue), **Payments** (record and allocate payments, balances, account statements), **barcode scanning** (camera on Android; typed or USB scanner on the web) and **barcode labels**, a live **Dashboard** and **Reports** (daily/weekly/monthly sales, best sellers, customer summaries, stock received, expiring stock), **Forecasts** (next 7 and 30 days per product, how much to receive, accuracy), **Goods Received** (goods-received notes with supplier documents, verification, reversal and a GRN PDF; stock for the Head Office or a subsidiary), **Catalogue** (suppliers, categories, warehouses, units; cartons and cases on products), **Organisations** (the Head Office and its subsidiaries), **Users & Roles** (staff with one or more roles, per organisation), **Audit Log**, and **Change password** for everyone |
 | Backups                                | Daily-ready `npm run db:backup` with an automatic, verified test restore; guarded emergency restore ([docs/backup-and-restore.md](docs/backup-and-restore.md)) |
 
 ## Project structure
@@ -241,6 +241,10 @@ npm start
 | `BUSINESS_CONTACT`            | (none)                  | Optional contact line on invoice PDFs (address, phone)  |
 | `WEB_APP_DIR`                 | (none)                  | Folder with the built web app (`flutter build web`) to serve on the API's address; used in production |
 | `TRUST_PROXY_HOPS`            | `0`                     | Proxies in front of the API (1 on Cloud Run), so sign-in limits apply per client |
+| `RECEIPT_STOCK_AVAILABLE_BEFORE_VERIFICATION` | `true`            | A goods-received note's stock is usable once submitted (taken back if rejected); `false` waits for verification |
+| `RECEIPT_DOCUMENT_REQUIRED`   | `true`                  | Submitting a goods-received note needs a supplier document (authorised users may give a reason instead) |
+| `ATTACHMENT_MAX_BYTES`        | `10485760` (10 MB)      | Largest supplier document accepted                      |
+| `ATTACHMENT_STORAGE_DIR`      | `storage/attachments`   | Where supplier documents are kept (outside `WEB_APP_DIR`; back it up with the database) |
 | `BACKUP_DIR`, `BACKUP_KEEP`, `PG_BIN_DIR`, `RESTORE_CHECK_DATABASE_URL` | see [backups](docs/backup-and-restore.md#settings-backendenv-all-optional) | Where backups go, how many to keep, where `pg_dump` is |
 
 **Billing week:** by default an invoice covers the last complete Monday-to-Sunday week, with
@@ -405,11 +409,16 @@ dart format .
 
 ## Known limitations
 
-- **StockFlow Stage 3 only so far.** Organisations, roles and permissions, organisation
-  separation and the audit log are done. Until Stage 4, all stock recorded by the app belongs to
-  the Head Office (receipts cannot yet name a subsidiary as owner), and the Stock screen shows
-  the signed-in person's own organisation (the API already lets Head Office staff ask for a
-  subsidiary's). Subsidiary orders come in Stage 5.
+- **StockFlow Stages 3 and 4 so far.** Organisations, permissions, the audit log, stock per
+  owner and warehouse, and goods-received notes are done. Subsidiary orders come in Stage 5.
+- **Deliveries need a goods-received note.** The old quick "receive stock" form now records only
+  opening balances. Receipt documents are kept on the server's disk (`ATTACHMENT_STORAGE_DIR`):
+  include that folder in backups. On Cloud Run that disk is temporary (see
+  [deployment](docs/deployment.md#limits)).
+- **Stock adjustments from the Stock screen** apply to the signed-in person's own organisation;
+  Head Office staff can view a subsidiary's stock there but not adjust it (the API allows it).
+- **Phones attach documents through the file chooser**: a photo must be taken with the camera
+  app first.
 - **Customers are no longer added on their own** (decision D1): each subsidiary brings its
   customer record. Customers added before Stage 3 stay as they are; an admin can link one to a
   new subsidiary (Add subsidiary → Customer record) or deactivate it.

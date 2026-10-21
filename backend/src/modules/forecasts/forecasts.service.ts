@@ -194,7 +194,7 @@ export async function latestForecast(db: Queryable, today: string): Promise<Fore
             f.history_days, f.weeks_used
      FROM forecasts f
      JOIN products p ON p.id = f.product_id
-     JOIN stock_balances b ON b.product_id = f.product_id
+     JOIN hq_stock_on_hand b ON b.product_id = f.product_id
      WHERE f.run_id = $1`,
     [run.id],
   );

@@ -88,3 +88,8 @@ signed with a temporary debug key can never reach staff by accident.
   a few extra seconds while it starts.
 - One server instance at a time (see the table above). Enough for a small team; the sign-in
   limiter must move to the database before allowing more.
+- **Receipt documents** (supplier invoices attached to goods-received notes) are stored in
+  `ATTACHMENT_STORAGE_DIR`. Cloud Run's disk is wiped whenever the server restarts, so on
+  staging they are lost on restart. Before real use, mount a Cloud Storage bucket at that
+  folder (Cloud Run volume mounts) or move the store to a private bucket; until then, test
+  uploads only.

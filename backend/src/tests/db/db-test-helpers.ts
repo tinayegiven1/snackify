@@ -5,6 +5,9 @@ import { createApp } from '../../app.js';
 import { loadDotEnv, readDatabaseUrl } from '../../config/env.js';
 import { runMigrations } from '../../database/migrations.js';
 import { LEGACY_ROLE_ALIASES } from '../../modules/auth/permissions.js';
+import type { PublicUser } from '../../modules/auth/roles.js';
+import { receiveStock } from '../../modules/stock/stock.service.js';
+import { businessToday } from '../../utils/dates.js';
 import { createUser, type StaffUser } from '../../modules/users/users.service.js';
 import { testConfig } from '../test-config.js';
 
@@ -61,8 +64,12 @@ export function createDbTestApp(appPool: pg.Pool): Express {
  */
 export async function resetDatabase(ownerPool: pg.Pool): Promise<void> {
   await ownerPool.query(`
-    TRUNCATE forecasts, forecast_runs, payment_allocations, payments, invoice_items, invoices, stock_movements, stock_batches, dispatch_items, dispatches, audit_logs,
-             sessions, user_roles, users, products, customers`);
+    TRUNCATE forecasts, forecast_runs, payment_allocations, payments, invoice_items, invoices, stock_balances, stock_movements, stock_batches, stock_receipt_attachments,
+             stock_receipt_lines, stock_receipts, dispatch_items, dispatches, audit_logs,
+             sessions, user_roles, users, unit_conversions, products, product_categories, suppliers, customers`);
+  // Only what the migrations create stays: the default warehouse and the standard units.
+  await ownerPool.query(`DELETE FROM warehouses WHERE NOT is_default`);
+  await ownerPool.query(`DELETE FROM units WHERE code NOT IN ('pack', 'carton', 'case')`);
   // Only the Head Office (created by the migrations) stays, with its original details.
   await ownerPool.query(`DELETE FROM organisations WHERE organisation_type <> 'HQ'`);
   await ownerPool.query(`
@@ -123,6 +130,42 @@ export async function createTestProduct(
     [p.sku, p.name, p.flavour, p.size, p.reorderLevel, p.isActive],
   );
   return (rows[0] as { id: string }).id;
+}
+
+/**
+ * Puts Head Office stock in directly, as a delivery recorded without a goods-received note (as
+ * before StockFlow Stage 4), for tests that need stock but are not about receiving it. Recorded
+ * as the first staff account, so create one first.
+ */
+export async function receiveTestStock(
+  appPool: pg.Pool,
+  input: {
+    productId: string;
+    quantity: number;
+    receivedDate?: string;
+    batchNumber?: string | null;
+    expiryDate?: string | null;
+    supplierReference?: string | null;
+    isOpeningBalance?: boolean;
+  },
+) {
+  const { rows } = await appPool.query<{ id: string }>(
+    'SELECT id FROM users ORDER BY created_at LIMIT 1',
+  );
+  if (!rows[0]) throw new Error('receiveTestStock needs a staff account');
+  return receiveStock(
+    appPool,
+    {
+      productId: input.productId,
+      quantity: input.quantity,
+      receivedDate: input.receivedDate ?? businessToday(testConfig.businessTimezone),
+      batchNumber: input.batchNumber ?? null,
+      expiryDate: input.expiryDate ?? null,
+      supplierReference: input.supplierReference ?? null,
+      isOpeningBalance: input.isOpeningBalance ?? false,
+    },
+    { id: rows[0].id } as PublicUser,
+  );
 }
 
 /**

@@ -10,6 +10,7 @@ import {
   auditEntries,
   createDbTestApp,
   createTestPools,
+  receiveTestStock,
   createTestProduct,
   createTestUser,
   PG,
@@ -108,7 +109,7 @@ beforeEach(async () => {
     tokens[role] = await signIn(app, role, PASSWORD);
   }
   bbq = await createTestProduct(pools.owner);
-  await as('admin').post('/api/v1/stock/receipts', {
+  await receiveTestStock(pools.app, {
     productId: bbq,
     quantity: 1000,
     receivedDate: addDays(week(6).from, -1),

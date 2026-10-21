@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 export interface AppConfig {
@@ -27,7 +28,27 @@ export interface AppConfig {
    * too low and everyone shares one limit; too high and clients can fake their address.
    */
   trustProxyHops: number;
+  /** Goods-received notes (StockFlow Stage 4). */
+  receipts: {
+    /** True: stock is added when a receipt is submitted, before verification (decision D3). */
+    stockAvailableBeforeVerification: boolean;
+    /** True: a receipt needs at least one document, unless an authorised user gives a reason. */
+    documentRequired: boolean;
+  };
+  /** Receipt documents: where they are kept (outside the web app) and how large they may be. */
+  attachments: { storageDir: string; maxBytes: number };
 }
+
+/** Private documents live here by default: inside the project, never inside the web app. */
+export const DEFAULT_ATTACHMENT_DIR = fileURLToPath(
+  new URL('../../../storage/attachments', import.meta.url),
+);
+
+const booleanSetting = (fallback: boolean) =>
+  z
+    .enum(['true', 'false'], { error: 'Must be true or false' })
+    .optional()
+    .transform((value) => (value === undefined ? fallback : value === 'true'));
 
 /** Loads backend/.env for local development. Real environment variables take precedence. */
 export function loadDotEnv(path = '.env'): void {
@@ -112,6 +133,15 @@ const envSchema = z.object({
     .min(0, 'Must be 0 or more')
     .max(5, 'Must be at most 5')
     .default(0),
+  RECEIPT_STOCK_AVAILABLE_BEFORE_VERIFICATION: booleanSetting(true),
+  RECEIPT_DOCUMENT_REQUIRED: booleanSetting(true),
+  ATTACHMENT_MAX_BYTES: z.coerce
+    .number({ error: 'Must be a whole number of bytes' })
+    .int('Must be a whole number of bytes')
+    .min(1024, 'Must be at least 1024')
+    .max(50 * 1024 * 1024, 'Must be at most 52428800 (50 MB)')
+    .default(10 * 1024 * 1024),
+  ATTACHMENT_STORAGE_DIR: z.string().trim().min(1).optional(),
 });
 
 const WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
@@ -146,7 +176,29 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     business: { name: result.data.BUSINESS_NAME, contact: result.data.BUSINESS_CONTACT || null },
     webAppDir: result.data.WEB_APP_DIR ?? null,
     trustProxyHops: result.data.TRUST_PROXY_HOPS,
+    receipts: {
+      stockAvailableBeforeVerification: result.data.RECEIPT_STOCK_AVAILABLE_BEFORE_VERIFICATION,
+      documentRequired: result.data.RECEIPT_DOCUMENT_REQUIRED,
+    },
+    attachments: {
+      storageDir: attachmentDir(result.data.ATTACHMENT_STORAGE_DIR, result.data.WEB_APP_DIR),
+      maxBytes: result.data.ATTACHMENT_MAX_BYTES,
+    },
   };
+}
+
+/** Documents must never be inside the folder the web app is served from. */
+function attachmentDir(configured: string | undefined, webAppDir: string | undefined): string {
+  const dir = resolve(configured ?? DEFAULT_ATTACHMENT_DIR);
+  if (webAppDir) {
+    const web = resolve(webAppDir);
+    if (dir === web || dir.startsWith(web + sep)) {
+      throw new Error(
+        'Invalid environment configuration:\n  - ATTACHMENT_STORAGE_DIR: Must not be inside WEB_APP_DIR',
+      );
+    }
+  }
+  return dir;
 }
 
 /** Reads one PostgreSQL URL variable, such as MIGRATION_DATABASE_URL, for scripts and tests. */

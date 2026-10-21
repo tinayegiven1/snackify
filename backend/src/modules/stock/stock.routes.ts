@@ -1,13 +1,7 @@
 import { Router, type Response } from 'express';
 import type pg from 'pg';
 import { z } from 'zod';
-import {
-  can,
-  forbidden,
-  getAuth,
-  requireAuth,
-  requirePermission,
-} from '../../middleware/authenticate.js';
+import { can, getAuth, requireAuth, requirePermission } from '../../middleware/authenticate.js';
 import { AppError } from '../../utils/app-error.js';
 import { businessToday, daysBetween } from '../../utils/dates.js';
 import { optionalText } from '../../utils/schemas.js';
@@ -56,6 +50,10 @@ const adjustmentSchema = z
       .min(3, 'Explain the reason in a few words')
       .max(500, 'Use at most 500 characters'),
     businessDate: dateSchema.optional(),
+    // Whose stock, where, and which delivery (StockFlow Stage 4). All optional.
+    organisationId: z.uuid({ error: 'Must be an organisation id' }).optional(),
+    warehouseId: z.uuid({ error: 'Must be a warehouse id' }).optional(),
+    batchId: z.uuid({ error: 'Must be a batch id' }).optional(),
   })
   .refine((input) => input.type !== 'damage' || input.quantityDelta < 0, {
     path: ['quantityDelta'],
@@ -136,17 +134,24 @@ export function stockRouter(db: pg.Pool, businessTimezone: string): Router {
     });
   });
 
-  // Receipts are the Head Office's own stock until StockFlow Stage 4 lets the owner be chosen.
+  // Since StockFlow Stage 4, deliveries come in through goods-received notes (/api/v1/receipts),
+  // which check documents and record whose stock it is. This quick receipt now only records a
+  // product's opening balance (the Head Office's stock on the day Snackify started).
   router.post(
     '/receipts',
     requirePermission('stock.receive', 'stock.opening_balance'),
     async (req, res) => {
       const input = parseBody(receiptSchema, req.body);
       const { user } = getAuth(res);
-      if (!can(user, input.isOpeningBalance ? 'stock.opening_balance' : 'stock.receive')) {
-        throw input.isOpeningBalance
-          ? new AppError(403, 'FORBIDDEN', 'Only admins can record opening balances.')
-          : forbidden();
+      if (!input.isOpeningBalance) {
+        throw new AppError(
+          409,
+          'USE_GOODS_RECEIVED_NOTE',
+          'Record deliveries with a goods-received note (Receive Stock), with the supplier document.',
+        );
+      }
+      if (!can(user, 'stock.opening_balance')) {
+        throw new AppError(403, 'FORBIDDEN', 'Only admins can record opening balances.');
       }
 
       const receivedDate = input.receivedDate ?? today();
@@ -167,11 +172,16 @@ export function stockRouter(db: pg.Pool, businessTimezone: string): Router {
   });
 
   router.post('/adjustments', requirePermission('stock.adjust'), async (req, res) => {
-    const input = parseBody(adjustmentSchema, req.body);
+    const { organisationId, ...input } = parseBody(adjustmentSchema, req.body);
     const businessDate = input.businessDate ?? today();
     checkNotFuture('businessDate', businessDate, today());
+    const ownerOrganisationId = ownerFor(res, organisationId);
 
-    const result = await adjustStock(db, { ...input, businessDate }, getAuth(res).user);
+    const result = await adjustStock(
+      db,
+      { ...input, businessDate, ownerOrganisationId },
+      getAuth(res).user,
+    );
     res.status(201).json(result);
   });
 

@@ -3,7 +3,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { getAuth, requireAuth, requirePermission } from '../../middleware/authenticate.js';
 import { AppError } from '../../utils/app-error.js';
-import { moneySchema, parseIdParam } from '../../utils/schemas.js';
+import { moneySchema, optionalText, parseIdParam } from '../../utils/schemas.js';
 import { parseBody } from '../../utils/validation.js';
 import { asEan13 } from '../../utils/ean13.js';
 import { LABEL_SHEET, renderLabelsPdf } from './labels-pdf.js';
@@ -13,6 +13,7 @@ import {
   findProductByBarcode,
   getProduct,
   listProducts,
+  setConversions,
   updateProduct,
 } from './products.service.js';
 
@@ -59,6 +60,33 @@ const safetyStockSchema = z
   .min(0, 'Must be 0 or more')
   .max(1_000_000, 'Must be at most 1,000,000');
 
+// StockFlow Stage 4.1: description, category and base unit (null clears the first two).
+const catalogueFields = {
+  description: optionalText(500),
+  categoryId: z.uuid({ error: 'Must be a category id' }).nullish(),
+  baseUnitId: z.uuid({ error: 'Must be a unit id' }).optional(),
+};
+
+const conversionsSchema = z.object({
+  conversions: z
+    .array(
+      z.object({
+        unitId: z.uuid({ error: 'Must be a unit id' }),
+        baseQuantity: z
+          .number({ error: 'Must be a whole number' })
+          .int('Must be a whole number')
+          .min(2, 'One of this unit must hold at least 2 of the base unit')
+          .max(100_000, 'Must be at most 100,000'),
+      }),
+      { error: 'Must be a list of conversions' },
+    )
+    .max(10, 'At most 10 units')
+    .refine(
+      (list) => new Set(list.map((c) => c.unitId)).size === list.length,
+      'Each unit only once',
+    ),
+});
+
 const createProductSchema = z.object({
   sku: skuSchema,
   name: text(100),
@@ -68,6 +96,9 @@ const createProductSchema = z.object({
   defaultPrice: moneySchema,
   reorderLevel: reorderLevelSchema.optional().transform((value) => value ?? null),
   safetyStock: safetyStockSchema.default(0),
+  description: catalogueFields.description.optional().transform((value) => value ?? null),
+  categoryId: catalogueFields.categoryId.transform((value) => value ?? null),
+  baseUnitId: catalogueFields.baseUnitId,
 });
 
 const updateProductSchema = z
@@ -82,6 +113,9 @@ const updateProductSchema = z
       reorderLevel: reorderLevelSchema.optional(),
       safetyStock: safetyStockSchema.optional(),
       isActive: z.boolean({ error: 'Must be true or false' }).optional(),
+      description: catalogueFields.description.optional(),
+      categoryId: catalogueFields.categoryId,
+      baseUnitId: catalogueFields.baseUnitId,
     },
     { error: 'This field cannot be changed' },
   )
@@ -158,6 +192,13 @@ export function productsRouter(db: pg.Pool): Router {
     const changes = parseBody(updateProductSchema, req.body);
     const product = await updateProduct(db, id, changes, getAuth(res).user.id);
     res.json({ product });
+  });
+
+  /** Replaces the product's unit conversions (e.g. 1 carton = 24 packs). */
+  router.put('/:id/conversions', requirePermission('product.manage'), async (req, res) => {
+    const id = parseIdParam(req.params.id, productNotFound);
+    const { conversions } = parseBody(conversionsSchema, req.body);
+    res.json({ product: await setConversions(db, id, conversions, getAuth(res).user.id) });
   });
 
   /** Gives a product without a barcode one of Snackify's own EAN-13 barcodes. */

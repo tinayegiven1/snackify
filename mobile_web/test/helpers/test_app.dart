@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:snackify/app.dart';
 import 'package:snackify/core/app_services.dart';
+import 'package:snackify/core/files/document_picker.dart';
 import 'package:snackify/core/formatting/dates.dart';
 import 'package:snackify/core/formatting/money.dart';
 import 'package:snackify/core/network/api_client.dart';
@@ -13,6 +14,7 @@ import 'package:snackify/features/auth/data/auth_repository.dart';
 import 'package:snackify/features/auth/data/token_store.dart';
 import 'package:snackify/features/auth/presentation/auth_controller.dart';
 import 'package:snackify/features/audit/data/audit_repository.dart';
+import 'package:snackify/features/catalogue/data/catalogue_repository.dart';
 import 'package:snackify/features/customers/data/customers_repository.dart';
 import 'package:snackify/features/dispatches/data/dispatches_repository.dart';
 import 'package:snackify/features/forecasts/data/forecasts_repository.dart';
@@ -20,6 +22,7 @@ import 'package:snackify/features/invoices/data/invoices_repository.dart';
 import 'package:snackify/features/organisations/data/organisations_repository.dart';
 import 'package:snackify/features/payments/data/payments_repository.dart';
 import 'package:snackify/features/products/data/products_repository.dart';
+import 'package:snackify/features/receipts/data/receipts_repository.dart';
 import 'package:snackify/features/reports/data/reports_repository.dart';
 import 'package:snackify/features/staff/data/staff_repository.dart';
 import 'package:snackify/features/stock/data/stock_repository.dart';
@@ -145,9 +148,14 @@ class FakeBackend {
   final List<String> requests = [];
   int _issued = 0;
 
-  /// What each role may do: the same rows as the real database (migration 20261020090000000).
+  /// What each role may do: the same rows as the real database (migrations 20261020090000000,
+  /// 20261021090000000 and 20261021110000000).
   static const rolePermissions = <String, List<String>>{
     'system_admin': [
+      'catalogue.manage',
+      'supplier.manage',
+      'receipt.no_document',
+      'receipt.reverse',
       'organisation.manage',
       'user.manage',
       'role.manage',
@@ -165,6 +173,7 @@ class FakeBackend {
       'report.dashboard',
     ],
     'hq_warehouse_officer': [
+      'supplier.manage',
       'label.print',
       'stock.view',
       'stock.receive',
@@ -177,6 +186,7 @@ class FakeBackend {
       'forecast.use',
     ],
     'hq_finance_officer': [
+      'receipt.verify',
       'stock.view',
       'customer.view',
       'customer.edit_credit_limit',
@@ -276,6 +286,57 @@ class FakeBackend {
       'defaultPrice': price,
       'reorderLevel': reorderLevel,
       'isActive': isActive,
+      'description': null,
+      'category': null,
+      'baseUnit': packUnit,
+      'conversions': <Map<String, Object?>>[],
+    });
+  }
+
+  static const packUnit = {'id': 'unit-pack', 'code': 'pack', 'name': 'Pack'};
+
+  /// Suppliers, categories, warehouses and units, as the catalogue API lists them.
+  final Map<String, List<Map<String, Object?>>> catalogue = {
+    'suppliers': [],
+    'categories': [],
+    'warehouses': [
+      {
+        'id': 'warehouse-main',
+        'code': 'HQ-MAIN',
+        'name': 'Head Office main warehouse',
+        'address': null,
+        'isActive': true,
+        'isDefault': true,
+      },
+    ],
+    'units': [
+      {'id': 'unit-carton', 'code': 'carton', 'name': 'Carton', 'isActive': true},
+      {'id': 'unit-case', 'code': 'case', 'name': 'Case', 'isActive': true},
+      {...packUnit, 'isActive': true},
+    ],
+  };
+
+  /// Adds a supplier directly, as if it already existed on the server.
+  void addSupplier(String code, String name) => catalogue['suppliers']!.add({
+    'id': 'supplier-${catalogue['suppliers']!.length + 1}',
+    'code': code,
+    'name': name,
+    'contactName': null,
+    'phone': null,
+    'email': null,
+    'address': null,
+    'isActive': true,
+  });
+
+  /// Says that one [unitCode] of the product with [sku] holds [baseQuantity] packs.
+  void addConversion(String sku, String unitCode, int baseQuantity) {
+    final product = products.firstWhere((p) => p['sku'] == sku);
+    final unit = catalogue['units']!.firstWhere((u) => u['code'] == unitCode);
+    (product['conversions'] as List<Map<String, Object?>>).add({
+      'unit': {
+        for (final key in ['id', 'code', 'name']) key: unit[key],
+      },
+      'baseQuantity': baseQuantity,
     });
   }
 
@@ -288,8 +349,8 @@ class FakeBackend {
     });
   }
 
-  int onHand(Object? productId) => movements
-      .where((m) => m['productId'] == productId)
+  int onHand(Object? productId, [String owner = 'org-hq']) => movements
+      .where((m) => m['productId'] == productId && (m['owner'] ?? 'org-hq') == owner)
       .fold(0, (sum, m) => sum + (m['quantityDelta'] as int));
 
   late final http.Client client = MockClient(_handle);
@@ -329,6 +390,36 @@ class FakeBackend {
     if (route == 'GET /api/v1/roles') return _roles();
     if (route == 'GET /api/v1/audit-logs') return _audit(request);
     if (route == 'GET /api/v1/products') return _listProducts(request.url.queryParameters);
+    if (RegExp(r'^/api/v1/(suppliers|categories|warehouses|units)').hasMatch(path)) {
+      return _catalogue(request);
+    }
+    if (path.startsWith('/api/v1/receipts')) return _receipts(request);
+    if (request.method == 'GET' && RegExp(r'^/api/v1/products/[^/]+$').hasMatch(path)) {
+      final product = products.where((p) => path.endsWith('/${p['id']}')).firstOrNull;
+      return product == null
+          ? _error(404, 'PRODUCT_NOT_FOUND', 'No product has that id.')
+          : _json(200, {'product': product});
+    }
+    if (request.method == 'PUT' && path.endsWith('/conversions')) {
+      if (!can('product.manage')) {
+        return _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
+      }
+      final product = products.firstWhere((p) => path.contains('/${p['id']}/'));
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      product['conversions'] = [
+        for (final conversion in body['conversions'] as List)
+          {
+            'unit': {
+              for (final key in ['id', 'code', 'name'])
+                key: catalogue['units']!.firstWhere(
+                  (u) => u['id'] == (conversion as Map)['unitId'],
+                )[key],
+            },
+            'baseQuantity': (conversion as Map)['baseQuantity'],
+          },
+      ];
+      return _json(200, {'product': product});
+    }
     if (path.startsWith('/api/v1/products/barcode/') ||
         path.endsWith('/barcode') ||
         path.endsWith('/labels')) {
@@ -622,14 +713,15 @@ class FakeBackend {
     switch (route) {
       case 'GET /api/v1/stock/balance':
         final q = (query['q'] ?? '').toLowerCase();
+        final owner = query['organisationId'] ?? organisation['id'] as String;
         final balances = [
           for (final p in products.where((p) => p['isActive'] == true))
             {
               'product': {..._summary(p), 'isActive': true},
-              'quantityOnHand': onHand(p['id']),
+              'quantityOnHand': onHand(p['id'], owner),
               'reorderLevel': p['reorderLevel'],
               'isLowStock':
-                  p['reorderLevel'] != null && onHand(p['id']) <= (p['reorderLevel'] as int),
+                  p['reorderLevel'] != null && onHand(p['id'], owner) <= (p['reorderLevel'] as int),
             },
         ];
         return _json(200, {
@@ -667,7 +759,15 @@ class FakeBackend {
         if (!can('stock.receive') && !can('stock.opening_balance')) return forbidden;
         final body = jsonDecode(request.body) as Map<String, dynamic>;
         final product = products.firstWhere((p) => p['id'] == body['productId']);
-        if (body['isOpeningBalance'] == true) {
+        // Since StockFlow Stage 4 deliveries need a goods-received note.
+        if (body['isOpeningBalance'] != true) {
+          return _error(
+            409,
+            'USE_GOODS_RECEIVED_NOTE',
+            'Record deliveries with a goods-received note.',
+          );
+        }
+        {
           if (!can('stock.opening_balance')) return forbidden;
           if (movements.any((m) => m['productId'] == product['id'])) {
             return _error(
@@ -701,6 +801,417 @@ class FakeBackend {
           reason: body['reason'] as String?,
         );
         return _json(201, {'movement': movements.last, 'quantityOnHand': before + delta});
+    }
+    return _error(404, 'NOT_FOUND', 'Not found');
+  }
+
+  // ------------------------------------------------------------------ Catalogue
+
+  static const _cataloguePermissions = {
+    'suppliers': 'supplier.manage',
+    'categories': 'catalogue.manage',
+    'warehouses': 'catalogue.manage',
+    'units': 'catalogue.manage',
+  };
+
+  http.Response _catalogue(http.Request request) {
+    final segments = request.url.pathSegments;
+    final kind = segments[2];
+    final items = catalogue[kind]!;
+    if (request.method == 'GET') {
+      final all = request.url.queryParameters['includeInactive'] == 'true';
+      final listed = items.where((item) => all || item['isActive'] == true).toList()
+        ..sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+      return _json(200, {'items': listed});
+    }
+    if (!can(_cataloguePermissions[kind]!)) {
+      return _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
+    }
+    final body = jsonDecode(request.body) as Map<String, dynamic>;
+    if (body['code'] case final String code) {
+      body['code'] = kind == 'units' ? code.toLowerCase() : code.toUpperCase();
+    }
+    final current = segments.length > 3
+        ? items.firstWhere((item) => item['id'] == segments[3])
+        : null;
+    final duplicate = items.any(
+      (item) =>
+          item != current &&
+          ((body['code'] != null && item['code'] == body['code']) ||
+              (kind == 'categories' &&
+                  (item['name'] as String).toLowerCase() ==
+                      (body['name'] as String?)?.toLowerCase())),
+    );
+    if (duplicate) {
+      final field = kind == 'categories' ? 'name' : 'code';
+      return _json(409, {
+        'error': {
+          'code': 'ALREADY_EXISTS',
+          'message': 'Another entry already uses that.',
+          'details': [
+            {
+              'field': field,
+              'message':
+                  'Already used by another ${kind == 'categories' ? 'category' : kind.substring(0, kind.length - 1)}',
+            },
+          ],
+        },
+      });
+    }
+    if (current == null) {
+      final item = <String, Object?>{
+        'id': '${kind.substring(0, kind.length - 1)}-${items.length + 1}',
+        ...body,
+        'isActive': true,
+      };
+      items.add(item);
+      return _json(201, {'item': item});
+    }
+    if (current['isDefault'] == true && body['isActive'] == false) {
+      return _error(409, 'DEFAULT_WAREHOUSE_ACTIVE', 'The default warehouse stays active.');
+    }
+    current.addAll(body);
+    return _json(200, {'item': current});
+  }
+
+  // ------------------------------------------------------------------ Goods received
+
+  /// Goods-received notes as the server stores them, oldest first. Lines keep productId and
+  /// unitId; documents keep their bytes.
+  final List<Map<String, Object?>> grns = [];
+
+  /// When false, stock waits for verification (RECEIPT_STOCK_AVAILABLE_BEFORE_VERIFICATION).
+  bool stockBeforeVerification = true;
+
+  static const _person = {'id': '7f9c2b1e-0000-4000-8000-000000000001', 'fullName': 'Tendai Moyo'};
+
+  Map<String, Object?> _ref(Map<String, Object?> item) => {
+    for (final key in ['id', 'code', 'name']) key: item[key],
+  };
+
+  String _lineTotal(int quantity, String unitCost) {
+    // Exact enough for test amounts: hundredths of a cent, then rounded half up to cents.
+    final parts = unitCost.split('.');
+    final tenThousandths =
+        int.parse(parts[0]) * 10000 +
+        int.parse((parts.length > 1 ? parts[1] : '').padRight(4, '0'));
+    final cents = (quantity * tenThousandths + 50) ~/ 100;
+    return formatCents(cents);
+  }
+
+  Map<String, Object?> _grnJson(Map<String, Object?> grn) {
+    final lines = grn['lines'] as List<Map<String, Object?>>;
+    final documents = grn['documents'] as List<Map<String, Object?>>;
+    final totalCents = lines.fold<int>(0, (sum, l) => sum + parseCents(l['lineTotal'] as String)!);
+    final total = formatCents(totalCents);
+    final status = grn['status'] as String;
+    return {
+      for (final MapEntry(:key, :value) in grn.entries)
+        if (key != 'documents') key: value,
+      'owner': _ref(organisations.firstWhere((o) => o['id'] == grn['ownerId'])),
+      'warehouse': _ref(catalogue['warehouses']!.firstWhere((w) => w['id'] == grn['warehouseId'])),
+      'supplier': grn['supplierId'] == null
+          ? null
+          : _ref(catalogue['suppliers']!.firstWhere((x) => x['id'] == grn['supplierId'])),
+      'currency': 'USD',
+      'total': total,
+      'lineCount': lines.length,
+      'attachmentCount': documents.length,
+      'stockAdded': grn['postedAt'] != null && status != 'REJECTED' && status != 'REVERSED',
+      'flags': {
+        'discrepancies': lines.where((l) => l['discrepancyReason'] != null).length,
+        'documentTotalMismatch': documents.any(
+          (d) =>
+              d['verificationStatus'] != 'REJECTED' &&
+              d['documentTotal'] != null &&
+              parseCents(d['documentTotal'] as String) != totalCents,
+        ),
+        'documentsPending': documents.where((d) => d['verificationStatus'] == 'PENDING').length,
+      },
+      'receivedBy': _person,
+      'lines': [
+        for (final (index, line) in lines.indexed)
+          {
+            ...line,
+            'id': '${grn['id']}-line-${index + 1}',
+            'lineNumber': index + 1,
+            'product': () {
+              final p = products.firstWhere((p) => p['id'] == line['productId']);
+              return {
+                'id': p['id'],
+                'sku': p['sku'],
+                'description': '${p['name']} — ${p['flavour']} — ${p['size']}',
+              };
+            }(),
+            'unit': _ref(catalogue['units']!.firstWhere((u) => u['id'] == line['unitId'])),
+          },
+      ],
+      'attachments': [
+        for (final d in documents) {...d}..remove('bytes'),
+      ],
+    };
+  }
+
+  /// The receipt's stock goes in (or, with [sign] -1, comes back out) for its owner.
+  void _moveGrnStock(Map<String, Object?> grn, int sign, String type) {
+    for (final line in grn['lines'] as List<Map<String, Object?>>) {
+      final quantity = line['baseQuantityReceived'] as int;
+      if (quantity == 0) continue;
+      _addMovement(
+        line['productId'],
+        type,
+        sign * quantity,
+        toApiDate(today()),
+        reference: grn['grnNumber'] as String,
+      );
+      movements.last['owner'] = grn['ownerId'];
+    }
+  }
+
+  http.Response _receipts(http.Request request) {
+    final forbidden = _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
+    final notFound = _error(404, 'RECEIPT_NOT_FOUND', 'No goods-received note has that id.');
+    final segments = request.url.pathSegments; // api, v1, receipts, id?, action?, ...
+    final visible = grns.where(
+      (g) => organisation['type'] == 'HQ' || g['ownerId'] == organisation['id'],
+    );
+    Map<String, Object?>? grn;
+    if (segments.length > 3) {
+      grn = visible.where((g) => g['id'] == segments[3]).firstOrNull;
+      if (grn == null) return notFound;
+    }
+    final action = segments.length > 4 ? segments[4] : null;
+    final route = '${request.method} ${action ?? (grn == null ? '' : ':id')}';
+    String wrongStatus(String what) =>
+        'This goods-received note is ${(grn!['status'] as String).toLowerCase().replaceAll('_', ' ')}, so it cannot be $what.';
+
+    switch (route) {
+      case 'GET ':
+        final status = request.url.queryParameters['status'];
+        final listed = visible
+            .where((g) => status == null || g['status'] == status)
+            .toList()
+            .reversed
+            .map(_grnJson)
+            .toList();
+        return _json(200, {'receipts': listed, 'total': listed.length});
+      case 'GET :id':
+        return _json(200, {'receipt': _grnJson(grn!)});
+      case 'GET pdf':
+        return http.Response.bytes(
+          utf8.encode('%PDF-1.4 goods received note ${grn!['grnNumber']}'),
+          200,
+          headers: {'content-type': 'application/pdf'},
+        );
+      case 'GET attachments':
+        final document = (grn!['documents'] as List<Map<String, Object?>>).firstWhere(
+          (d) => d['id'] == segments[5],
+        );
+        return http.Response.bytes(document['bytes'] as List<int>, 200);
+      case 'POST ' || 'PUT :id':
+        if (!can('stock.receive')) return forbidden;
+        if (grn != null && grn['status'] != 'DRAFT') {
+          return _error(409, 'RECEIPT_WRONG_STATUS', wrongStatus('changed'));
+        }
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        final lines = <Map<String, Object?>>[];
+        for (final (index, line) in (body['lines'] as List).cast<Map<String, dynamic>>().indexed) {
+          final product = products.firstWhere((p) => p['id'] == line['productId']);
+          final unitId = line['unitId'] as String;
+          final perUnit = unitId == (product['baseUnit'] as Map)['id']
+              ? 1
+              : (product['conversions'] as List<Map<String, Object?>>)
+                        .where((c) => (c['unit'] as Map)['id'] == unitId)
+                        .firstOrNull?['baseQuantity']
+                    as int?;
+          if (perUnit == null) {
+            return _fieldError(
+              'lines.$index.unitId',
+              'This product has no conversion for that unit',
+            );
+          }
+          lines.add({
+            'productId': product['id'],
+            'unitId': unitId,
+            'quantityPurchased': line['quantityPurchased'],
+            'quantityReceived': line['quantityReceived'],
+            'baseQuantityReceived': (line['quantityReceived'] as int) * perUnit,
+            'unitCost': line['unitCost'],
+            'lineTotal': _lineTotal(line['quantityPurchased'] as int, line['unitCost'] as String),
+            'batchNumber': line['batchNumber'],
+            'expiryDate': line['expiryDate'],
+            'discrepancyReason': line['discrepancyReason'],
+            'notes': line['notes'],
+          });
+        }
+        final fields = <String, Object?>{
+          'ownerId': body['organisationId'] ?? organisation['id'],
+          'warehouseId': body['warehouseId'] ?? 'warehouse-main',
+          'supplierId': body['supplierId'],
+          'supplierInvoiceNumber': body['supplierInvoiceNumber'],
+          'purchaseDate': body['purchaseDate'],
+          'receivedDate': body['receivedDate'],
+          'notes': body['notes'],
+          'lines': lines,
+        };
+        if (grn == null) {
+          grn = {
+            'id': 'grn-${grns.length + 1}',
+            'grnNumber': 'GRN${(grns.length + 1).toString().padLeft(6, '0')}',
+            'status': 'DRAFT',
+            'documents': <Map<String, Object?>>[],
+            'postedAt': null,
+            'verifiedBy': null,
+            'verificationNotes': null,
+            'rejectedReason': null,
+            'reversalReason': null,
+            'noDocumentReason': null,
+            ...fields,
+          };
+          grns.add(grn);
+          return _json(201, {'receipt': _grnJson(grn)});
+        }
+        grn.addAll(fields);
+        return _json(200, {'receipt': _grnJson(grn)});
+      case 'POST attachments' when segments.length == 5:
+        if (!can('stock.receive')) return forbidden;
+        if (grn!['status'] != 'DRAFT' && grn['status'] != 'PENDING_VERIFICATION') {
+          return _error(409, 'RECEIPT_WRONG_STATUS', wrongStatus('given more documents'));
+        }
+        final bytes = request.bodyBytes;
+        final filename = request.url.queryParameters['filename']!;
+        final String? type =
+            bytes.length >= 5 && utf8.decode(bytes.sublist(0, 5), allowMalformed: true) == '%PDF-'
+            ? 'application/pdf'
+            : bytes.length >= 3 && bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff
+            ? 'image/jpeg'
+            : bytes.length >= 4 && bytes[0] == 0x89 && bytes[1] == 0x50
+            ? 'image/png'
+            : null;
+        if (type == null) {
+          return _error(
+            415,
+            'UNSUPPORTED_DOCUMENT',
+            'Only PDF, JPEG and PNG documents are accepted (this file is something else).',
+          );
+        }
+        final documents = grn['documents'] as List<Map<String, Object?>>;
+        documents.add({
+          'id': '${grn['id']}-doc-${documents.length + 1}',
+          'filename': filename,
+          'mimeType': type,
+          'sizeBytes': bytes.length,
+          'uploadedBy': _person,
+          'uploadedAt': '2026-10-20T08:00:00Z',
+          'verificationStatus': 'PENDING',
+          'reviewedBy': null,
+          'reviewedAt': null,
+          'reviewNotes': null,
+          'documentTotal': null,
+          'bytes': bytes,
+        });
+        return _json(201, {'receipt': _grnJson(grn)});
+      case 'POST attachments':
+        if (!can('receipt.verify')) return forbidden;
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        final document = (grn!['documents'] as List<Map<String, Object?>>).firstWhere(
+          (d) => d['id'] == segments[5],
+        );
+        if (document['verificationStatus'] != 'PENDING') {
+          return _error(
+            409,
+            'DOCUMENT_ALREADY_REVIEWED',
+            'This document has already been reviewed.',
+          );
+        }
+        document
+          ..['verificationStatus'] = body['status']
+          ..['reviewNotes'] = body['notes']
+          ..['documentTotal'] = body['documentTotal']
+          ..['reviewedBy'] = _person;
+        return _json(200, {'receipt': _grnJson(grn)});
+      case 'POST submit':
+        if (!can('stock.receive')) return forbidden;
+        if (grn!['status'] != 'DRAFT') {
+          return _error(409, 'RECEIPT_WRONG_STATUS', wrongStatus('submitted'));
+        }
+        if (grn['supplierId'] == null) {
+          return _fieldError('supplierId', 'Choose the supplier before submitting');
+        }
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        final documents = (grn['documents'] as List<Map<String, Object?>>).where(
+          (d) => d['verificationStatus'] != 'REJECTED',
+        );
+        if (documents.isEmpty) {
+          if (body['noDocumentReason'] == null) {
+            return _error(
+              409,
+              'DOCUMENT_REQUIRED',
+              'Attach the supplier invoice or delivery note before submitting.',
+            );
+          }
+          if (!can('receipt.no_document')) return forbidden;
+          grn['noDocumentReason'] = body['noDocumentReason'];
+        }
+        grn['status'] = 'PENDING_VERIFICATION';
+        if (stockBeforeVerification) {
+          _moveGrnStock(grn, 1, 'receipt');
+          grn['postedAt'] = '2026-10-20T08:00:00Z';
+        }
+        return _json(200, {'receipt': _grnJson(grn)});
+      case 'POST verify':
+        if (!can('receipt.verify')) return forbidden;
+        if (grn!['status'] != 'PENDING_VERIFICATION') {
+          return _error(409, 'RECEIPT_WRONG_STATUS', wrongStatus('verified'));
+        }
+        final documents = grn['documents'] as List<Map<String, Object?>>;
+        if (documents.any((d) => d['verificationStatus'] == 'PENDING')) {
+          return _error(
+            409,
+            'DOCUMENTS_NOT_REVIEWED',
+            'Verify or reject every document before verifying the receipt.',
+          );
+        }
+        if (!documents.any((d) => d['verificationStatus'] == 'VERIFIED') &&
+            grn['noDocumentReason'] == null) {
+          return _error(409, 'NO_VERIFIED_DOCUMENT', 'No document has been verified.');
+        }
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        grn
+          ..['status'] = grn['postedAt'] == null ? 'VERIFIED' : 'POSTED'
+          ..['verifiedBy'] = _person
+          ..['verificationNotes'] = body['notes'];
+        return _json(200, {'receipt': _grnJson(grn)});
+      case 'POST post':
+        if (!can('stock.receive')) return forbidden;
+        if (grn!['status'] != 'VERIFIED') {
+          return _error(409, 'RECEIPT_WRONG_STATUS', wrongStatus('posted'));
+        }
+        _moveGrnStock(grn, 1, 'receipt');
+        grn
+          ..['status'] = 'POSTED'
+          ..['postedAt'] = '2026-10-20T09:00:00Z';
+        return _json(200, {'receipt': _grnJson(grn)});
+      case 'POST reject':
+        if (!can('receipt.verify')) return forbidden;
+        if (grn!['status'] != 'PENDING_VERIFICATION') {
+          return _error(409, 'RECEIPT_WRONG_STATUS', wrongStatus('rejected'));
+        }
+        if (grn['postedAt'] != null) _moveGrnStock(grn, -1, 'reversal');
+        grn
+          ..['status'] = 'REJECTED'
+          ..['rejectedReason'] = (jsonDecode(request.body) as Map)['reason'];
+        return _json(200, {'receipt': _grnJson(grn)});
+      case 'POST reverse':
+        if (!can('receipt.reverse')) return forbidden;
+        if (grn!['status'] != 'POSTED') {
+          return _error(409, 'RECEIPT_WRONG_STATUS', wrongStatus('reversed'));
+        }
+        _moveGrnStock(grn, -1, 'reversal');
+        grn
+          ..['status'] = 'REVERSED'
+          ..['reversalReason'] = (jsonDecode(request.body) as Map)['reason'];
+        return _json(200, {'receipt': _grnJson(grn)});
     }
     return _error(404, 'NOT_FOUND', 'Not found');
   }
@@ -758,6 +1269,14 @@ class FakeBackend {
     }
     product.addAll(body);
     product['defaultPrice'] = double.parse(body['defaultPrice'] as String).toStringAsFixed(2);
+    if (body.containsKey('categoryId')) {
+      final category = catalogue['categories']!
+          .where((c) => c['id'] == body['categoryId'])
+          .firstOrNull;
+      product['category'] = category == null
+          ? null
+          : {'id': category['id'], 'name': category['name']};
+    }
     return _json(200, {'product': product});
   }
 
@@ -1930,7 +2449,15 @@ class FakeBackend {
 }
 
 class TestApp {
-  TestApp(this.backend, this.api, this.tokenStore, this.auth, this.sharedPdfs, this.scanner);
+  TestApp(
+    this.backend,
+    this.api,
+    this.tokenStore,
+    this.auth,
+    this.sharedPdfs,
+    this.scanner,
+    this.documents,
+  );
 
   final FakeBackend backend;
   final ApiClient api;
@@ -1942,6 +2469,9 @@ class TestApp {
 
   /// The pretend barcode scanner the app uses.
   final FakeScanner scanner;
+
+  /// The pretend file chooser for supplier documents.
+  final FakeDocumentPicker documents;
 }
 
 /// Starts the whole app against [FakeBackend]. With [signedIn], a valid session is
@@ -1964,6 +2494,7 @@ Future<TestApp> pumpSnackify(
   final auth = AuthController(AuthRepository(api: api, tokenStore: store));
   final sharedPdfs = <(String, String)>[];
   final scanner = FakeScanner();
+  final documents = FakeDocumentPicker();
   final services = AppServices(
     checkBackendHealth: () async => apiHealthy,
     products: ProductsRepository(api),
@@ -1977,14 +2508,18 @@ Future<TestApp> pumpSnackify(
     staff: StaffRepository(api),
     organisations: OrganisationsRepository(api),
     audit: AuditRepository(api),
-    sharePdf: (bytes, filename) async => sharedPdfs.add((filename, utf8.decode(bytes))),
+    receipts: ReceiptsRepository(api),
+    catalogue: CatalogueRepository(api),
+    sharePdf: (bytes, filename) async =>
+        sharedPdfs.add((filename, utf8.decode(bytes, allowMalformed: true))),
     readBarcode: scanner.read,
+    pickDocuments: documents.pick,
   );
 
   await tester.pumpWidget(SnackifyApp(auth: auth, services: services));
   auth.restore();
   await tester.pumpAndSettle();
-  return TestApp(server, api, store, auth, sharedPdfs, scanner);
+  return TestApp(server, api, store, auth, sharedPdfs, scanner, documents);
 }
 
 /// Fills in the login form and presses "Sign in".
@@ -1998,12 +2533,22 @@ Future<void> signInThroughForm(WidgetTester tester, String username, String pass
 /// Opens a section from the menu (drawer on phones, sidebar on wide screens).
 Future<void> openSection(WidgetTester tester, String label) async {
   final menuButton = find.byTooltip('Open navigation menu');
-  if (menuButton.evaluate().isNotEmpty) {
+  final onPhone = menuButton.evaluate().isNotEmpty;
+  if (onPhone) {
     await tester.tap(menuButton);
     await tester.pumpAndSettle();
   }
-  // The menu scrolls on small screens.
-  await tester.ensureVisible(find.text(label).first);
+  // The menu scrolls, and builds entries only as they come into view.
+  await tester.scrollUntilVisible(
+    find.text(label),
+    80,
+    scrollable: find
+        .descendant(
+          of: find.byType(onPhone ? Drawer : ListView).first,
+          matching: find.byType(Scrollable),
+        )
+        .first,
+  );
   await tester.pumpAndSettle();
   await tester.tap(find.text(label).first);
   await tester.pumpAndSettle();
@@ -2045,4 +2590,14 @@ class FakeScanner {
     scans++;
     return queue.isEmpty ? null : queue.removeAt(0);
   }
+}
+
+/// Stands in for the device's file chooser: each use returns the next queued files (none,
+/// as when the user cancels, once the queue is empty).
+class FakeDocumentPicker {
+  final List<List<PickedDocument>> queue = [];
+
+  void willPick(List<PickedDocument> documents) => queue.add(documents);
+
+  Future<List<PickedDocument>> pick() async => queue.isEmpty ? [] : queue.removeAt(0);
 }

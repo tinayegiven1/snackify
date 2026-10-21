@@ -1,3 +1,5 @@
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import pg from 'pg';
 import { createApp } from '../app.js';
 import type { AppConfig } from '../config/env.js';
@@ -15,6 +17,11 @@ export const testConfig: AppConfig = {
   business: { name: 'Snackify Test Foods', contact: '12 Example Road, Harare' },
   webAppDir: null,
   trustProxyHops: 0,
+  receipts: { stockAvailableBeforeVerification: true, documentRequired: true },
+  attachments: {
+    storageDir: join(tmpdir(), 'snackify-test-attachments'),
+    maxBytes: 64 * 1024,
+  },
 };
 
 /**

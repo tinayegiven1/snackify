@@ -7,6 +7,7 @@ import { configurePgTypes } from './database/pg-types.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { notFoundHandler } from './middleware/not-found.js';
 import { auditRouter } from './modules/audit/audit.routes.js';
+import { catalogueRouters } from './modules/catalogue/catalogue.routes.js';
 import { authRouter } from './modules/auth/auth.routes.js';
 import { customersRouter } from './modules/customers/customers.routes.js';
 import { dispatchesRouter } from './modules/dispatches/dispatches.routes.js';
@@ -16,6 +17,7 @@ import { invoicesRouter } from './modules/invoices/invoices.routes.js';
 import { organisationsRouter } from './modules/organisations/organisations.routes.js';
 import { balancesRouter, paymentsRouter } from './modules/payments/payments.routes.js';
 import { productsRouter } from './modules/products/products.routes.js';
+import { receiptsRouter } from './modules/receipts/receipts.routes.js';
 import { reportsRouter } from './modules/reports/reports.routes.js';
 import { rolesRouter } from './modules/roles/roles.routes.js';
 import { stockRouter } from './modules/stock/stock.routes.js';
@@ -57,7 +59,11 @@ export function createApp(config: AppConfig, deps: AppDependencies): Express {
   app.use('/api/v1/roles', rolesRouter(deps.db));
   app.use('/api/v1/audit-logs', auditRouter(deps.db));
   app.use('/api/v1/products', productsRouter(deps.db));
+  for (const [path, router] of Object.entries(catalogueRouters(deps.db))) {
+    app.use(`/api/v1/${path}`, router);
+  }
   app.use('/api/v1/stock', stockRouter(deps.db, config.businessTimezone));
+  app.use('/api/v1/receipts', receiptsRouter(deps.db, config));
   app.use('/api/v1/customers', customersRouter(deps.db));
   app.use('/api/v1/dispatches', dispatchesRouter(deps.db, config.businessTimezone));
   app.use('/api/v1/invoices', invoicesRouter(deps.db, config));

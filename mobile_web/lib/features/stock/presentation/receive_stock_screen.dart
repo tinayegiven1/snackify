@@ -15,21 +15,19 @@ import '../../../shared/widgets/message_view.dart';
 /// The result of recording a receipt, for the confirmation message.
 typedef ReceivedStock = ({StockReceipt receipt, int quantityOnHand});
 
-/// Records stock that has arrived. Pops with [ReceivedStock] when saved.
+/// Records a product's opening balance: the stock already on the shelf when Snackify started
+/// (administrators only). Deliveries are recorded as goods-received notes instead. Pops with
+/// [ReceivedStock] when saved.
 class ReceiveStockScreen extends StatefulWidget {
   const ReceiveStockScreen({
     super.key,
     required this.stock,
     required this.products,
-    required this.canRecordOpeningBalance,
     required this.readBarcode,
   });
 
   final StockRepository stock;
   final ProductsRepository products;
-
-  /// Only admins may record opening balances; the server enforces this too.
-  final bool canRecordOpeningBalance;
   final BarcodeReader readBarcode;
 
   @override
@@ -44,7 +42,6 @@ class _ReceiveStockScreenState extends State<ReceiveStockScreen> {
   Product? _product;
   DateTime _receivedDate = today();
   DateTime? _expiryDate;
-  bool _isOpeningBalance = false;
 
   bool _saving = false;
   String? _error;
@@ -130,7 +127,7 @@ class _ReceiveStockScreenState extends State<ReceiveStockScreen> {
       supplierReference: _supplierReference.text.trim().isEmpty
           ? null
           : _supplierReference.text.trim(),
-      isOpeningBalance: _isOpeningBalance,
+      isOpeningBalance: true,
     );
 
     setState(() => _saving = true);
@@ -151,7 +148,7 @@ class _ReceiveStockScreenState extends State<ReceiveStockScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Receive stock')),
+      appBar: AppBar(title: const Text('Opening balance')),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
@@ -163,6 +160,12 @@ class _ReceiveStockScreenState extends State<ReceiveStockScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    const Text(
+                      'Stock that was already on the shelf before Snackify was used. Only '
+                      'allowed while the product has no stock records. Record deliveries '
+                      'with "Receive stock" instead.',
+                    ),
+                    const SizedBox(height: 16),
                     if (_error != null) ...[
                       ErrorBanner(message: _error!),
                       const SizedBox(height: 16),
@@ -191,7 +194,7 @@ class _ReceiveStockScreenState extends State<ReceiveStockScreen> {
                       keyboardType: TextInputType.number,
                       inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                       decoration: InputDecoration(
-                        labelText: 'Quantity received (packs)',
+                        labelText: 'Quantity on hand (packs)',
                         border: const OutlineInputBorder(),
                         errorText: _serverErrors['quantity'],
                       ),
@@ -205,7 +208,7 @@ class _ReceiveStockScreenState extends State<ReceiveStockScreen> {
                     ),
                     const SizedBox(height: 16),
                     _PickerField(
-                      label: 'Date received',
+                      label: 'Date counted',
                       value: formatApiDate(toApiDate(_receivedDate)),
                       icon: Icons.event_outlined,
                       errorText: _serverErrors['receivedDate'],
@@ -247,19 +250,6 @@ class _ReceiveStockScreenState extends State<ReceiveStockScreen> {
                         errorText: _serverErrors['supplierReference'],
                       ),
                     ),
-                    if (widget.canRecordOpeningBalance)
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('Opening balance'),
-                        subtitle: const Text(
-                          'Stock that was already on the shelf before Snackify was used. '
-                          'Only allowed while the product has no stock records.',
-                        ),
-                        value: _isOpeningBalance,
-                        onChanged: _saving
-                            ? null
-                            : (value) => setState(() => _isOpeningBalance = value),
-                      ),
                     const SizedBox(height: 16),
                     FilledButton(
                       onPressed: _saving ? null : _save,
@@ -269,7 +259,7 @@ class _ReceiveStockScreenState extends State<ReceiveStockScreen> {
                               dimension: 20,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : const Text('Record receipt'),
+                          : const Text('Record opening balance'),
                     ),
                   ],
                 ),

@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import '../../../core/config/app_config.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/scanning/barcode_reader.dart';
+import '../../catalogue/data/catalogue_repository.dart';
+import '../../catalogue/domain/catalogue_models.dart';
 import '../data/products_repository.dart';
 import '../domain/product.dart';
 import '../../../shared/widgets/message_view.dart';
@@ -19,11 +21,15 @@ class ProductFormScreen extends StatefulWidget {
     super.key,
     required this.repository,
     required this.readBarcode,
+    required this.catalogue,
     this.product,
   });
 
   final ProductsRepository repository;
   final BarcodeReader readBarcode;
+
+  /// Categories and units to choose from.
+  final CatalogueRepository catalogue;
   final Product? product;
 
   @override
@@ -41,6 +47,57 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   late final _reorderLevel = TextEditingController(text: widget.product?.reorderLevel?.toString());
   late final _safetyStock = TextEditingController(text: '${widget.product?.safetyStock ?? 0}');
   late bool _isActive = widget.product?.isActive ?? true;
+  late final _details = TextEditingController(text: widget.product?.details);
+  late String? _categoryId = widget.product?.category?.id;
+
+  /// Larger units and how many base units each holds, e.g. carton → 24.
+  late final List<({String? unitId, TextEditingController quantity})> _conversions = [
+    for (final unit in widget.product?.conversions ?? const <ProductUnit>[])
+      (unitId: unit.id, quantity: TextEditingController(text: '${unit.baseQuantity}')),
+  ];
+  List<CatalogueItem>? _categories;
+  List<CatalogueItem>? _units;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadChoices();
+  }
+
+  Future<void> _loadChoices() async {
+    try {
+      final categories = await widget.catalogue.list(CatalogueKind.categories);
+      final units = await widget.catalogue.list(CatalogueKind.units);
+      if (mounted) {
+        setState(() {
+          _categories = categories;
+          _units = units;
+        });
+      }
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    }
+  }
+
+  String get _baseUnitId => widget.product?.baseUnit.id ?? _baseUnitFromList ?? '';
+
+  String? get _baseUnitFromList => _units?.where((unit) => unit.code == 'pack').firstOrNull?.id;
+
+  Map<String, int> get _conversionValues => {
+    for (final row in _conversions)
+      if (row.unitId != null && int.tryParse(row.quantity.text.trim()) != null)
+        row.unitId!: int.parse(row.quantity.text.trim()),
+  };
+
+  bool get _conversionsChanged {
+    final before = {
+      for (final unit in widget.product?.conversions ?? const <ProductUnit>[])
+        unit.id: unit.baseQuantity,
+    };
+    final after = _conversionValues;
+    return before.length != after.length ||
+        after.entries.any((entry) => before[entry.key] != entry.value);
+  }
 
   bool _saving = false;
   String? _error;
@@ -96,6 +153,8 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       _price,
       _reorderLevel,
       _safetyStock,
+      _details,
+      for (final row in _conversions) row.quantity,
     ]) {
       controller.dispose();
     }
@@ -119,13 +178,18 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       reorderLevel: int.tryParse(_reorderLevel.text.trim()),
       safetyStock: int.tryParse(_safetyStock.text.trim()) ?? 0,
       isActive: _isActive,
+      details: _details.text.trim().isEmpty ? null : _details.text.trim(),
+      categoryId: _categoryId,
     );
 
     setState(() => _saving = true);
     try {
-      final saved = _isNew
+      var saved = _isNew
           ? await widget.repository.create(input)
           : await widget.repository.update(widget.product!.id, input);
+      if (_conversionsChanged) {
+        saved = await widget.repository.setConversions(saved.id, _conversionValues);
+      }
       if (mounted) Navigator.of(context).pop(saved);
     } on ApiException catch (error) {
       if (!mounted) return;
@@ -166,6 +230,35 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                     ),
                     _textField('flavour', _flavour, 'Flavour', hint: 'e.g. BBQ', maxLength: 60),
                     _textField('size', _size, 'Size', hint: 'e.g. Small or 50 g', maxLength: 40),
+                    _textField(
+                      'description',
+                      _details,
+                      'Description (optional)',
+                      hint: 'e.g. Thick-cut, 125 g',
+                      maxLength: 500,
+                      required: false,
+                    ),
+                    if (_categories case final categories?)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 16),
+                        child: DropdownButtonFormField<String?>(
+                          initialValue: _categoryId,
+                          isExpanded: true,
+                          decoration: InputDecoration(
+                            labelText: 'Category (optional)',
+                            border: const OutlineInputBorder(),
+                            errorText: _serverErrors['categoryId'],
+                          ),
+                          items: [
+                            const DropdownMenuItem(value: null, child: Text('No category')),
+                            for (final category in categories)
+                              DropdownMenuItem(value: category.id, child: Text(category.name)),
+                          ],
+                          onChanged: _saving
+                              ? null
+                              : (value) => setState(() => _categoryId = value),
+                        ),
+                      ),
                     _textField(
                       'sku',
                       _sku,
@@ -246,6 +339,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                           ? null
                           : 'Use a whole number up to 1,000,000',
                     ),
+                    if (_units case final units?) ..._conversionRows(units),
                     if (!_isNew)
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
@@ -276,6 +370,97 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
         ),
       ),
     );
+  }
+
+  /// The units the product is also bought in, e.g. "1 carton = 24 packs".
+  List<Widget> _conversionRows(List<CatalogueItem> units) {
+    final baseName = widget.product?.baseUnit.name.toLowerCase() ?? 'pack';
+    final choices = units.where((unit) => unit.id != _baseUnitId).toList();
+    return [
+      Text('Bought in larger units', style: Theme.of(context).textTheme.titleSmall),
+      Text(
+        'Stock is counted in ${baseName}s. Add cartons or cases so deliveries can be '
+        'entered in them.',
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
+      if (_serverErrors.entries.where((e) => e.key.startsWith('conversions')).firstOrNull
+          case final problem?)
+        Text(problem.value, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+      const SizedBox(height: 8),
+      for (final (index, row) in _conversions.indexed)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(padding: EdgeInsets.only(top: 16), child: Text('1 ')),
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  initialValue: row.unitId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Unit',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: [
+                    for (final unit in choices)
+                      DropdownMenuItem(value: unit.id, child: Text(unit.name)),
+                  ],
+                  validator: (value) {
+                    if (value == null) return 'Choose a unit';
+                    final uses = _conversions.where((other) => other.unitId == value).length;
+                    return uses > 1 ? 'Listed twice' : null;
+                  },
+                  onChanged: _saving
+                      ? null
+                      : (value) => setState(
+                          () => _conversions[index] = (unitId: value, quantity: row.quantity),
+                        ),
+                ),
+              ),
+              const Padding(padding: EdgeInsets.fromLTRB(8, 16, 8, 0), child: Text('=')),
+              SizedBox(
+                width: 110,
+                child: TextFormField(
+                  controller: row.quantity,
+                  enabled: !_saving,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: InputDecoration(
+                    labelText: '${baseName}s',
+                    border: const OutlineInputBorder(),
+                  ),
+                  validator: (value) {
+                    final quantity = int.tryParse((value ?? '').trim());
+                    if (quantity == null || quantity < 2 || quantity > 100000) return '2–100,000';
+                    return null;
+                  },
+                ),
+              ),
+              IconButton(
+                tooltip: 'Remove this unit',
+                icon: const Icon(Icons.close),
+                onPressed: _saving
+                    ? null
+                    : () => setState(() => _conversions.removeAt(index).quantity.dispose()),
+              ),
+            ],
+          ),
+        ),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: _saving || choices.isEmpty
+              ? null
+              : () => setState(
+                  () => _conversions.add((unitId: null, quantity: TextEditingController())),
+                ),
+          icon: const Icon(Icons.add),
+          label: const Text('Add a unit'),
+        ),
+      ),
+      const SizedBox(height: 8),
+    ];
   }
 
   /// A text field that is required by default, trims input before checking it, and shows

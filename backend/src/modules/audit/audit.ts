@@ -28,7 +28,19 @@ export type AuditAction =
   | 'payment.recorded'
   | 'payment.allocated'
   | 'payment.voided'
-  | 'forecast.run';
+  | 'forecast.run'
+  | 'catalogue.created'
+  | 'catalogue.updated'
+  | 'receipt.created'
+  | 'receipt.updated'
+  | 'receipt.submitted'
+  | 'receipt.no_document'
+  | 'receipt.verified'
+  | 'receipt.posted'
+  | 'receipt.rejected'
+  | 'receipt.reversed'
+  | 'receipt.document_added'
+  | 'receipt.document_reviewed';
 
 export interface AuditEntry {
   /** The signed-in user who acted, or null for setup commands and unknown users. */
@@ -43,7 +55,9 @@ export interface AuditEntry {
     | 'dispatch'
     | 'invoice'
     | 'payment'
-    | 'forecast';
+    | 'forecast'
+    | 'catalogue'
+    | 'receipt';
   entityId?: string;
   /** Extra facts about the action. Never include passwords, tokens or other secrets. */
   details?: Record<string, unknown>;

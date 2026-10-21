@@ -4,7 +4,7 @@ import type { Invoice } from './invoices.service.js';
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /** "2026-10-12" -> "12 Oct 2026". */
-function displayDate(date: string): string {
+export function displayDate(date: string): string {
   const [year, month, day] = date.split('-').map(Number);
   return `${day} ${MONTHS[(month ?? 1) - 1]} ${year}`;
 }

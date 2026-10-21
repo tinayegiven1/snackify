@@ -371,6 +371,13 @@ JSON number (`0.5`) is accepted; it must be 0 or more with at most 2 decimal pla
 | `reorderLevel` | Optional whole number (packs); stock at or below it counts as low. `null` for no alert |
 | `safetyStock`  | Optional whole number (packs), default 0: kept on top of forecast demand when suggesting how much to receive |
 | `isActive`     | Changes only; `false` hides the product from normal lists             |
+| `description`  | Optional free text, up to 500 characters (StockFlow Stage 4)          |
+| `categoryId`   | Optional; an active category from `/api/v1/categories`, or `null`     |
+| `baseUnitId`   | Optional; the unit stock is counted in (default: pack). Cannot change once the product has stock records (**409** `BASE_UNIT_IN_USE`) |
+
+Each product also returns `category` (`{ id, name }` or `null`), `baseUnit` (`{ id, code,
+name }`) and `conversions`: the larger units it is bought in, e.g.
+`[{ "unit": { "code": "carton", … }, "baseQuantity": 24 }]` (1 carton = 24 packs).
 
 The same name + flavour + size cannot be registered twice (letter case is ignored).
 
@@ -442,6 +449,13 @@ Send only the fields to change. Leaving `barcode` out keeps it; `"barcode": null
 `{"changes": {"defaultPrice": {"from": "0.50", "to": "0.55"}}}`. Earlier sales keep the
 price they were made at; only new transactions use the new default.
 
+### `PUT /api/v1/products/:id/conversions` (`product.manage`)
+
+`{ "conversions": [{ "unitId": "…", "baseQuantity": 24 }] }` replaces the product's
+conversions. `baseQuantity` is a whole number of base units, 2–100,000; the base unit itself
+cannot be listed. Quantities entered in a unit are converted exactly (3 cartons = 72 packs);
+a unit without a conversion is refused.
+
 ### Barcodes (spec 6.7)
 
 A barcode identifies a product variation; it does not prove how many packs are physically
@@ -500,20 +514,30 @@ be in the future.
 it: every batch and movement records its owner. The `GET` endpoints below take an optional
 `organisationId` (default: the user's own organisation); Head Office staff may ask for any
 organisation, a subsidiary's staff only their own (another organisation answers **404**).
-Receipts, adjustments and dispatches recorded by today's screens are the Head Office's stock;
-choosing another owner when receiving arrives in Stage 4.
+Stock arrives through **goods-received notes** (below), which say whose stock it is; a
+subsidiary-owned receipt adds only to that subsidiary's balance. Dispatches are the Head
+Office's stock.
+
+Balances are kept per product, owner, warehouse and delivery batch (`stock_balances`), updated
+in the same transaction as each movement; they can never go below zero. Stock leaves the
+earliest-expiring batch first (FEFO; batches without an expiry date last).
 
 | Action                                      | Permission                                |
 | ------------------------------------------- | ----------------------------------------- |
 | View balances, receipts and movements       | `stock.view` (own organisation, or any for the Head Office) |
-| Receive stock                               | `stock.receive`                           |
+| Receive stock (goods-received notes)        | `stock.receive`                           |
 | Record an opening balance                   | `stock.opening_balance`                   |
 | Damage and corrections (adjustments)        | `stock.adjust`, with a reason             |
 
-Movement types: `opening_balance`, `receipt`, `damage`, `adjustment` (and later `dispatch`,
-`customer_return`, `reversal`).
+Movement types: `opening_balance`, `receipt`, `damage`, `adjustment`, `dispatch`,
+`customer_return`, `reversal`, and (reserved for later stages) `custody_release`,
+`internal_transfer`, `return_to_supplier`. Every movement has a unique reference such as
+`M0000042`.
 
-### `POST /api/v1/stock/receipts`
+### `POST /api/v1/stock/receipts` (opening balances only)
+
+Since StockFlow Stage 4 deliveries are recorded as goods-received notes; this endpoint only
+records **opening balances** and refuses anything else with **409** `USE_GOODS_RECEIVED_NOTE`.
 
 ```json
 {
@@ -523,11 +547,11 @@ Movement types: `opening_balance`, `receipt`, `damage`, `adjustment` (and later 
   "batchNumber": "L2026-10A",
   "expiryDate": "2027-02-01",
   "supplierReference": "Delivery note 1042",
-  "isOpeningBalance": false
+  "isOpeningBalance": true
 }
 ```
 
-Only `productId` and `quantity` (a whole number, 1–1,000,000) are required. `receivedDate`
+`productId`, `quantity` (a whole number, 1–1,000,000) and `isOpeningBalance: true` are required. `receivedDate`
 defaults to today; `expiryDate` may not be before it. Empty optional text counts as "not given".
 
 An **opening balance** (`isOpeningBalance: true`, admins only) records stock that was already on
@@ -567,6 +591,9 @@ Query: `from`, `to` (default: today), optional `productId`. At most 366 days.
 
 `type` is `damage` (must be negative) or `adjustment` (either direction, e.g. after a stock
 count). `reason` is required (3–500 characters). `businessDate` is optional (default today).
+Optional `organisationId`, `warehouseId` and `batchId` say whose stock, where, and which
+delivery (defaults: the user's own organisation, the default warehouse; removals take the
+earliest-expiring batches first, additions go to unbatched stock unless a batch is named).
 Refused with **409** `INSUFFICIENT_STOCK` if it would leave less than zero. Recorded in the audit
 log as `stock.adjusted` with the balance before and after.
 
@@ -583,7 +610,9 @@ Query: optional `q` (as for products), `lowStockOnly=true`, `includeInactive=tru
       "product": { "id": "…", "sku": "MP-CH-S", "name": "Maize Puffs", "flavour": "Cheese", "size": "Small", "isActive": true },
       "quantityOnHand": 20,
       "reorderLevel": 50,
-      "isLowStock": true
+      "isLowStock": true,
+      "quantityReserved": 0,
+      "quantityAvailable": 20
     }
   ]
 }
@@ -608,12 +637,171 @@ Newest first. `balanceAfter` is the product's stock straight after each movement
       "reason": "Torn",
       "batchNumber": null,
       "createdBy": { "id": "…", "fullName": "Demo Admin" },
-      "balanceAfter": 97
+      "balanceAfter": 97,
+      "movementNumber": "M0000042",
+      "warehouse": { "id": "…", "code": "HQ-MAIN" },
+      "entered": null,
+      "relatedDocument": null
     }
   ],
   "total": 3
 }
 ```
+
+`entered` is what was typed when it was not the base unit, e.g. `{ "unit": "carton",
+"quantity": 3 }` for a 72-pack movement. `relatedDocument` points at the source, e.g.
+`{ "type": "stock_receipt", "id": "…" }`.
+
+## Catalogue: categories, units, suppliers, warehouses
+
+`/api/v1/categories`, `/api/v1/units`, `/api/v1/suppliers` and `/api/v1/warehouses` all work
+the same way. Everyone signed in can read them (`GET`, with `includeInactive=true` to include
+deactivated entries) and receives `{ "items": [ … ] }`. `POST` adds one and `PATCH /:id` changes
+one (including `isActive`); both answer `{ "item": { … } }`. Nothing is deleted. Changes are
+recorded in the audit log (`catalogue.created`, `catalogue.updated`).
+
+| List        | Fields                                                              | Changed with       |
+| ----------- | ------------------------------------------------------------------- | ------------------ |
+| categories  | `name` (unique, ignoring letter case)                               | `catalogue.manage` |
+| units       | `code` (lower case, e.g. `carton`), `name`                          | `catalogue.manage` |
+| suppliers   | `code` (2–20 capitals, digits, `-`, `_`), `name`, `contactName`, `phone`, `email`, `address` | `supplier.manage` |
+| warehouses  | `code`, `name`, `address`; also returns `isDefault`, `organisationId` | `catalogue.manage` |
+
+The default warehouse (`HQ-MAIN`) stays active (**409** `DEFAULT_WAREHOUSE_ACTIVE`). A code or
+name already used answers **409** `ALREADY_EXISTS` with the field in `details`.
+
+## Goods-received notes (`/api/v1/receipts`)
+
+A goods-received note (GRN, numbered `GRN000001` …) records one delivery: whose stock it is
+(`organisationId`: the Head Office or, for Head Office staff, a subsidiary), the supplier, the
+supplier's invoice number, dates, and one line per product with the quantity **bought** and the
+quantity **received** (in any unit the product has), the unit cost, batch and expiry. Supplier
+documents (PDF, JPEG, PNG) are attached to it.
+
+Statuses: `DRAFT` → `PENDING_VERIFICATION` → `VERIFIED` or `REJECTED` → `POSTED` → `REVERSED`.
+The server and a database trigger allow only these steps, and a submitted receipt's details and
+lines never change.
+
+**When stock is added** (`RECEIPT_STOCK_AVAILABLE_BEFORE_VERIFICATION`, default `true`, the
+owner's decision D3): on submission, so it can be used at once. Verifying then makes it
+`POSTED`; rejecting takes the stock back out. With `false`, verification makes it `VERIFIED`
+and `POST /:id/post` adds the stock. Each line becomes one delivery batch and one `receipt`
+movement for the owner, all in one transaction (a failure part-way changes nothing).
+
+| Action                                                  | Permission            |
+| ------------------------------------------------------- | --------------------- |
+| List, view, PDF, download documents                     | `stock.view` (own organisation; the Head Office sees all) |
+| Create, change drafts, attach documents, submit, post   | `stock.receive`       |
+| Submit without a document (with a reason)               | `receipt.no_document` |
+| Review documents, verify or reject the receipt          | `receipt.verify`      |
+| Reverse a posted receipt                                | `receipt.reverse`     |
+
+A receipt outside the user's access answers **404** `RECEIPT_NOT_FOUND`.
+
+### `POST /api/v1/receipts` and `PUT /api/v1/receipts/:id` (drafts)
+
+```json
+{
+  "organisationId": "…",
+  "warehouseId": null,
+  "supplierId": "…",
+  "supplierInvoiceNumber": "INV-1042",
+  "purchaseDate": "2026-10-19",
+  "receivedDate": "2026-10-20",
+  "notes": null,
+  "lines": [
+    {
+      "productId": "…",
+      "unitId": "…",
+      "quantityPurchased": 3,
+      "quantityReceived": 3,
+      "unitCost": "10.20",
+      "batchNumber": "L2026-10A",
+      "expiryDate": "2027-02-01",
+      "discrepancyReason": null,
+      "notes": null
+    }
+  ]
+}
+```
+
+`organisationId` defaults to the user's own; `warehouseId` to the default warehouse;
+`receivedDate` to today (never in the future; `purchaseDate` not after it, expiry dates not
+before it). A supplier may be left out of a draft but is required to submit. Quantities are
+whole numbers 0–1,000,000 (not both 0); `unitCost` has up to 4 decimal places.
+`discrepancyReason` (`shortage`, `overage`, `damaged`, `rejected`) is required exactly when
+the quantities differ. Line totals (quantity bought × unit cost, rounded to cents) and the total
+are worked out by the database, exactly. **201** / **200** with `{ "receipt": { … } }`.
+
+A receipt returns its summary (`id`, `grnNumber`, `status`, `owner`, `warehouse`, `supplier`,
+`receivedDate`, `currency`, `total`, `lineCount`, `attachmentCount`, `stockAdded`) plus
+`flags`: `discrepancies` (lines that differ), `documentTotalMismatch` (a document's total, as
+the reviewer read it, differs from the GRN total) and `documentsPending`; and in full: `lines`
+(with `baseQuantityReceived`, `lineTotal`, `batchId`), `attachments`, who received, verified,
+rejected or reversed it and why.
+
+### `GET /api/v1/receipts` and `GET /api/v1/receipts/:id`
+
+List query: optional `status`, `organisationId`, `from`, `to`, `limit` (1–200, default 50),
+`offset`. **200** with `{ "receipts": [ … ], "total": 12 }`, newest first.
+
+### `POST /api/v1/receipts/:id/attachments?filename=invoice.pdf`
+
+The request **body is the file itself** (any `Content-Type`). The server decides its type from
+its first bytes: only PDF, JPEG and PNG are accepted, and the name's extension must match
+(a program renamed `invoice.pdf` answers **415** `UNSUPPORTED_DOCUMENT`). Larger than
+`ATTACHMENT_MAX_BYTES` answers **413**. Allowed while the receipt is a draft or waiting for
+verification (e.g. a replacement for a rejected document). Files are stored outside the web app
+under random names, with a SHA-256 checksum, and are never deleted.
+
+### `GET /api/v1/receipts/:id/attachments/:attachmentId`
+
+Downloads the document (as an attachment, never shown as a web page) for someone who may see
+the receipt.
+
+### `POST /api/v1/receipts/:id/attachments/:attachmentId/review` (`receipt.verify`)
+
+`{ "status": "VERIFIED", "notes": null, "documentTotal": "125.50" }` or
+`{ "status": "REJECTED", "notes": "Photo too blurry" }` (a reason is required). Each document is
+reviewed once (**409** `DOCUMENT_ALREADY_REVIEWED`).
+
+### `POST /api/v1/receipts/:id/submit` (`stock.receive`)
+
+`{ "noDocumentReason": null }`. Needs a supplier, at least one line and, when
+`RECEIPT_DOCUMENT_REQUIRED` is on, at least one document that is not rejected (**409**
+`DOCUMENT_REQUIRED`). A user with `receipt.no_document` may submit without one by giving a
+reason (3–500 characters; audit action `receipt.no_document`).
+
+### `POST /api/v1/receipts/:id/verify` (`receipt.verify`)
+
+`{ "notes": "Matches the invoice" }`. Every document must have been reviewed (**409**
+`DOCUMENTS_NOT_REVIEWED`) and at least one verified, unless the receipt was submitted without one
+(**409** `NO_VERIFIED_DOCUMENT`).
+
+### `POST /api/v1/receipts/:id/reject` (`receipt.verify`)
+
+`{ "reason": "Not our order" }`. If its stock was already added, it is taken back out.
+
+### `POST /api/v1/receipts/:id/post` (`stock.receive`)
+
+Adds a `VERIFIED` receipt's stock (only when stock waits for verification).
+
+### `POST /api/v1/receipts/:id/reverse` (`receipt.reverse`)
+
+`{ "reason": "Delivered to the wrong company" }`. Takes a `POSTED` receipt's stock back out with
+`reversal` movements that point at the movements they cancel; the receipt and its history are
+kept. If some of the delivery has already been dispatched or written off, it is refused with
+**409** `RECEIPT_STOCK_USED`: correct the stock with an adjustment instead.
+
+### `GET /api/v1/receipts/:id/pdf`
+
+The GRN as an A4 PDF (`GRN000001.pdf`): supplier, owner, warehouse, lines, total, who received
+and verified it, and the number of documents. Anything not final is marked in the heading.
+
+All receipt actions are recorded in the audit log (`receipt.created`, `receipt.updated`,
+`receipt.document_added`, `receipt.document_reviewed`, `receipt.submitted`,
+`receipt.no_document`, `receipt.verified`, `receipt.posted`, `receipt.rejected`,
+`receipt.reversed`).
 
 ## Customers
 

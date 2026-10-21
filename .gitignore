@@ -12,6 +12,9 @@ backups/
 *.dump.json
 *.dump.partial
 
+# --- Uploaded receipt documents (supplier invoices, photos): private business records ---
+storage/
+
 # --- Release builds for staff (APKs): shared directly, not through Git ---
 releases/
 

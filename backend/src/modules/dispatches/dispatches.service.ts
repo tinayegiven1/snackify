@@ -3,6 +3,7 @@ import { escapeLike } from '../../database/sql.js';
 import { withTransaction, type Queryable } from '../../database/transaction.js';
 import { AppError } from '../../utils/app-error.js';
 import { recordAudit } from '../audit/audit.js';
+import { allocateFirstExpiring, headOfficeDefaults, insertMovement } from '../stock/ledger.js';
 import type { PublicUser } from '../auth/roles.js';
 
 export type DispatchStatus = 'draft' | 'confirmed' | 'cancelled' | 'reversed';
@@ -167,7 +168,7 @@ export async function getDispatch(db: Queryable, id: string): Promise<Dispatch> 
             (i.quantity * i.unit_price)::numeric(14, 2)::text AS line_total, b.quantity_on_hand
      FROM dispatch_items i
      JOIN products p ON p.id = i.product_id
-     JOIN stock_balances b ON b.product_id = i.product_id
+     JOIN hq_stock_on_hand b ON b.product_id = i.product_id
      WHERE i.dispatch_id = $1
      ORDER BY p.name, p.flavour, p.size`,
     [id],
@@ -544,11 +545,13 @@ export async function confirmDispatch(
       );
     }
 
-    const { rows: balances } = await client.query<{ product_id: string; quantity_on_hand: number }>(
-      'SELECT product_id, quantity_on_hand FROM stock_balances WHERE product_id = ANY($1::uuid[])',
+    // The Head Office's own stock, less anything reserved for approved orders.
+    const { rows: balances } = await client.query<{ product_id: string; available: number }>(
+      `SELECT product_id, quantity_on_hand - quantity_reserved AS available
+       FROM hq_stock_on_hand WHERE product_id = ANY($1::uuid[])`,
       [lines.map((line) => line.product_id)],
     );
-    const onHand = new Map(balances.map((b) => [b.product_id, b.quantity_on_hand]));
+    const onHand = new Map(balances.map((b) => [b.product_id, b.available]));
     const shortages = lines
       .map((line) => ({ ...line, available: onHand.get(line.product_id) ?? 0 }))
       .filter((line) => line.quantity > line.available);
@@ -589,20 +592,28 @@ export async function confirmDispatch(
       );
     }
 
+    // Each line takes the Head Office's batches that expire first; one ledger entry per batch.
+    const headOffice = await headOfficeDefaults(client);
     for (const line of lines) {
-      await client.query(
-        `INSERT INTO stock_movements (product_id, movement_type, quantity_delta, business_date,
-                                      created_by, reference, dispatch_item_id)
-         VALUES ($1, 'dispatch', $2, $3, $4, $5, $6)`,
-        [
-          line.product_id,
-          -line.quantity,
-          current.dispatch_date,
-          actor.id,
-          current.dispatch_number,
-          line.item_id,
-        ],
-      );
+      const { allocations } = await allocateFirstExpiring(client, {
+        productId: line.product_id,
+        ownerOrganisationId: headOffice.organisationId,
+        quantity: line.quantity,
+      });
+      for (const allocation of allocations) {
+        await insertMovement(client, {
+          productId: line.product_id,
+          ownerOrganisationId: headOffice.organisationId,
+          warehouseId: allocation.warehouseId,
+          batchId: allocation.batchId,
+          type: 'dispatch',
+          quantityDelta: -allocation.quantity,
+          businessDate: current.dispatch_date,
+          createdBy: actor.id,
+          reference: current.dispatch_number,
+          dispatchItemId: line.item_id,
+        });
+      }
     }
 
     await client.query(
@@ -682,8 +693,12 @@ export async function reverseDispatch(
       id: string;
       product_id: string;
       quantity_delta: number;
+      owner_organisation_id: string;
+      warehouse_id: string;
+      batch_id: string | null;
     }>(
-      `SELECT m.id, m.product_id, m.quantity_delta
+      `SELECT m.id, m.product_id, m.quantity_delta, m.owner_organisation_id, m.warehouse_id,
+              m.batch_id
        FROM stock_movements m
        JOIN dispatch_items i ON i.id = m.dispatch_item_id
        WHERE i.dispatch_id = $1 AND m.movement_type = 'dispatch'
@@ -695,21 +710,21 @@ export async function reverseDispatch(
       movements.map((m) => m.product_id),
     ]);
 
+    // The goods go back to exactly where they came from: same owner, warehouse and batch.
     for (const movement of movements) {
-      await client.query(
-        `INSERT INTO stock_movements (product_id, movement_type, quantity_delta, business_date,
-                                      created_by, reference, reason, reverses_movement_id)
-         VALUES ($1, 'reversal', $2, $3, $4, $5, $6, $7)`,
-        [
-          movement.product_id,
-          -movement.quantity_delta,
-          today,
-          actor.id,
-          current.dispatch_number,
-          reason,
-          movement.id,
-        ],
-      );
+      await insertMovement(client, {
+        productId: movement.product_id,
+        ownerOrganisationId: movement.owner_organisation_id,
+        warehouseId: movement.warehouse_id,
+        batchId: movement.batch_id,
+        type: 'reversal',
+        quantityDelta: -movement.quantity_delta,
+        businessDate: today,
+        createdBy: actor.id,
+        reference: current.dispatch_number,
+        reason,
+        reversesMovementId: movement.id,
+      });
     }
 
     await client.query(

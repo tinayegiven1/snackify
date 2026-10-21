@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/scanning/barcode_reader.dart';
 import '../../../shared/widgets/message_view.dart';
+import '../../catalogue/data/catalogue_repository.dart';
 import '../data/products_repository.dart';
 import '../domain/product.dart';
 import 'product_form_screen.dart';
@@ -20,11 +21,13 @@ class ProductsScreen extends StatefulWidget {
     required this.repository,
     required this.canEdit,
     required this.readBarcode,
+    required this.catalogue,
   });
 
   final ProductsRepository repository;
   final bool canEdit;
   final BarcodeReader readBarcode;
+  final CatalogueRepository catalogue;
 
   @override
   State<ProductsScreen> createState() => _ProductsScreenState();
@@ -96,6 +99,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
           repository: widget.repository,
           product: product,
           readBarcode: widget.readBarcode,
+          catalogue: widget.catalogue,
         ),
       ),
     );

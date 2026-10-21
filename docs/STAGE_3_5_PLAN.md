@@ -245,6 +245,35 @@ npm run db:seed       # development only: sample organisations
 npm run check         # all backend checks and tests
 ```
 
-### Stage 4: not started
+### Stage 4: done (2026-10-21)
+
+- [x] Products, categories, units, conversions, suppliers, warehouses (Catalogue screen; units
+      and categories on the product form)
+- [x] Stock balances keyed by product + owner + warehouse + batch (`stock_balances` table,
+      kept in step by a trigger, never below zero; earliest expiry leaves first)
+- [x] Immutable stock movement ledger, transactional posting (numbered `M0000001`…)
+- [x] Receive Stock workflow with statuses (goods-received notes, Goods Received screen)
+- [x] Multi-file private attachments with content validation
+- [x] Verification (verify/reject + notes, per document and per receipt)
+- [x] GRN PDF
+- [x] Adjustments/reversals with reason (adjustments may name owner, warehouse and batch;
+      receipts are reversed or rejected with a reason)
+- [x] Stage 4 tests passing
+
+Changes from the plan:
+
+- The old quick receipt (`POST /api/v1/stock/receipts`) now records **opening balances only**;
+  deliveries need a goods-received note, so the document rule cannot be bypassed.
+- Rejecting a receipt whose stock was already added (D3) takes that stock back out; if some of
+  it was already used, rejection and reversal are refused (`RECEIPT_STOCK_USED`) and the stock
+  is corrected with an adjustment.
+- Migrated balances: per product, owner and warehouse they equal the ledger exactly. Per batch,
+  existing stock was given to the newest batches, because older dispatches recorded no batch.
+
+Migrations: `20261021090000000_catalogue.sql`, `20261021100000000_stock-balances.sql`,
+`20261021110000000_goods-received-notes.sql`. The development database was backed up
+(`snackify_dev-20261021T101311.076Z.dump`) and migrated. Receipt documents are kept in
+`ATTACHMENT_STORAGE_DIR` (default `storage/attachments`, ignored by Git): back it up with the
+database.
 
 ### Stage 5: not started

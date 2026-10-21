@@ -51,6 +51,22 @@ class ProductsRepository {
     return Product.fromJson(body['product'] as Map<String, dynamic>);
   }
 
+  Future<Product> get(String id) async {
+    final body = await _api.getJson('/api/v1/products/$id');
+    return Product.fromJson(body['product'] as Map<String, dynamic>);
+  }
+
+  /// Replaces the product's unit conversions, e.g. {cartonUnitId: 24} (admins).
+  Future<Product> setConversions(String id, Map<String, int> baseQuantities) async {
+    final body = await _api.putJson('/api/v1/products/$id/conversions', {
+      'conversions': [
+        for (final MapEntry(key: unitId, value: baseQuantity) in baseQuantities.entries)
+          {'unitId': unitId, 'baseQuantity': baseQuantity},
+      ],
+    });
+    return Product.fromJson(body['product'] as Map<String, dynamic>);
+  }
+
   /// The product with exactly this barcode. Throws [ApiException] with code BARCODE_NOT_FOUND
   /// when no product has it.
   Future<Product> findByBarcode(String barcode) async {

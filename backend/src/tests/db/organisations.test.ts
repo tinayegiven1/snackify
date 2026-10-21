@@ -120,9 +120,11 @@ describe('permissions', () => {
     'audit.view': (who) => as(who).get('/api/v1/audit-logs'),
     'product.manage': (who) => as(who).post('/api/v1/products', {}),
     'stock.view': (who) => as(who).get('/api/v1/stock/balance'),
-    // A complete receipt for a product that does not exist: 404 when let in, 403 when not.
-    'stock.receive': (who) =>
-      as(who).post('/api/v1/stock/receipts', { productId: randomUUID(), quantity: 1 }),
+    // A complete change to a goods-received note that does not exist: 404 when let in.
+    'stock.receive': (who) => as(who).put(`/api/v1/receipts/${randomUUID()}`, { lines: [] }),
+    'receipt.verify': (who) => as(who).post(`/api/v1/receipts/${randomUUID()}/verify`, {}),
+    'receipt.reverse': (who) =>
+      as(who).post(`/api/v1/receipts/${randomUUID()}/reverse`, { reason: 'Wrong supplier' }),
     'stock.adjust': (who) => as(who).post('/api/v1/stock/adjustments', {}),
     'customer.view': (who) => as(who).get('/api/v1/customers'),
     'dispatch.confirm': (who) => as(who).post(`/api/v1/dispatches/${randomUUID()}/confirm`, {}),
@@ -145,6 +147,7 @@ describe('permissions', () => {
       'product.manage',
       'stock.view',
       'stock.adjust',
+      'receipt.reverse',
       'customer.view',
       'dispatch.reverse',
       // Voiding also needs the payments area (finance), so an administrator without a finance
@@ -161,6 +164,7 @@ describe('permissions', () => {
     ],
     hq_finance_officer: [
       'stock.view',
+      'receipt.verify',
       'customer.view',
       'invoice.manage',
       'payment.manage',
@@ -188,6 +192,7 @@ describe('permissions', () => {
 
   it('the finance officer cannot change physical quantities; the warehouse cannot take payments', async () => {
     expect((await as('hq_finance_officer').post('/api/v1/stock/receipts', {})).status).toBe(403);
+    expect((await as('hq_finance_officer').post('/api/v1/receipts', {})).status).toBe(403);
     expect((await as('hq_finance_officer').post('/api/v1/stock/adjustments', {})).status).toBe(403);
     expect((await as('hq_warehouse_officer').get('/api/v1/payments')).status).toBe(403);
   });
@@ -269,7 +274,7 @@ describe('organisation separation', () => {
 
     // The Head Office's own stock (what it can dispatch) never includes a subsidiary's goods.
     const { rows } = await pools.owner.query<{ quantity_on_hand: number }>(
-      'SELECT quantity_on_hand FROM stock_balances WHERE product_id = $1',
+      'SELECT quantity_on_hand FROM hq_stock_on_hand WHERE product_id = $1',
       [product],
     );
     expect(rows[0]?.quantity_on_hand).toBe(100);

@@ -181,16 +181,62 @@ Indexed by product and date. The API role can add rows but never change or delet
 (default: the Head Office). A movement of a batch always has the batch's owner (composite
 foreign key). Where stock is kept is not who owns it.
 
-**Stock on hand** comes from the ledger: the sum of `quantity_delta`, per product and owner. The
-`stock_balances` view is the **Head Office's** stock, which dispatches, forecasts and reports
-use, so the Head Office can never dispatch a subsidiary's goods. There is no separate balance
-column that could drift from the history (Stage 4 adds one per owner and location, kept in step
-inside the same transaction).
+**Stock on hand (StockFlow Stage 4).** The `stock_balances` **table** holds one row per product,
+owner, warehouse and batch (`UNIQUE NULLS NOT DISTINCT`; unbatched stock has a null batch), with
+`quantity_on_hand >= 0` and `0 <= quantity_reserved <= quantity_on_hand`. A `SECURITY DEFINER`
+trigger on `stock_movements` updates it in the same statement as each movement, so it always
+equals the sum of the ledger (a database test checks this); the API role can read it but never
+write it. The view `hq_stock_on_hand` (product, on hand, reserved) is the **Head Office's**
+stock, which dispatches, forecasts and reports use, so the Head Office can never dispatch a
+subsidiary's goods. Stock leaves the earliest-expiring batch first (FEFO). The migration filled
+the table from the existing ledger, giving the remaining stock to the newest batches.
+
+Movements gained (Stage 4): `warehouse_id` (default: the default warehouse), `unit_id` and
+`entered_quantity` (what was typed when not the base unit), `related_document_type`/`_id` (e.g.
+the goods-received note), and `movement_number` (`M0000001`, unique, from a sequence). New
+types `custody_release`, `internal_transfer` and `return_to_supplier` are reserved for later.
 
 **Never below zero, even under concurrency:** every operation that changes stock first locks the
 product's row (`SELECT … FOR UPDATE`), checks the balance, and then writes the movement in the
 same transaction. Two people removing the same product's stock at the same moment are therefore
 handled one after the other. `npm run test:db` checks this by sending 20 simultaneous removals.
+
+### Catalogue (StockFlow Stage 4)
+
+- `product_categories`: `name` (unique ignoring case), `is_active`. Products gain
+  `description`, `category_id` and `base_unit_id` (default: pack; fixed once the product has
+  movements).
+- `units`: `code` (unique, lower case), `name`; seeded `pack`, `carton`, `case`.
+- `unit_conversions`: per product, `unit_id` → `base_quantity` (2–100,000 base units), never
+  the product's own base unit (trigger). Quantities are converted exactly, in whole base units.
+- `suppliers`: `code` (unique, `^[A-Z0-9][A-Z0-9_-]{1,19}$`), name, contact name, phone, email,
+  address, `is_active`.
+- `warehouses`: `code`, name, address, `organisation_id`, `is_default` (exactly one, always
+  active); seeded `HQ-MAIN`. Batches and movements record their warehouse.
+
+Nothing in these tables is deleted by the app; entries are deactivated.
+
+### `stock_receipts`, `stock_receipt_lines`, `stock_receipt_attachments` (StockFlow Stage 4)
+
+A goods-received note per delivery: `grn_number` (`GRN000001`, from a sequence), the owner
+organisation, warehouse, supplier, supplier invoice number, purchase and received dates,
+currency, notes, `status` (`DRAFT`, `PENDING_VERIFICATION`, `VERIFIED`, `REJECTED`, `POSTED`,
+`REVERSED`), who received, submitted, posted, verified, rejected and reversed it (with when and
+why), and `no_document_reason`. CHECK constraints require what each status needs (e.g. a
+submitted receipt has a supplier; a rejected one a reason).
+
+- Trigger `stock_receipts_protect`: only the allowed status steps, and none of the header
+  fields change after the draft.
+- Lines: product, unit, `quantity_purchased`, `quantity_received`, `base_quantity_received`,
+  `unit_cost numeric(14,4)`, `line_total numeric(14,2)` (CHECK: `= round(quantity_purchased *
+  unit_cost, 2)`), batch number, expiry, `discrepancy_reason` (required exactly when the two
+  quantities differ), and the delivery batch created when posted (`batch_id`). Trigger: lines
+  change only while the receipt is a draft (apart from recording the batch).
+- `stock_batches.receipt_line_id` (unique) links each delivery batch to its line.
+- Attachments: original file name, `storage_key` (64 random hex characters: the file's name on
+  disk), `mime_type` (PDF, JPEG, PNG: checked from the content), size, `sha256`, uploader,
+  `verification_status` (`PENDING`, `VERIFIED`, `REJECTED` with a reason), reviewer, review
+  notes, and the `document_total` the reviewer read. The API role cannot delete them.
 
 ### `customers` (spec 6.5)
 

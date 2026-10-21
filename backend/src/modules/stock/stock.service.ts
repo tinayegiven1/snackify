@@ -4,6 +4,13 @@ import { withTransaction, type Queryable } from '../../database/transaction.js';
 import { AppError } from '../../utils/app-error.js';
 import { recordAudit } from '../audit/audit.js';
 import type { PublicUser } from '../auth/roles.js';
+import {
+  allocateFirstExpiring,
+  headOfficeDefaults,
+  insertMovement,
+  ownedQuantity,
+  type Allocation,
+} from './ledger.js';
 
 /** The product a stock record belongs to. */
 export interface ProductSummary {
@@ -49,9 +56,10 @@ async function lockProduct(
   return { isActive: rows[0].is_active };
 }
 
+/** The Head Office's own stock of a product (all its warehouses). */
 async function quantityOnHand(db: Queryable, productId: string): Promise<number> {
   const { rows } = await db.query<{ quantity_on_hand: number }>(
-    'SELECT quantity_on_hand FROM stock_balances WHERE product_id = $1',
+    'SELECT quantity_on_hand FROM hq_stock_on_hand WHERE product_id = $1',
     [productId],
   );
   return rows[0]?.quantity_on_hand ?? 0;
@@ -233,67 +241,118 @@ export interface AdjustmentInput {
   quantityDelta: number;
   reason: string;
   businessDate: string;
+  /** Whose stock (default: the Head Office). Callers check the user may act for it. */
+  ownerOrganisationId?: string | undefined;
+  /** Where (default: any warehouse when removing, the default warehouse when adding). */
+  warehouseId?: string | undefined;
+  /** Which delivery (default: the batches that expire first when removing; none when adding). */
+  batchId?: string | undefined;
 }
 
 /**
  * Changes stock by hand, with a reason. Refused if it would leave less than zero in stock.
- * The change and its audit entry are saved together.
+ * Stock removed without naming a batch comes from the batches that expire first. The movements
+ * and their audit entry are saved together.
  */
 export async function adjustStock(
   pool: pg.Pool,
   input: AdjustmentInput,
   actor: PublicUser,
-): Promise<{ movement: StockMovement; quantityOnHand: number }> {
+): Promise<{ movement: StockMovement; movements: StockMovement[]; quantityOnHand: number }> {
   return withTransaction(pool, async (client) => {
     await lockProduct(client, input.productId);
-    const before = await quantityOnHand(client, input.productId);
-    const after = before + input.quantityDelta;
-    if (after < 0) {
-      throw new AppError(
-        409,
-        'INSUFFICIENT_STOCK',
-        `Only ${before} in stock, so ${-input.quantityDelta} cannot be removed.`,
+    const defaults = await headOfficeDefaults(client);
+    const owner = input.ownerOrganisationId ?? defaults.organisationId;
+
+    if (input.batchId) {
+      const { rowCount } = await client.query(
+        'SELECT 1 FROM stock_batches WHERE id = $1 AND product_id = $2 AND owner_organisation_id = $3',
+        [input.batchId, input.productId, owner],
       );
+      if (!rowCount) {
+        throw new AppError(400, 'VALIDATION_ERROR', 'Some fields are missing or invalid.', [
+          { field: 'batchId', message: "Not a delivery of this product's stock" },
+        ]);
+      }
     }
 
-    const { rows } = await client.query<{ id: string }>(
-      `INSERT INTO stock_movements (product_id, movement_type, quantity_delta, business_date,
-                                    created_by, reason)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id`,
-      [
-        input.productId,
-        input.type,
-        input.quantityDelta,
-        input.businessDate,
-        actor.id,
-        input.reason,
-      ],
-    );
-    const movementId = (rows[0] as { id: string }).id;
+    const before = (await ownedQuantity(client, input.productId, owner)).onHand;
+    let parts: Allocation[];
+    if (input.quantityDelta < 0) {
+      const { allocations, available } = await allocateFirstExpiring(client, {
+        productId: input.productId,
+        ownerOrganisationId: owner,
+        warehouseId: input.warehouseId ?? null,
+        batchId: input.batchId ?? null,
+        quantity: -input.quantityDelta,
+      });
+      if (allocations.length === 0) {
+        throw new AppError(
+          409,
+          'INSUFFICIENT_STOCK',
+          `Only ${available} in stock, so ${-input.quantityDelta} cannot be removed.`,
+        );
+      }
+      parts = allocations.map((part) => ({ ...part, quantity: -part.quantity }));
+    } else {
+      parts = [
+        {
+          batchId: input.batchId ?? null,
+          warehouseId: input.warehouseId ?? defaults.warehouseId,
+          quantity: input.quantityDelta,
+        },
+      ];
+    }
+
+    const movementIds: string[] = [];
+    for (const part of parts) {
+      const { id } = await insertMovement(client, {
+        productId: input.productId,
+        ownerOrganisationId: owner,
+        warehouseId: part.warehouseId,
+        batchId: part.batchId,
+        type: input.type,
+        quantityDelta: part.quantity,
+        businessDate: input.businessDate,
+        createdBy: actor.id,
+        reason: input.reason,
+      });
+      movementIds.push(id);
+    }
+    const after = before + input.quantityDelta;
 
     await recordAudit(client, {
       actorUserId: actor.id,
       action: 'stock.adjusted',
       entityType: 'product',
       entityId: input.productId,
+      organisationId: owner,
       details: {
         type: input.type,
         quantityDelta: input.quantityDelta,
         reason: input.reason,
         balanceBefore: before,
         balanceAfter: after,
+        parts: parts.map((part) => ({
+          batchId: part.batchId,
+          warehouseId: part.warehouseId,
+          quantity: part.quantity,
+        })),
       },
     });
 
-    const { movements } = await listMovements(client, {
-      ownerOrganisationId: await headOfficeId(client),
-      productId: input.productId,
-      movementId,
-      limit: 1,
-      offset: 0,
-    });
-    return { movement: movements[0] as StockMovement, quantityOnHand: after };
+    const movements: StockMovement[] = [];
+    for (const movementId of movementIds) {
+      const found = await listMovements(client, {
+        ownerOrganisationId: owner,
+        productId: input.productId,
+        movementId,
+        limit: 1,
+        offset: 0,
+      });
+      movements.push(found.movements[0] as StockMovement);
+    }
+    return { movement: movements[0] as StockMovement, movements, quantityOnHand: after };
   });
 }
 
@@ -302,6 +361,9 @@ export async function adjustStock(
 export interface StockBalance {
   product: ProductSummary & { isActive: boolean };
   quantityOnHand: number;
+  /** Set aside for approved orders; available = on hand - reserved. */
+  quantityReserved: number;
+  quantityAvailable: number;
   reorderLevel: number | null;
   /** True when a reorder level is set and stock is at or below it. */
   isLowStock: boolean;
@@ -342,15 +404,21 @@ export async function listBalances(
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
   const { rows } = await db.query<
-    ProductColumns & { is_active: boolean; reorder_level: number | null; quantity_on_hand: number }
+    ProductColumns & {
+      is_active: boolean;
+      reorder_level: number | null;
+      quantity_on_hand: number;
+      quantity_reserved: number;
+    }
   >(
     `SELECT p.id AS product_id, p.sku, p.name, p.flavour, p.size, p.is_active, p.reorder_level,
-            b.quantity_on_hand
+            b.quantity_on_hand, b.quantity_reserved
      FROM products p
      CROSS JOIN LATERAL (
-       SELECT COALESCE(sum(m.quantity_delta), 0)::integer AS quantity_on_hand
-       FROM stock_movements m
-       WHERE m.product_id = p.id AND m.owner_organisation_id = $1
+       SELECT COALESCE(sum(sb.quantity_on_hand), 0)::integer AS quantity_on_hand,
+              COALESCE(sum(sb.quantity_reserved), 0)::integer AS quantity_reserved
+       FROM stock_balances sb
+       WHERE sb.product_id = p.id AND sb.owner_organisation_id = $1
      ) b
      ${where}
      ORDER BY p.name, p.flavour, p.size, p.sku`,
@@ -359,6 +427,8 @@ export async function listBalances(
   return rows.map((row) => ({
     product: { ...productSummary(row), isActive: row.is_active },
     quantityOnHand: row.quantity_on_hand,
+    quantityReserved: row.quantity_reserved,
+    quantityAvailable: row.quantity_on_hand - row.quantity_reserved,
     reorderLevel: row.reorder_level,
     isLowStock: row.reorder_level !== null && row.quantity_on_hand <= row.reorder_level,
   }));
@@ -368,7 +438,14 @@ export async function listBalances(
 
 export interface StockMovement {
   id: string;
+  /** The movement's own unique reference, e.g. M0000042. */
+  movementNumber: string;
   product: ProductSummary;
+  warehouse: { id: string; code: string };
+  /** As entered, when not counted in the base unit (e.g. 2 cartons). */
+  entered: { unit: string; quantity: number } | null;
+  /** The document behind it, e.g. a goods-received note. */
+  relatedDocument: { type: string; id: string } | null;
   type: string;
   quantityDelta: number;
   businessDate: string;
@@ -383,6 +460,13 @@ export interface StockMovement {
 
 interface MovementRow extends ProductColumns {
   id: string;
+  movement_number: string;
+  warehouse_id: string;
+  warehouse_code: string;
+  unit_code: string | null;
+  entered_quantity: number | null;
+  related_document_type: string | null;
+  related_document_id: string | null;
   movement_type: string;
   quantity_delta: number;
   business_date: string;
@@ -432,13 +516,17 @@ export async function listMovements(
               )::integer AS balance_after
        FROM stock_movements m
      )
-     SELECT l.id, l.product_id, p.sku, p.name, p.flavour, p.size, l.movement_type,
+     SELECT l.id, l.movement_number, l.warehouse_id, w.code AS warehouse_code,
+            un.code AS unit_code, l.entered_quantity, l.related_document_type,
+            l.related_document_id, l.product_id, p.sku, p.name, p.flavour, p.size, l.movement_type,
             l.quantity_delta, l.business_date, l.occurred_at, l.reference, l.reason,
             b.batch_number, l.created_by, u.full_name AS created_by_name, l.balance_after,
             count(*) OVER ()::integer AS total
      FROM ledger l
      JOIN products p ON p.id = l.product_id
      JOIN users u ON u.id = l.created_by
+     JOIN warehouses w ON w.id = l.warehouse_id
+     LEFT JOIN units un ON un.id = l.unit_id
      LEFT JOIN stock_batches b ON b.id = l.batch_id
      ${where}
      ORDER BY l.occurred_at DESC, l.id DESC
@@ -449,7 +537,17 @@ export async function listMovements(
   return {
     movements: rows.map((row) => ({
       id: row.id,
+      movementNumber: row.movement_number,
       product: productSummary(row),
+      warehouse: { id: row.warehouse_id, code: row.warehouse_code },
+      entered:
+        row.unit_code === null || row.entered_quantity === null
+          ? null
+          : { unit: row.unit_code, quantity: row.entered_quantity },
+      relatedDocument:
+        row.related_document_type === null || row.related_document_id === null
+          ? null
+          : { type: row.related_document_type, id: row.related_document_id },
       type: row.movement_type,
       quantityDelta: row.quantity_delta,
       businessDate: row.business_date,

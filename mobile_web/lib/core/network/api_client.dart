@@ -55,6 +55,14 @@ class ApiClient {
   Future<Map<String, dynamic>> putJson(String path, Map<String, Object?> body) =>
       _send('PUT', path, body);
 
+  /// Uploads a file as the raw request body (e.g. a supplier invoice) and returns the JSON
+  /// answer. The server decides the file's type from its content, not from [contentType].
+  Future<Map<String, dynamic>> postBytes(
+    String path,
+    Uint8List bytes, {
+    String contentType = 'application/octet-stream',
+  }) => _send('POST', path, _RawBody(bytes, contentType));
+
   /// Downloads a file, e.g. an invoice PDF. Errors are reported like those of JSON requests.
   Future<Uint8List> getBytes(String path, {String accept = 'application/octet-stream'}) async {
     final response = await _request('GET', path, accept: accept);
@@ -62,7 +70,13 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> _send(String method, String path, [Object? body]) async {
-    final response = await _request(method, path, body: body);
+    final response = await _request(
+      method,
+      path,
+      body: body,
+      // Uploads can be several megabytes on a slow connection.
+      timeout: body is _RawBody ? const Duration(seconds: 120) : _timeout,
+    );
 
     // 204 No Content and other empty successes.
     if (response.body.isEmpty) return const {};
@@ -88,9 +102,13 @@ class ApiClient {
     String path, {
     Object? body,
     String accept = 'application/json',
+    Duration timeout = _timeout,
   }) async {
     final request = http.Request(method, Uri.parse('$_baseUrl$path'))..headers['Accept'] = accept;
-    if (body != null) {
+    if (body is _RawBody) {
+      request.headers['Content-Type'] = body.contentType;
+      request.bodyBytes = body.bytes;
+    } else if (body != null) {
       request.headers['Content-Type'] = 'application/json';
       request.body = jsonEncode(body);
     }
@@ -101,7 +119,7 @@ class ApiClient {
 
     final http.Response response;
     try {
-      response = await _http.send(request).then(http.Response.fromStream).timeout(_timeout);
+      response = await _http.send(request).then(http.Response.fromStream).timeout(timeout);
     } on Exception {
       throw ApiException(
         'Cannot reach the Snackify server. Check your connection and try again.',
@@ -147,4 +165,12 @@ class ApiClient {
     }
     return ApiException('The request failed (HTTP $statusCode).', statusCode: statusCode);
   }
+}
+
+/// A request body sent as it is (a file), not as JSON.
+class _RawBody {
+  const _RawBody(this.bytes, this.contentType);
+
+  final Uint8List bytes;
+  final String contentType;
 }

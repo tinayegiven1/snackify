@@ -306,8 +306,8 @@ export interface ExpiringBatch {
 }
 
 /**
- * Batches that expire within `days` (or have already expired) and probably still have packs on
- * the shelf. Each product's stock on hand is assigned to its newest deliveries first.
+ * The Head Office's batches that expire within `days` (or have already expired) and still have
+ * packs on the shelf. Exact since StockFlow Stage 4: every movement says which batch it changes.
  */
 export async function expiringStock(
   db: Queryable,
@@ -325,21 +325,15 @@ export async function expiringStock(
     expiry_date: string;
     left: number;
   }>(
-    `WITH batches AS (
-       SELECT b.*, s.quantity_on_hand,
-              COALESCE(sum(b.quantity_received) OVER (
-                PARTITION BY b.product_id ORDER BY b.received_date DESC, b.created_at DESC
-                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS newer
-       FROM stock_batches b JOIN stock_balances s ON s.product_id = b.product_id
-       -- stock_balances is the Head Office's stock, so only its batches are counted.
-       WHERE b.owner_organisation_id = hq_organisation_id()
-     )
-     SELECT p.id, p.sku, p.name, p.flavour, p.size, b.batch_number, b.received_date,
-            b.expiry_date,
-            GREATEST(0, LEAST(b.quantity_received, b.quantity_on_hand - b.newer))::integer AS left
-     FROM batches b JOIN products p ON p.id = b.product_id
-     WHERE p.is_active AND b.expiry_date IS NOT NULL AND b.expiry_date <= $1::date + $2::integer
-       AND LEAST(b.quantity_received, b.quantity_on_hand - b.newer) > 0
+    `SELECT p.id, p.sku, p.name, p.flavour, p.size, b.batch_number, b.received_date,
+            b.expiry_date, sum(sb.quantity_on_hand)::integer AS left
+     FROM stock_balances sb
+     JOIN stock_batches b ON b.id = sb.batch_id
+     JOIN products p ON p.id = sb.product_id
+     WHERE sb.owner_organisation_id = hq_organisation_id()
+       AND p.is_active AND b.expiry_date IS NOT NULL AND b.expiry_date <= $1::date + $2::integer
+     GROUP BY p.id, b.id
+     HAVING sum(sb.quantity_on_hand) > 0
      ORDER BY b.expiry_date, p.name, p.sku`,
     [today, days],
   );
