@@ -5,3 +5,5 @@
 *.png binary
 *.jpg binary
 *.ico binary
+# Shell scripts run on Linux (the VPS, Docker): always Unix line endings.
+*.sh text eol=lf

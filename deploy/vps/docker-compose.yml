@@ -1,0 +1,54 @@
+# Snackify on the VPS: the app and its own PostgreSQL, separate from everything else on the
+# server. Secrets come from /etc/snackify/snackify.env (made by setup.sh, never in Git).
+#   docker compose -f deploy/vps/docker-compose.yml --env-file /etc/snackify/snackify.env up -d --build
+name: snackify
+
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?missing}
+      # Used once, on the first start, by initdb/01-snackify.sh to create the Snackify roles.
+      SNACKIFY_OWNER_PASSWORD: ${SNACKIFY_OWNER_PASSWORD:?missing}
+      SNACKIFY_APP_PASSWORD: ${SNACKIFY_APP_PASSWORD:?missing}
+    volumes:
+      - db-data:/var/lib/postgresql
+      - ../../database/setup:/snackify-setup:ro
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # Over TCP: during the first-start setup the database listens only on its socket.
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U postgres -d snackify']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    # Not published: only the app container reaches the database.
+
+  app:
+    build:
+      context: ../..
+      dockerfile: deploy/vps/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      DATABASE_URL: postgres://snackify_app:${SNACKIFY_APP_PASSWORD}@db:5432/snackify
+      MIGRATION_DATABASE_URL: postgres://snackify_owner:${SNACKIFY_OWNER_PASSWORD}@db:5432/snackify
+      CORS_ORIGINS: https://${SNACKIFY_DOMAIN:?missing}
+      # nginx in front: one proxy, so sign-in limits apply per real client address.
+      TRUST_PROXY_HOPS: '1'
+      ATTACHMENT_STORAGE_DIR: /data/attachments
+      BUSINESS_TIMEZONE: Africa/Harare
+      BUSINESS_NAME: ${BUSINESS_NAME:-Snackify}
+    volumes:
+      - attachments:/data/attachments
+    # Only nginx on this server reaches it.
+    ports:
+      - '127.0.0.1:3020:3000'
+
+volumes:
+  db-data:
+  attachments:
