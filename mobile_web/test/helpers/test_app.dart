@@ -2793,6 +2793,7 @@ Future<TestApp> pumpSnackify(
   String? savedToken,
   bool apiHealthy = true,
   FakeBackend? backend,
+  MemoryTokenStore? tokenStore,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
@@ -2800,7 +2801,7 @@ Future<TestApp> pumpSnackify(
 
   final server = backend ?? FakeBackend();
   final api = ApiClient(baseUrl: 'http://api.test', httpClient: server.client);
-  final store = MemoryTokenStore(signedIn ? server.issueToken() : savedToken);
+  final store = tokenStore ?? MemoryTokenStore(signedIn ? server.issueToken() : savedToken);
   final auth = AuthController(AuthRepository(api: api, tokenStore: store));
   final sharedPdfs = <(String, String)>[];
   final scanner = FakeScanner();
@@ -2911,4 +2912,10 @@ class FakeDocumentPicker {
   void willPick(List<PickedDocument> documents) => queue.add(documents);
 
   Future<List<PickedDocument>> pick() async => queue.isEmpty ? [] : queue.removeAt(0);
+}
+
+/// A device that cannot store the sign-in (like a browser page without WebCrypto).
+class FailingTokenStore extends MemoryTokenStore {
+  @override
+  Future<void> write(String token) async => throw StateError('storage unavailable');
 }

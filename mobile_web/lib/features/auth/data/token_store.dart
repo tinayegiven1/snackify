@@ -3,12 +3,20 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'browser_session_stub.dart' if (dart.library.js_interop) 'browser_session_web.dart';
+
 /// Keeps the session token between app launches.
 abstract interface class TokenStore {
   Future<String?> read();
   Future<void> write(String token);
   Future<void> delete();
 }
+
+/// The store for this device. A web page opened by a network address over plain http (as on
+/// the office Wi-Fi) cannot use the encrypted store, so the token is kept in that browser tab
+/// instead: it survives reloading the page and is forgotten when the tab is closed.
+TokenStore deviceTokenStore() =>
+    kIsWeb && !browserCanEncrypt ? const TabTokenStore() : SecureTokenStore();
 
 /// Android: encrypted with a key in the Android Keystore.
 /// Web: the browser's local storage, encrypted with WebCrypto. A browser cannot fully protect
@@ -42,6 +50,23 @@ class SecureTokenStore implements TokenStore {
 
   @override
   Future<void> delete() => _storage.delete(key: _key);
+}
+
+/// Web pages that are not "secure" (plain http by a network address): the tab's session
+/// storage, cleared when the tab closes.
+class TabTokenStore implements TokenStore {
+  const TabTokenStore();
+
+  static const _key = 'snackify_session_token';
+
+  @override
+  Future<String?> read() async => readTabSession(_key);
+
+  @override
+  Future<void> write(String token) async => writeTabSession(_key, token);
+
+  @override
+  Future<void> delete() async => deleteTabSession(_key);
 }
 
 /// Keeps the token in memory only. Used in tests.

@@ -59,10 +59,13 @@ class _PinFieldState extends State<PinField> {
         errorMaxLines: 2,
         prefixIcon: const Icon(Icons.pin_outlined),
         border: const OutlineInputBorder(),
-        suffixIcon: IconButton(
-          tooltip: _visible ? 'Hide PIN' : 'Show PIN',
-          icon: Icon(_visible ? Icons.visibility_off : Icons.visibility),
-          onPressed: () => setState(() => _visible = !_visible),
+        // Left out of the Tab order, so Tab goes straight to the next box.
+        suffixIcon: ExcludeFocus(
+          child: IconButton(
+            tooltip: _visible ? 'Hide PIN' : 'Show PIN',
+            icon: Icon(_visible ? Icons.visibility_off : Icons.visibility),
+            onPressed: () => setState(() => _visible = !_visible),
+          ),
         ),
       ),
       onChanged: widget.onChanged,

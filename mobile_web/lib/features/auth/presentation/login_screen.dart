@@ -41,6 +41,17 @@ class _LoginScreenState extends State<LoginScreen> {
       // On success the app replaces this screen with the dashboard.
     } on ApiException catch (error) {
       if (mounted) setState(() => _error = error.message);
+    } on Object catch (error) {
+      // Anything else (for example the browser refusing to store the sign-in) must not leave
+      // the person on this screen with no explanation.
+      debugPrint('Sign-in could not be completed: $error');
+      if (mounted) {
+        setState(
+          () => _error =
+              'Signed in, but this device could not keep the sign-in. Try again, or open '
+              'Snackify in another browser.',
+        );
+      }
     } finally {
       if (mounted) setState(() => _submitting = false);
     }

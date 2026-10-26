@@ -43,6 +43,15 @@ void main() {
     expect(app.backend.requests, isNot(contains('POST /api/v1/auth/login')));
   });
 
+  testWidgets('explains when this device cannot keep the sign-in', (tester) async {
+    await pumpSnackify(tester, tokenStore: FailingTokenStore());
+
+    await signInThroughForm(tester, testUsername, testPin);
+
+    expect(find.textContaining('this device could not keep the sign-in'), findsOneWidget);
+    expect(find.text('Sign in to Snackify'), findsOneWidget);
+  });
+
   testWidgets('explains when the server cannot be reached', (tester) async {
     final app = await pumpSnackify(tester);
     app.backend.reachable = false;

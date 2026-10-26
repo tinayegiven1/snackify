@@ -163,6 +163,16 @@ describe('POST /api/v1/auth/login', () => {
     expect((await from('198.51.100.2', 'tendai', PIN)).status).toBe(200);
   });
 
+  it('tells an out-of-date app (still sending a password) to update', async () => {
+    const old = await request(app)
+      .post('/api/v1/auth/login')
+      .send({ username: 'tendai', password: PIN });
+    expect(old.status).toBe(426);
+    expect(old.body.error.code).toBe('APP_UPDATE_REQUIRED');
+    expect(old.body.error.message).toContain('signs in with a PIN');
+    expect(await auditEntries(pools.owner, 'auth.login_failed')).toHaveLength(0);
+  });
+
   it('locks an account for 15 minutes after 5 wrong PINs in a row', async () => {
     for (let attempt = 1; attempt <= 4; attempt++) {
       expect((await login('tendai', '9999')).status).toBe(401);

@@ -28,7 +28,7 @@ import 'features/stock/data/stock_repository.dart';
 
 void main() {
   final api = ApiClient(baseUrl: AppConfig.apiBaseUrl);
-  final auth = AuthController(AuthRepository(api: api, tokenStore: SecureTokenStore()))..restore();
+  final auth = AuthController(AuthRepository(api: api, tokenStore: deviceTokenStore()))..restore();
   final services = AppServices(
     checkBackendHealth: BackendHealthService(api).isHealthy,
     products: ProductsRepository(api),

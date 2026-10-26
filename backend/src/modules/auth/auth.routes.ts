@@ -62,6 +62,17 @@ export function authRouter(db: pg.Pool): Router {
   });
 
   router.post('/login', passwordAttemptLimiter, async (req, res) => {
+    // Copies of the app from before PINs (2026-10-21) still send a password. Say so plainly,
+    // rather than "some fields are missing", so staff know to update the app.
+    const body: unknown = req.body;
+    if (typeof body === 'object' && body !== null && 'password' in body && !('pin' in body)) {
+      throw new AppError(
+        426,
+        'APP_UPDATE_REQUIRED',
+        'This copy of the Snackify app is out of date: Snackify now signs in with a PIN. ' +
+          'Install the latest app, or use Snackify in a web browser.',
+      );
+    }
     const { username, pin } = parseBody(signInSchema, req.body);
     const user = await findUserForSignIn(db, username);
 
