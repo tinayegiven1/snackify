@@ -15,7 +15,7 @@ import {
 
 // StockFlow Stage 4.1: categories, units and conversions, suppliers, warehouses.
 const pools = createTestPools();
-const PASSWORD = 'correct horse battery';
+const PASSWORD = '4826';
 let app: Express;
 const tokens = {} as Record<Role, string>;
 

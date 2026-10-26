@@ -50,7 +50,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   late final _details = TextEditingController(text: widget.product?.details);
   late String? _categoryId = widget.product?.category?.id;
 
-  /// Larger units and how many base units each holds, e.g. carton → 24.
+  /// Larger units and how many base units each holds, e.g. carton = 24.
   late final List<({String? unitId, TextEditingController quantity})> _conversions = [
     for (final unit in widget.product?.conversions ?? const <ProductUnit>[])
       (unitId: unit.id, quantity: TextEditingController(text: '${unit.baseQuantity}')),

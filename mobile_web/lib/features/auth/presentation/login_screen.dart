@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/network/api_client.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../shared/widgets/pin_field.dart';
 import '../../../shared/widgets/snackify_logo.dart';
 import 'auth_controller.dart';
 import '../../../shared/widgets/message_view.dart';
@@ -18,15 +19,14 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _username = TextEditingController();
-  final _password = TextEditingController();
-  bool _passwordVisible = false;
+  final _pin = TextEditingController();
   bool _submitting = false;
   String? _error;
 
   @override
   void dispose() {
     _username.dispose();
-    _password.dispose();
+    _pin.dispose();
     super.dispose();
   }
 
@@ -37,7 +37,7 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
     });
     try {
-      await widget.auth.signIn(_username.text.trim(), _password.text);
+      await widget.auth.signIn(_username.text.trim(), _pin.text);
       // On success the app replaces this screen with the dashboard.
     } on ApiException catch (error) {
       if (mounted) setState(() => _error = error.message);
@@ -95,26 +95,12 @@ class _LoginScreenState extends State<LoginScreen> {
                             (value ?? '').trim().isEmpty ? 'Enter your username' : null,
                       ),
                       const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _password,
-                        decoration: InputDecoration(
-                          labelText: 'Password',
-                          prefixIcon: const Icon(Icons.lock_outline),
-                          border: const OutlineInputBorder(),
-                          suffixIcon: IconButton(
-                            tooltip: _passwordVisible ? 'Hide password' : 'Show password',
-                            icon: Icon(_passwordVisible ? Icons.visibility_off : Icons.visibility),
-                            onPressed: () => setState(() => _passwordVisible = !_passwordVisible),
-                          ),
-                        ),
-                        obscureText: !_passwordVisible,
-                        autofillHints: const [AutofillHints.password],
-                        autocorrect: false,
-                        enableSuggestions: false,
-                        textInputAction: TextInputAction.done,
+                      PinField(
+                        controller: _pin,
+                        label: 'PIN',
                         enabled: !_submitting,
-                        onFieldSubmitted: (_) => _submit(),
-                        validator: (value) => (value ?? '').isEmpty ? 'Enter your password' : null,
+                        onSubmitted: (_) => _submit(),
+                        validator: (value) => value.isEmpty ? 'Enter your PIN' : null,
                       ),
                       const SizedBox(height: 24),
                       FilledButton(
@@ -129,7 +115,8 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       const SizedBox(height: 16),
                       Text(
-                        'Forgot your password? Ask an admin to reset it.',
+                        'New here? Your first PIN is 1234. Forgot your PIN? Ask an admin to '
+                        'reset it.',
                         textAlign: TextAlign.center,
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,

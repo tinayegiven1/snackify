@@ -14,6 +14,7 @@ import { dispatchesRouter } from './modules/dispatches/dispatches.routes.js';
 import { forecastsRouter } from './modules/forecasts/forecasts.routes.js';
 import { healthRouter, type DatabaseCheck } from './modules/health/health.routes.js';
 import { invoicesRouter } from './modules/invoices/invoices.routes.js';
+import { ordersRouter } from './modules/orders/orders.routes.js';
 import { organisationsRouter } from './modules/organisations/organisations.routes.js';
 import { balancesRouter, paymentsRouter } from './modules/payments/payments.routes.js';
 import { productsRouter } from './modules/products/products.routes.js';
@@ -64,6 +65,7 @@ export function createApp(config: AppConfig, deps: AppDependencies): Express {
   }
   app.use('/api/v1/stock', stockRouter(deps.db, config.businessTimezone));
   app.use('/api/v1/receipts', receiptsRouter(deps.db, config));
+  app.use('/api/v1/orders', ordersRouter(deps.db, config));
   app.use('/api/v1/customers', customersRouter(deps.db));
   app.use('/api/v1/dispatches', dispatchesRouter(deps.db, config.businessTimezone));
   app.use('/api/v1/invoices', invoicesRouter(deps.db, config));

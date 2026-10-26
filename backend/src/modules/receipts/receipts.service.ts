@@ -733,20 +733,15 @@ export async function submitReceipt(
   await withTransaction(pool, async (client) => {
     const current = await lockReceipt(client, scope, id);
     if (current.status !== 'DRAFT') throw wrongStatus(current.status, 'submitted');
-    const { rows } = await client.query<{
-      supplier_id: string | null;
-      lines: number;
-      documents: number;
-    }>(
-      `SELECT r.supplier_id,
-              (SELECT count(*)::int FROM stock_receipt_lines l WHERE l.receipt_id = r.id) AS lines,
+    const { rows } = await client.query<{ lines: number; documents: number }>(
+      `SELECT (SELECT count(*)::int FROM stock_receipt_lines l WHERE l.receipt_id = r.id) AS lines,
               (SELECT count(*)::int FROM stock_receipt_attachments a
                WHERE a.receipt_id = r.id AND a.verification_status <> 'REJECTED') AS documents
        FROM stock_receipts r WHERE r.id = $1`,
       [id],
     );
-    const facts = rows[0] as { supplier_id: string | null; lines: number; documents: number };
-    if (!facts.supplier_id) throw fieldError('supplierId', 'Choose the supplier before submitting');
+    // No supplier is needed (the owner's choice, 2026-10-21); the documents show who sold it.
+    const facts = rows[0] as { lines: number; documents: number };
     if (facts.lines === 0) throw fieldError('lines', 'Add at least one product');
 
     let noDocumentReason: string | null = null;

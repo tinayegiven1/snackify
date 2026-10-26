@@ -20,7 +20,7 @@ import {
 } from './db-test-helpers.js';
 
 const pools = createTestPools();
-const PASSWORD = 'correct horse battery';
+const PASSWORD = '4826';
 let app: Express;
 const tokens = {} as Record<Role, string>;
 let bbq: string;

@@ -15,19 +15,19 @@ void main() {
   testWidgets('signs in and opens the dashboard, remembering the session', (tester) async {
     final app = await pumpSnackify(tester);
 
-    await signInThroughForm(tester, testUsername, testPassword);
+    await signInThroughForm(tester, testUsername, testPin);
 
     expect(find.widgetWithText(AppBar, 'Dashboard'), findsOneWidget);
     expect(app.tokenStore.token, isNotNull);
     expect(app.backend.validTokens, contains(app.tokenStore.token));
   });
 
-  testWidgets('shows the server message for a wrong password and stays on login', (tester) async {
+  testWidgets('shows the server message for a wrong PIN and stays on login', (tester) async {
     final app = await pumpSnackify(tester);
 
-    await signInThroughForm(tester, testUsername, 'not the password');
+    await signInThroughForm(tester, testUsername, '9999');
 
-    expect(find.text('Incorrect username or password.'), findsOneWidget);
+    expect(find.text('Incorrect username or PIN.'), findsOneWidget);
     expect(find.text('Sign in to Snackify'), findsOneWidget);
     expect(app.tokenStore.token, isNull);
   });
@@ -39,7 +39,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Enter your username'), findsOneWidget);
-    expect(find.text('Enter your password'), findsOneWidget);
+    expect(find.text('Enter your PIN'), findsOneWidget);
     expect(app.backend.requests, isNot(contains('POST /api/v1/auth/login')));
   });
 
@@ -47,7 +47,7 @@ void main() {
     final app = await pumpSnackify(tester);
     app.backend.reachable = false;
 
-    await signInThroughForm(tester, testUsername, testPassword);
+    await signInThroughForm(tester, testUsername, testPin);
 
     expect(
       find.text('Cannot reach the Snackify server. Check your connection and try again.'),
@@ -55,19 +55,63 @@ void main() {
     );
   });
 
-  testWidgets('can show the password while typing', (tester) async {
+  testWidgets('takes digits only for the PIN, hidden unless shown', (tester) async {
     await pumpSnackify(tester);
-    TextField passwordField() => tester.widget<TextField>(
+    TextField pinField() => tester.widget<TextField>(
       find.descendant(
-        of: find.widgetWithText(TextFormField, 'Password'),
+        of: find.widgetWithText(TextFormField, 'PIN'),
         matching: find.byType(TextField),
       ),
     );
 
-    expect(passwordField().obscureText, isTrue);
-    await tester.tap(find.byTooltip('Show password'));
+    await tester.enterText(find.widgetWithText(TextFormField, 'PIN'), '48a2b6');
+    expect(pinField().controller!.text, '4826');
+    expect(pinField().keyboardType, TextInputType.number);
+    expect(pinField().obscureText, isTrue);
+    await tester.tap(find.byTooltip('Show PIN'));
     await tester.pump();
-    expect(passwordField().obscureText, isFalse);
+    expect(pinField().obscureText, isFalse);
+  });
+
+  testWidgets('the first sign-in with 1234 asks for a new PIN before anything else', (
+    tester,
+  ) async {
+    final backend = FakeBackend()
+      ..pin = '1234'
+      ..mustChangePin = true;
+    final app = await pumpSnackify(tester, backend: backend);
+
+    await signInThroughForm(tester, testUsername, '1234');
+    expect(find.text('Choose your PIN'), findsOneWidget);
+    expect(find.text('Dashboard'), findsNothing);
+
+    Finder pinBox(String label) => find.widgetWithText(TextFormField, label);
+    await tester.enterText(pinBox('New PIN'), '1111');
+    await tester.enterText(pinBox('New PIN again'), '1111');
+    await tester.tap(find.text('Save my PIN'));
+    await tester.pumpAndSettle();
+    expect(find.text('Too easy to guess: avoid 1234, 0000, 4321 and the like'), findsOneWidget);
+
+    await tester.enterText(pinBox('New PIN'), '5830');
+    await tester.enterText(pinBox('New PIN again'), '5830');
+    await tester.tap(find.text('Save my PIN'));
+    await tester.pumpAndSettle();
+
+    expect(backend.pinsSet, [(backend.user['id'], '5830')]);
+    expect(find.widgetWithText(AppBar, 'Dashboard'), findsOneWidget);
+    expect(app.backend.requests, contains('POST /api/v1/auth/change-pin'));
+  });
+
+  testWidgets('a saved session still on the starting PIN opens on "Choose your PIN"', (
+    tester,
+  ) async {
+    final backend = FakeBackend()..mustChangePin = true;
+    await pumpSnackify(tester, signedIn: true, backend: backend);
+
+    expect(find.text('Choose your PIN'), findsOneWidget);
+    await tester.tap(find.text('Sign out'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sign in to Snackify'), findsOneWidget);
   });
 
   testWidgets('opens straight to the dashboard when a saved session is still valid', (
@@ -112,7 +156,7 @@ void main() {
   ) async {
     final app = await pumpSnackify(tester, signedIn: true);
 
-    // For example, an admin deactivated the account or reset the password.
+    // For example, an admin deactivated the account or reset the PIN.
     app.backend.validTokens.clear();
     await expectLater(app.api.getJson('/api/v1/auth/me'), throwsA(isA<ApiException>()));
     await tester.pumpAndSettle();

@@ -142,7 +142,11 @@ class _ReceiptsScreenState extends State<ReceiptsScreen> {
             for (final receipt in receipts) ...[
               ListTile(
                 title: Text(
-                  '${receipt.grnNumber} · ${receipt.supplier?.name ?? 'No supplier yet'}',
+                  [
+                    receipt.grnNumber,
+                    ?receipt.supplier?.name,
+                    ?receipt.supplierInvoiceNumber,
+                  ].join(' · '),
                 ),
                 subtitle: Text(
                   [

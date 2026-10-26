@@ -27,7 +27,7 @@ errors it lists each invalid field:
   "error": {
     "code": "VALIDATION_ERROR",
     "message": "Some fields are missing or invalid.",
-    "details": [{ "field": "password", "message": "Use at least 10 characters" }]
+    "details": [{ "field": "newPin", "message": "Use at least 4 digits" }]
   }
 }
 ```
@@ -39,7 +39,9 @@ Raw database errors, stack traces and submitted values are never returned.
 | 400    | `INVALID_JSON`             | The request body is not valid JSON                         |
 | 400    | `VALIDATION_ERROR`         | One or more fields are missing or invalid (see `details`)  |
 | 401    | `UNAUTHENTICATED`          | No session token, or the session has ended                 |
-| 401    | `INVALID_CREDENTIALS`      | Wrong username or password (same answer for both)          |
+| 401    | `INVALID_CREDENTIALS`      | Wrong username or PIN (same answer for both)               |
+| 403    | `PIN_CHANGE_REQUIRED`      | The account is on the starting PIN 1234: choose a new PIN first |
+| 423    | `ACCOUNT_LOCKED`           | 5 wrong PINs in a row: the account is locked for 15 minutes |
 | 403    | `FORBIDDEN`                | Signed in, but the role does not allow this action         |
 | 404    | `NOT_FOUND`                | The route does not exist                                   |
 | 404    | `USER_NOT_FOUND`           | No staff account has that id                               |
@@ -58,15 +60,18 @@ Raw database errors, stack traces and submitted values are never returned.
 | 409    | `CUSTOMER_INACTIVE`        | The customer has been deactivated                          |
 | 409    | `CREDIT_LIMIT_EXCEEDED`    | Confirming would go over the credit limit (see below)      |
 | 413    | `PAYLOAD_TOO_LARGE`        | The request body is larger than 100 KB                     |
-| 429    | `TOO_MANY_ATTEMPTS`        | 10 failed password attempts from one address in 15 minutes |
+| 429    | `TOO_MANY_ATTEMPTS`        | 10 failed PIN attempts from one address in 15 minutes      |
 | 500    | `INTERNAL_ERROR`           | Unexpected server error (details are logged)               |
 
 ## Signing in and permissions
 
-1. `POST /api/v1/auth/login` with a username and password returns a session `token`.
+1. `POST /api/v1/auth/login` with a username and **PIN** returns a session `token`.
 2. Send it on every other request: `Authorization: Bearer <token>`.
-3. A session lasts 12 hours. It ends earlier on sign-out, when an admin resets the password or
-   deactivates the account, or when the user changes their password on another device.
+3. A session lasts 12 hours. It ends earlier on sign-out, when an admin resets the PIN or
+   deactivates the account, or when the user changes their PIN on another device.
+4. Every account starts on the PIN **1234** (`user.mustChangePin: true`). Until it chooses its
+   own PIN (`POST /api/v1/auth/change-pin`), every other request except `GET /auth/me` and
+   `POST /auth/logout` answers **403** `PIN_CHANGE_REQUIRED`.
 
 **Permissions** (StockFlow Stage 3, see [STAGE_3_5_PLAN.md](STAGE_3_5_PLAN.md)). Each user
 belongs to one organisation (the Head Office or a subsidiary) and holds one or more **roles**;
@@ -133,12 +138,14 @@ serve requests. The reason is written to the server log, never to the response.
 ### `POST /api/v1/auth/login`
 
 Public. Rate-limited: after 10 failed attempts from one network address within 15 minutes,
-further attempts get `429` (successful sign-ins do not count). Usernames are not case-sensitive.
+further attempts get `429` (successful sign-ins do not count). After 5 wrong PINs in a row an
+account is locked for 15 minutes (**423** `ACCOUNT_LOCKED`, even with the right PIN; a correct
+PIN resets the count; an admin's reset unlocks it). Usernames are not case-sensitive.
 
 Request:
 
 ```json
-{ "username": "tendai", "password": "correct horse battery" }
+{ "username": "tendai", "pin": "4826" }
 ```
 
 **200 OK**
@@ -153,12 +160,13 @@ Request:
     "fullName": "Tendai Moyo",
     "organisation": { "id": "3b1f...", "code": "HQ", "name": "Head Office", "type": "HQ" },
     "roles": [{ "code": "hq_warehouse_officer", "name": "HQ Warehouse Officer" }],
-    "permissions": ["customer.view", "dispatch.confirm", "dispatch.draft", "stock.receive", "stock.view"]
+    "permissions": ["customer.view", "dispatch.confirm", "dispatch.draft", "stock.receive", "stock.view"],
+    "mustChangePin": false
   }
 }
 ```
 
-(The permission list is shortened here.) **401** `INVALID_CREDENTIALS` for a wrong password, an
+(The permission list is shortened here.) **401** `INVALID_CREDENTIALS` for a wrong PIN, an
 unknown username, a deactivated account, or an account whose organisation is deactivated. The
 answer is identical in every case.
 
@@ -171,26 +179,28 @@ Signed in. Ends the current session. **204 No Content**.
 Signed in. **200 OK** with `{ "user": { ... } }`, the same as the sign-in answer. Roles and
 permissions are read on every request, so a change an admin makes applies at once.
 
-### `POST /api/v1/auth/change-password`
+### `POST /api/v1/auth/change-pin`
 
-Signed in. Changes your own password and signs you out on every other device.
+Signed in (also on the starting PIN). Changes your own PIN and signs you out on every other
+device.
 
 ```json
-{ "currentPassword": "correct horse battery", "newPassword": "a brand new passphrase" }
+{ "currentPin": "1234", "newPin": "58203" }
 ```
 
-**204 No Content**. **400** `VALIDATION_ERROR` if the current password is wrong or the new one
-is invalid. Rate-limited like sign-in.
+**200 OK** with `{ "user": { ..., "mustChangePin": false } }`. **400** `VALIDATION_ERROR` if the
+current PIN is wrong, or the new one is not 4–8 digits, is 1234 or easy to guess (0000, 1111,
+4321, 2468 …), or equals the current one. Rate-limited like sign-in. Audited as
+`auth.pin_changed`.
 
 ## Staff accounts (`user.manage`)
 
-Passwords must be 10–128 characters. Usernames are 3–32 characters (letters, digits, `.`, `-`,
+New accounts start on the PIN 1234 and must choose their own at the first sign-in. Usernames are 3–32 characters (letters, digits, `.`, `-`,
 `_`) and are stored in lower case. Accounts are never deleted; deactivate them instead.
 
 ### `GET /api/v1/users`
 
-Optional `?organisationId=`. **200 OK**, active accounts first. Password hashes are never
-returned.
+Optional `?organisationId=`. **200 OK**, active accounts first. PIN hashes are never returned.
 
 ```json
 {
@@ -216,8 +226,7 @@ returned.
   "username": "rudo",
   "fullName": "Rudo Chikore",
   "organisationId": "3b1f...",
-  "roleCodes": ["hq_finance_officer", "hq_warehouse_officer"],
-  "password": "first-passphrase"
+  "roleCodes": ["hq_finance_officer", "hq_warehouse_officer"]
 }
 ```
 
@@ -238,14 +247,12 @@ someone to another organisation needs roles that suit it, and signs them out. Se
 organisation, or deactivate themselves (`409 CANNOT_CHANGE_OWN_ACCESS`), so there is always an
 active admin. Role changes are audited as `user.roles_changed` (from and to).
 
-### `POST /api/v1/users/:id/reset-password`
+### `POST /api/v1/users/:id/reset-pin`
 
-```json
-{ "newPassword": "temporary passphrase" }
-```
-
-**204 No Content**. The user is signed out everywhere and must use the new password. Admins
-change their own password with `/auth/change-password` instead (`409 USE_CHANGE_PASSWORD`).
+No body. Puts the account back on the PIN 1234 (to be changed at the next sign-in), unlocks it
+and signs it out everywhere. **200 OK** with `{ "pin": "1234", "mustChangePin": true }`. Admins
+change their own PIN with `/auth/change-pin` instead (`409 USE_CHANGE_PIN`). Audited as
+`user.pin_reset`.
 
 ## Roles (`user.manage` or `role.manage`)
 
@@ -802,6 +809,123 @@ All receipt actions are recorded in the audit log (`receipt.created`, `receipt.u
 `receipt.document_added`, `receipt.document_reviewed`, `receipt.submitted`,
 `receipt.no_document`, `receipt.verified`, `receipt.posted`, `receipt.rejected`,
 `receipt.reversed`).
+
+## Orders (`/api/v1/orders`)
+
+A subsidiary orders goods from the Head Office (StockFlow Stage 5). For each line it says the
+quantity (in any unit the product has), the price it **expects** and the **maximum** it accepts;
+during review the Head Office sets the **actual** price. Order numbers are `ORD000001` ….
+
+Statuses: `DRAFT` → `SUBMITTED` → `UNDER_REVIEW` → `APPROVED` or `REJECTED`; `DRAFT` or
+`SUBMITTED` → `CANCELLED` (`PARTIALLY_DISPATCHED`, `FULLY_DISPATCHED`, `COMPLETED` are reserved
+for dispatching). The server and a database trigger allow only these steps (**409**
+`ORDER_WRONG_STATUS` otherwise), and every change is kept in the order's `history`.
+
+**Money** is exact: line totals (quantity × price) and the price-exception flag are generated by
+the database; totals sent by the app are ignored. Prices have up to 2 decimal places.
+
+| Action                                              | Permission                | Who has it (default) |
+| --------------------------------------------------- | ------------------------- | -------------------- |
+| See orders (own organisation; the Head Office: all) | `order.view`              | Subsidiary Manager, HQ Finance, HQ Sales, System Administrator |
+| Create, change drafts, submit, cancel               | `order.create`            | Subsidiary Manager |
+| Start review, set actual prices                     | `order.price`             | HQ Finance Officer |
+| Approve or reject                                   | `order.approve`           | HQ Finance Officer |
+| Approve a price above the maximum                   | `price.exception.approve` | HQ Finance Officer |
+
+The ordering organisation is the signed-in user's own (a subsidiary's staff cannot order for
+another: **404**). Reviewing, pricing and deciding are for Head Office staff only. Another
+organisation's order answers **404** `ORDER_NOT_FOUND`.
+
+### `POST /api/v1/orders` (`order.create`)
+
+```json
+{
+  "idempotencyKey": "6f1c2a8e-3b4d-4e5f-9a7b-1c2d3e4f5a6b",
+  "requiredDate": "2026-10-30",
+  "notes": null,
+  "lines": [
+    {
+      "productId": "…",
+      "unitId": "…",
+      "requestedQuantity": 3,
+      "expectedUnitPrice": "0.10",
+      "maximumUnitPrice": "0.15",
+      "notes": null
+    }
+  ]
+}
+```
+
+`idempotencyKey` is a new random UUID per order, kept by the app for retries: sending the same
+key again answers **200** with the order it created the first time and `"replayed": true`
+(so a double click or a retry never creates two orders); the first time answers **201** with
+`"replayed": false`. `maximumUnitPrice` must be at least `expectedUnitPrice`; a product and
+unit may appear once; `requiredDate` may not be in the past. Head Office staff (if a role ever
+lets them create orders) must give `organisationId` (a subsidiary).
+
+An order returns: `id`, `orderNumber`, `status`, `organisation`, `orderDate`, `requiredDate`,
+`currency`, `requestedBy`, `lineCount`, `expectedTotal`, `maximumTotal`, `actualTotal` (once
+every line is priced, else `null`), `priceException`; in full also `lines` (with
+`expectedLineTotal`, `maximumLineTotal`, `actualUnitPrice`, `actualLineTotal`,
+`priceException`, `baseQuantity`, and for Head Office staff only `hqAvailable`: the Head
+Office's available stock in base units), `history` (from, to, who, when, comment), `changes`
+(each actual-price change: line, old, new, who, when, comment), `submittedBy`, `decidedBy`,
+`decisionComment`, `priceExceptionApproved`, `cancelReason`, `taxAmount` and
+`discountAmount` (hooks, 0 for now).
+
+### `GET /api/v1/orders` and `GET /api/v1/orders/:id`
+
+List query: optional `status`, `organisationId`, `priceException=true`, `q` (part of the order
+number), `from`, `to` (order date), `sort` (`newest` default, `oldest`, `required`), `limit`
+(1–200, default 50), `offset`. **200** with `{ "orders": [ … ], "total": 3 }`.
+
+### `PUT /api/v1/orders/:id` (drafts, `order.create`)
+
+The same body as creating, without `idempotencyKey`. Only while `DRAFT`.
+
+### `POST /api/v1/orders/:id/submit` (`order.create`)
+
+Needs at least one line. Submitting an order that is already submitted changes nothing and
+answers with `"alreadySubmitted": true`.
+
+### `POST /api/v1/orders/:id/cancel` (`order.create`)
+
+`{ "reason": "Ordered twice" }` (required). Only while `DRAFT` or `SUBMITTED`: once the Head
+Office has started the review, the subsidiary can no longer cancel.
+
+### `POST /api/v1/orders/:id/review` (`order.price`)
+
+Takes a `SUBMITTED` order into review.
+
+### `PUT /api/v1/orders/:id/prices` (`order.price`)
+
+`{ "prices": [{ "itemId": "…", "actualUnitPrice": "0.12", "comment": null }] }`. Allowed while
+`SUBMITTED` (it then goes into review) or `UNDER_REVIEW`. The subsidiary's quantities and
+prices never change; each actual-price change is logged with the old and new value.
+
+### `POST /api/v1/orders/:id/approve` (`order.approve`)
+
+`{ "comment": "…" }` (optional, unless there is a price exception). Every line needs an actual
+price (**409** `PRICES_MISSING`). If an actual price is above the maximum, approval needs
+`price.exception.approve` (**403** `PRICE_EXCEPTION_NOT_ALLOWED`) **and** a comment (**400**);
+the order then shows `priceExceptionApproved: true`. With `ORDERS_ALLOW_BACKORDERS=false`, the
+Head Office must have enough available stock for every line (**409** `INSUFFICIENT_STOCK`,
+naming the products); with the default `true`, the rest waits as a backorder. Approving does
+not move stock: dispatching comes in a later stage.
+
+### `POST /api/v1/orders/:id/reject` (`order.approve`)
+
+`{ "comment": "Out of season" }` (required, 3–1000 characters). From `SUBMITTED` or
+`UNDER_REVIEW`.
+
+### `GET /api/v1/orders/:id/pdf`
+
+The order sheet (`ORD000001.pdf`): the subsidiary and the Head Office, order number and dates,
+each line's quantity, unit, expected, maximum and actual prices and totals, the overall values,
+the status and who submitted and decided.
+
+Audit actions: `order.created`, `order.updated`, `order.submitted`, `order.review_started`,
+`order.prices_set`, `order.approved`, `order.rejected`, `order.cancelled`.
 
 ## Customers
 

@@ -2,21 +2,31 @@ import 'package:flutter/material.dart';
 
 import '../../../core/network/api_client.dart';
 import '../../../shared/widgets/message_view.dart';
-import '../../../shared/widgets/password_field.dart';
+import '../../../shared/widgets/pin_field.dart';
 import '../../staff/domain/staff_member.dart';
 
-/// Lets the signed-in person change their own password. Proving the current password is
-/// required; afterwards this device stays signed in and every other one is signed out.
-class ChangePasswordScreen extends StatefulWidget {
-  const ChangePasswordScreen({super.key, required this.changePassword});
+/// Lets the signed-in person choose a new PIN. Normally they prove their current PIN; afterwards
+/// this device stays signed in and every other one is signed out.
+///
+/// With [firstPin] the account is still on the default PIN (1234): this is the only screen it
+/// may use, it asks for the new PIN only, and offers signing out instead of going back.
+class ChangePinScreen extends StatefulWidget {
+  const ChangePinScreen({
+    super.key,
+    required this.changePin,
+    this.firstPin = false,
+    this.onSignOut,
+  });
 
-  final Future<void> Function(String currentPassword, String newPassword) changePassword;
+  final Future<void> Function(String currentPin, String newPin) changePin;
+  final bool firstPin;
+  final Future<void> Function()? onSignOut;
 
   @override
-  State<ChangePasswordScreen> createState() => _ChangePasswordScreenState();
+  State<ChangePinScreen> createState() => _ChangePinScreenState();
 }
 
-class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
+class _ChangePinScreenState extends State<ChangePinScreen> {
   final _formKey = GlobalKey<FormState>();
   final _current = TextEditingController();
   final _new = TextEditingController();
@@ -44,12 +54,13 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
 
     setState(() => _saving = true);
     try {
-      await widget.changePassword(_current.text, _new.text);
+      await widget.changePin(widget.firstPin ? defaultPin : _current.text, _new.text);
       if (!mounted) return;
       for (final controller in [_current, _new, _repeat]) {
         controller.clear();
       }
-      setState(() => _done = true);
+      // After the first PIN, the app itself moves on to the main screens.
+      if (!widget.firstPin) setState(() => _done = true);
     } on ApiException catch (error) {
       if (!mounted) return;
       setState(() {
@@ -70,7 +81,14 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Change password')),
+      appBar: AppBar(
+        title: Text(widget.firstPin ? 'Choose your PIN' : 'Change PIN'),
+        automaticallyImplyLeading: !widget.firstPin,
+        actions: [
+          if (widget.firstPin && widget.onSignOut != null)
+            TextButton(onPressed: widget.onSignOut, child: const Text('Sign out')),
+        ],
+      ),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
@@ -91,8 +109,8 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
       children: [
         const SuccessBanner(
           message:
-              'Your password has been changed. You are still signed in here; any other phones '
-              'or computers you were signed in on have been signed out.',
+              'Your PIN has been changed. You are still signed in here; any other phones or '
+              'computers you were signed in on have been signed out.',
         ),
         const SizedBox(height: 16),
         FilledButton(
@@ -111,41 +129,50 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (widget.firstPin) ...[
+              const Text(
+                'You signed in with the starting PIN 1234, which everyone knows. Choose your '
+                'own PIN to continue, and keep it to yourself.',
+              ),
+              const SizedBox(height: 16),
+            ],
             if (_error != null) ...[ErrorBanner(message: _error!), const SizedBox(height: 16)],
-            PasswordField(
-              controller: _current,
-              label: 'Current password',
-              enabled: !_saving,
-              errorText: _serverErrors['currentPassword'],
-              onChanged: (_) => _clearServerError('currentPassword'),
-              validator: (value) => value.isEmpty ? 'Enter your current password' : null,
-            ),
-            const SizedBox(height: 16),
-            PasswordField(
+            if (!widget.firstPin) ...[
+              PinField(
+                controller: _current,
+                label: 'Current PIN',
+                enabled: !_saving,
+                errorText: _serverErrors['currentPin'],
+                onChanged: (_) => _clearServerError('currentPin'),
+                validator: (value) => value.isEmpty ? 'Enter your current PIN' : null,
+              ),
+              const SizedBox(height: 16),
+            ],
+            PinField(
               controller: _new,
-              label: 'New password',
-              helper:
-                  'At least $minPasswordLength characters. A short sentence is easy to remember '
-                  'and hard to guess.',
+              label: 'New PIN',
+              helper: '$minPinLength to $maxPinLength digits. Not 1234, 0000, 4321 or the like.',
               isNew: true,
+              autofocus: widget.firstPin,
               enabled: !_saving,
-              errorText: _serverErrors['newPassword'],
-              onChanged: (_) => _clearServerError('newPassword'),
+              errorText: _serverErrors['newPin'],
+              onChanged: (_) => _clearServerError('newPin'),
               validator: (value) {
-                final problem = checkNewPassword(value);
+                final problem = checkNewPin(value);
                 if (problem != null) return problem;
-                return value == _current.text
-                    ? 'Must be different from the current password'
+                return !widget.firstPin && value == _current.text
+                    ? 'Must be different from the current PIN'
                     : null;
               },
             ),
             const SizedBox(height: 16),
-            PasswordField(
+            PinField(
               controller: _repeat,
-              label: 'New password again',
+              label: 'New PIN again',
               isNew: true,
               enabled: !_saving,
-              validator: (value) => value == _new.text ? null : 'The two new passwords differ',
+              onSubmitted: (_) => _save(),
+              validator: (value) => value == _new.text ? null : 'The two PINs differ',
             ),
             const SizedBox(height: 24),
             FilledButton(
@@ -156,7 +183,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                       dimension: 20,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Text('Change password'),
+                  : Text(widget.firstPin ? 'Save my PIN' : 'Change PIN'),
             ),
           ],
         ),

@@ -127,7 +127,7 @@ describe('backups', () => {
       'table customers: same number of rows, but the contents differ',
       'table products: 2 rows in the backup, 1 restored',
       'sequence customer_code_seq: at 1 in the backup, 1 restored (used/unused state differs)',
-      'triggers: 23 in the backup, 22 restored',
+      'triggers: 26 in the backup, 25 restored',
       'privileges: same number, but the definitions differ',
     ]);
   });

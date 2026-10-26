@@ -276,4 +276,42 @@ Migrations: `20261021090000000_catalogue.sql`, `20261021100000000_stock-balances
 `ATTACHMENT_STORAGE_DIR` (default `storage/attachments`, ignored by Git): back it up with the
 database.
 
-### Stage 5: not started
+### Stage 5: done (2026-10-21)
+
+- [x] Orders + order items with expected/max/actual prices (Orders screen: subsidiaries order;
+      the Head Office reviews)
+- [x] Decimal-safe totals computed server-side (generated numeric columns; app totals ignored)
+- [x] Price exception flag + authorised approval (`price.exception.approve` and a comment)
+- [x] Status transitions + history (server and database trigger; `order_status_history`)
+- [x] Change log for submitted values (submitted values locked; `order_item_changes`)
+- [x] Order sheet PDF
+- [x] Stage 5 tests passing (all six from the file, plus backorders, units, PDF, separation)
+
+Decisions (conservative, documented):
+
+- Permissions: `order.view` (Subsidiary Manager, HQ Finance, HQ Sales, System Administrator),
+  `order.create` (Subsidiary Manager), `order.price`, `order.approve` and
+  `price.exception.approve` (HQ Finance Officer: the file's "confirm selling prices, approve
+  price exceptions"). The System Administrator role alone cannot approve prices.
+- Reviewing, pricing and deciding are for Head Office staff only, whatever the permissions.
+- A subsidiary may cancel its order while it is a draft or submitted, with a reason; once the
+  review starts, only the Head Office can reject it.
+- Price exception: any actual price above the maximum (no tolerance setting yet).
+- Backorders allowed by default (`ORDERS_ALLOW_BACKORDERS=true`); approval does not reserve or
+  move stock (dispatching approved orders is the next stage). Head Office stock is shown to Head
+  Office staff only.
+- Tax and discount: hooks only (`tax_amount`, `discount_amount`, 0).
+- Idempotency: a key per new order, unique per person; the same key returns the first order.
+
+Migration: `20261021120000000_orders.sql`. The development database was backed up
+(`snackify_dev-20261021T112726.895Z.dump`) and migrated.
+
+### Owner changes after Stage 5 (2026-10-21 to 2026-10-26)
+
+- **Sign-in by PIN instead of password.** Every account starts on the PIN 1234 and must choose
+  its own (4–8 digits, not easy to guess) at the first sign-in before doing anything else; an
+  admin's Reset PIN puts it back on 1234. Five wrong PINs in a row lock the account for 15
+  minutes. Migration `20261021130000000_pin-sign-in.sql` reset every existing account to 1234.
+- **No supplier on goods-received notes.** The Supplier field was removed from Receive Stock and
+  is no longer required to submit (migration `20261021140000000_receipt-supplier-optional.sql`);
+  the supplier invoice number and documents are still recorded.

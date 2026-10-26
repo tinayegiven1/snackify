@@ -35,6 +35,12 @@ export const PERMISSIONS = [
   'receipt.verify',
   'receipt.no_document',
   'receipt.reverse',
+  // StockFlow Stage 5.
+  'order.view',
+  'order.create',
+  'order.price',
+  'order.approve',
+  'price.exception.approve',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];

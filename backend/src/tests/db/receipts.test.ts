@@ -19,7 +19,7 @@ import {
 
 // StockFlow Stage 4.4 and 4.5: goods-received notes, their documents and their stock.
 const pools = createTestPools();
-const PASSWORD = 'correct horse battery';
+const PASSWORD = '4826';
 let app: Express;
 const tokens: Record<string, string> = {};
 let hq: string;
@@ -290,13 +290,12 @@ describe('a Head Office receipt', () => {
     expect((await as('salesperson').post('/api/v1/receipts', draftBody())).status).toBe(403);
     expect((await pools.owner.query('SELECT 1 FROM stock_receipts')).rowCount).toBe(0);
 
-    // A draft may be saved without a supplier, but not submitted.
+    // No supplier is needed, to save or to submit.
     const draft = await createDraft({ supplierId: null });
     await upload('storekeeper', draft.id, 'invoice.pdf', FILES.pdf);
     const submit = await as('storekeeper').post(`/api/v1/receipts/${draft.id}/submit`);
-    expect(submit.body.error.details).toEqual([
-      { field: 'supplierId', message: 'Choose the supplier before submitting' },
-    ]);
+    expect(submit.status).toBe(200);
+    expect(submit.body.receipt).toMatchObject({ status: 'PENDING_VERIFICATION', supplier: null });
   });
 
   it('records discrepancies and a document total that does not match', async () => {

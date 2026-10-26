@@ -5,7 +5,7 @@ import '../../core/routing/app_destinations.dart';
 import '../../core/theme/app_theme.dart';
 import '../../features/audit/presentation/audit_log_screen.dart';
 import '../../features/auth/domain/app_user.dart';
-import '../../features/auth/presentation/change_password_screen.dart';
+import '../../features/auth/presentation/change_pin_screen.dart';
 import '../../features/catalogue/presentation/catalogue_screen.dart';
 import '../../features/customers/domain/customer.dart';
 import '../../features/customers/presentation/customers_screen.dart';
@@ -14,6 +14,8 @@ import '../../features/dispatches/domain/dispatch_models.dart';
 import '../../features/dispatches/presentation/dispatches_screen.dart';
 import '../../features/forecasts/presentation/forecasts_screen.dart';
 import '../../features/invoices/presentation/invoices_screen.dart';
+import '../../features/orders/presentation/order_services.dart';
+import '../../features/orders/presentation/orders_screen.dart';
 import '../../features/organisations/presentation/organisations_screen.dart';
 import '../../features/payments/presentation/payments_screen.dart';
 import '../../features/products/presentation/products_screen.dart';
@@ -34,13 +36,13 @@ class AppShell extends StatefulWidget {
     super.key,
     required this.user,
     required this.onSignOut,
-    required this.onChangePassword,
+    required this.onChangePin,
     required this.services,
   });
 
   final AppUser user;
   final Future<void> Function() onSignOut;
-  final Future<void> Function(String currentPassword, String newPassword) onChangePassword;
+  final Future<void> Function(String currentPin, String newPin) onChangePin;
   final AppServices services;
 
   @override
@@ -86,6 +88,15 @@ class _AppShellState extends State<AppShell> {
         receiptServices: receiptServices,
       ),
       'Goods Received' => ReceiptsScreen(services: receiptServices),
+      'Orders' => OrdersScreen(
+        services: OrderServices(
+          orders: services.orders,
+          products: services.products,
+          organisations: services.organisations,
+          user: user,
+          sharePdf: services.sharePdf,
+        ),
+      ),
       'Catalogue' => CatalogueScreen(repository: services.catalogue, user: user),
       'Customers' => CustomersScreen(
         repository: services.customers,
@@ -137,12 +148,10 @@ class _AppShellState extends State<AppShell> {
       selectedIndex: selected,
       onSelected: _onDestinationSelected,
       user: widget.user,
-      onChangePassword: () {
+      onChangePin: () {
         _scaffoldKey.currentState?.closeDrawer();
         Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => ChangePasswordScreen(changePassword: widget.onChangePassword),
-          ),
+          MaterialPageRoute<void>(builder: (_) => ChangePinScreen(changePin: widget.onChangePin)),
         );
       },
       onSignOut: () {
@@ -182,7 +191,7 @@ class _NavigationList extends StatelessWidget {
     required this.selectedIndex,
     required this.onSelected,
     required this.user,
-    required this.onChangePassword,
+    required this.onChangePin,
     required this.onSignOut,
   });
 
@@ -190,7 +199,7 @@ class _NavigationList extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onSelected;
   final AppUser user;
-  final VoidCallback onChangePassword;
+  final VoidCallback onChangePin;
   final VoidCallback onSignOut;
 
   @override
@@ -236,9 +245,9 @@ class _NavigationList extends StatelessWidget {
           isThreeLine: true,
         ),
         ListTile(
-          leading: const Icon(Icons.password),
-          title: const Text('Change password'),
-          onTap: onChangePassword,
+          leading: const Icon(Icons.pin_outlined),
+          title: const Text('Change PIN'),
+          onTap: onChangePin,
         ),
         ListTile(
           leading: const Icon(Icons.logout),

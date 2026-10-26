@@ -19,7 +19,7 @@ import {
 
 // StockFlow Stage 3 (docs/STAGE_3_5_PLAN.md): organisations, permissions and separation.
 const pools = createTestPools();
-const PASSWORD = 'correct horse battery';
+const PASSWORD = '4826';
 let app: Express;
 let hq: string;
 let subA: string;
@@ -423,7 +423,7 @@ describe('organisations', () => {
     expect((await as('subsidiary_manager').get('/api/v1/auth/me')).status).toBe(401);
     const signIn = await request(app)
       .post('/api/v1/auth/login')
-      .send({ username: 'subsidiary.manager', password: PASSWORD });
+      .send({ username: 'subsidiary.manager', pin: PASSWORD });
     expect(signIn.status).toBe(401);
     // Other organisations carry on.
     expect((await as('managerB').get('/api/v1/auth/me')).status).toBe(200);
@@ -460,7 +460,7 @@ describe('audit log', () => {
     await as('system_admin').patch(`/api/v1/organisations/${subB}`, { name: 'Gweru Depot' });
     await request(app)
       .post('/api/v1/auth/login')
-      .send({ username: 'subsidiary.manager', password: 'wrong password!' });
+      .send({ username: 'subsidiary.manager', pin: '9999' });
 
     const { rows } = await pools.owner.query<{
       action: string;

@@ -8,12 +8,15 @@ import 'helpers/test_app.dart';
 // StockFlow Stage 4: goods-received notes, their documents, the catalogue and product units.
 
 const bbq = 'Potato Crisps — BBQ — Small';
-const supplier = 'Harare Potato Co-op (SUP-01)';
 
 FakeBackend backendFor(String role) => FakeBackend(role: role)
   ..addProduct('PC-BBQ-S', 'Potato Crisps', 'BBQ', 'Small', '0.50')
   ..addStock('PC-BBQ-S', 10)
   ..addSupplier('SUP-01', 'Harare Potato Co-op');
+
+/// The list entry of a receipt (not the confirmation message, which names it too).
+Finder grnTile(String number) =>
+    find.ancestor(of: find.textContaining(number), matching: find.byType(ListTile)).first;
 
 /// Opens Goods Received and starts a new receipt.
 Future<void> startReceipt(WidgetTester tester) async {
@@ -26,7 +29,6 @@ Future<void> startReceipt(WidgetTester tester) async {
 Future<void> submitThroughScreens(WidgetTester tester, TestApp app, {String? owner}) async {
   await startReceipt(tester);
   if (owner != null) await chooseOption(tester, 'Whose stock is this?', owner);
-  await chooseOption(tester, 'Supplier', supplier);
   await addLine(tester, product: bbq, bought: 100, cost: '0.4250');
   app.documents.willPick([pdfDocument()]);
   await press(tester, find.text('Attach document'));
@@ -39,7 +41,6 @@ void main() {
   ) async {
     final app = await pumpSnackify(tester, signedIn: true, backend: backendFor('storekeeper'));
     await startReceipt(tester);
-    await chooseOption(tester, 'Supplier', supplier);
     await tester.enterText(
       find.widgetWithText(TextFormField, 'Supplier invoice or receipt number (optional)'),
       'INV-1042',
@@ -58,7 +59,7 @@ void main() {
     expect(find.text('Saved draft GRN000001.'), findsOneWidget);
     expect(app.backend.onHand('product-1'), 10); // a draft adds nothing
 
-    await tester.tap(find.text('GRN000001 · Harare Potato Co-op'));
+    await tester.tap(grnTile('GRN000001'));
     await tester.pumpAndSettle();
     expect(find.text('1 line(s) received differ from what was bought.'), findsOneWidget);
     await press(tester, find.text('Continue draft'));
@@ -76,7 +77,6 @@ void main() {
   testWidgets('a document the server refuses is reported, and the draft is kept', (tester) async {
     final app = await pumpSnackify(tester, signedIn: true, backend: backendFor('storekeeper'));
     await startReceipt(tester);
-    await chooseOption(tester, 'Supplier', supplier);
     await addLine(tester, product: bbq, bought: 5);
     app.documents.willPick([fakePdf()]);
     await press(tester, find.text('Attach document'));
@@ -109,7 +109,7 @@ void main() {
     final app = await pumpSnackify(tester, signedIn: true, backend: finance);
     await openSection(tester, 'Goods Received');
     expect(find.text('Receive stock'), findsNothing); // finance does not receive goods
-    await tester.tap(find.text('GRN000001 · Harare Potato Co-op'));
+    await tester.tap(grnTile('GRN000001'));
     await tester.pumpAndSettle();
 
     await press(tester, find.text('Verify receipt'));
@@ -148,7 +148,7 @@ void main() {
     await submitThroughScreens(tester, app);
     expect(backend.onHand('product-1'), 110);
 
-    await tester.tap(find.text('GRN000001 · Harare Potato Co-op'));
+    await tester.tap(grnTile('GRN000001'));
     await tester.pumpAndSettle();
     await press(tester, find.byTooltip('Review invoice.pdf'));
     await tester.tap(find.text('Reject'));
@@ -231,7 +231,6 @@ void main() {
     final backend = backendFor('admin');
     await pumpSnackify(tester, signedIn: true, backend: backend);
     await startReceipt(tester);
-    await chooseOption(tester, 'Supplier', supplier);
     await addLine(tester, product: bbq, bought: 30);
     await press(tester, find.text('Submit for verification'));
     expect(find.text('Submit without a document?'), findsOneWidget);
@@ -240,7 +239,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(backend.grns.single['noDocumentReason'], 'Supplier will email it');
 
-    await tester.tap(find.text('GRN000001 · Harare Potato Co-op'));
+    await tester.tap(grnTile('GRN000001'));
     await tester.pumpAndSettle();
     await press(tester, find.text('Verify receipt'));
     await tester.tap(find.text('Verify').last);
@@ -259,7 +258,6 @@ void main() {
     final backend = backendFor('storekeeper')..addConversion('PC-BBQ-S', 'carton', 24);
     final app = await pumpSnackify(tester, signedIn: true, backend: backend);
     await startReceipt(tester);
-    await chooseOption(tester, 'Supplier', supplier);
     await addLine(tester, product: bbq, bought: 3, cost: '10.20', unit: 'Carton (24 packs)');
     expect(find.textContaining('Received 3 carton'), findsOneWidget);
     app.documents.willPick([pdfDocument()]);

@@ -16,24 +16,23 @@ class AuthRepository {
   /// Called when the server rejects the saved session while the app is in use.
   set onSessionExpired(VoidCallback? callback) => _api.onSessionExpired = callback;
 
-  Future<AppUser> signIn(String username, String password) async {
-    final body = await _api.postJson('/api/v1/auth/login', {
-      'username': username,
-      'password': password,
-    });
+  Future<AppUser> signIn(String username, String pin) async {
+    final body = await _api.postJson('/api/v1/auth/login', {'username': username, 'pin': pin});
     final token = body['token'] as String;
     await _tokenStore.write(token);
     _api.authToken = token;
     return AppUser.fromJson(body['user'] as Map<String, dynamic>);
   }
 
-  /// Changes the signed-in user's password. This device stays signed in; the server signs
-  /// out every other session. A wrong current password comes back as a field error.
-  Future<void> changePassword(String currentPassword, String newPassword) async {
-    await _api.postJson('/api/v1/auth/change-password', {
-      'currentPassword': currentPassword,
-      'newPassword': newPassword,
+  /// Changes the signed-in user's PIN and returns the user as they are now. This device stays
+  /// signed in; the server signs out every other session. A wrong current PIN comes back as a
+  /// field error.
+  Future<AppUser> changePin(String currentPin, String newPin) async {
+    final body = await _api.postJson('/api/v1/auth/change-pin', {
+      'currentPin': currentPin,
+      'newPin': newPin,
     });
+    return AppUser.fromJson(body['user'] as Map<String, dynamic>);
   }
 
   /// Returns the user for a saved session, or null if there is none or it has ended.

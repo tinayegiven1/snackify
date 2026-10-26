@@ -6,9 +6,12 @@ export type AuditAction =
   | 'auth.login_failed'
   | 'auth.logout'
   | 'auth.password_changed'
+  | 'auth.pin_changed'
+  | 'auth.account_locked'
   | 'user.created'
   | 'user.updated'
   | 'user.password_reset'
+  | 'user.pin_reset'
   | 'user.roles_changed'
   | 'organisation.created'
   | 'organisation.updated'
@@ -40,7 +43,15 @@ export type AuditAction =
   | 'receipt.rejected'
   | 'receipt.reversed'
   | 'receipt.document_added'
-  | 'receipt.document_reviewed';
+  | 'receipt.document_reviewed'
+  | 'order.created'
+  | 'order.updated'
+  | 'order.submitted'
+  | 'order.review_started'
+  | 'order.prices_set'
+  | 'order.approved'
+  | 'order.rejected'
+  | 'order.cancelled';
 
 export interface AuditEntry {
   /** The signed-in user who acted, or null for setup commands and unknown users. */
@@ -57,7 +68,8 @@ export interface AuditEntry {
     | 'payment'
     | 'forecast'
     | 'catalogue'
-    | 'receipt';
+    | 'receipt'
+    | 'order';
   entityId?: string;
   /** Extra facts about the action. Never include passwords, tokens or other secrets. */
   details?: Record<string, unknown>;

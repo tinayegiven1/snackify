@@ -5,14 +5,14 @@ snacks business. One backend API and database serve a Flutter web app and a Flut
 
 The full product specification is in [Snackify_Claude_Code_Spec.md](Snackify_Claude_Code_Spec.md).
 
-## Current status: StockFlow Stage 4 (stock ownership and goods-received notes) on top of all feature stages
+## Current status: StockFlow Stage 5 (subsidiary orders and price approvals) on top of all feature stages
 
 | Part                                   | Status                                                                     |
 | -------------------------------------- | -------------------------------------------------------------------------- |
 | Backend (Node.js, Express, TypeScript) | Health, sign-in, roles, staff, products, stock ledger, customers, dispatches, invoices with PDFs, payments, balances and statements, barcode lookup and label PDFs, reports (dashboard, sales trends, best sellers, customers, stock received, expiring stock), sales forecasts with accuracy and restocking suggestions, audit log, tests |
 | PostgreSQL                             | Dev + test databases, least-privilege roles, migrations, seed              |
-| Database tables                        | `products`, `users`, `sessions`, `audit_logs`, `stock_batches`, `stock_movements`, `customers`, `dispatches`, `dispatch_items`, `invoices`, `invoice_items`, `payments`, `payment_allocations`, `forecast_runs`, `forecasts`, `organisations`, roles and permissions, `stock_balances`, `product_categories`, `units`, `unit_conversions`, `suppliers`, `warehouses`, `stock_receipts`, `stock_receipt_lines`, `stock_receipt_attachments` |
-| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**, **Dispatches** (drafts, confirm, cancel, reverse, credit warnings), **Invoices** (weekly run, preview, drafts, issue, void, PDF, paid/overdue), **Payments** (record and allocate payments, balances, account statements), **barcode scanning** (camera on Android; typed or USB scanner on the web) and **barcode labels**, a live **Dashboard** and **Reports** (daily/weekly/monthly sales, best sellers, customer summaries, stock received, expiring stock), **Forecasts** (next 7 and 30 days per product, how much to receive, accuracy), **Goods Received** (goods-received notes with supplier documents, verification, reversal and a GRN PDF; stock for the Head Office or a subsidiary), **Catalogue** (suppliers, categories, warehouses, units; cartons and cases on products), **Organisations** (the Head Office and its subsidiaries), **Users & Roles** (staff with one or more roles, per organisation), **Audit Log**, and **Change password** for everyone |
+| Database tables                        | `products`, `users`, `sessions`, `audit_logs`, `stock_batches`, `stock_movements`, `customers`, `dispatches`, `dispatch_items`, `invoices`, `invoice_items`, `payments`, `payment_allocations`, `forecast_runs`, `forecasts`, `organisations`, roles and permissions, `stock_balances`, `product_categories`, `units`, `unit_conversions`, `suppliers`, `warehouses`, `stock_receipts`, `stock_receipt_lines`, `stock_receipt_attachments`, `orders`, `order_items`, `order_status_history`, `order_item_changes` |
+| Flutter app (web + Android)            | Login, **Products**, **Stock** (on hand, low stock, receipts, history, damage/corrections), **Customers**, **Dispatches** (drafts, confirm, cancel, reverse, credit warnings), **Invoices** (weekly run, preview, drafts, issue, void, PDF, paid/overdue), **Payments** (record and allocate payments, balances, account statements), **barcode scanning** (camera on Android; typed or USB scanner on the web) and **barcode labels**, a live **Dashboard** and **Reports** (daily/weekly/monthly sales, best sellers, customer summaries, stock received, expiring stock), **Forecasts** (next 7 and 30 days per product, how much to receive, accuracy), **Goods Received** (goods-received notes with supplier documents, verification, reversal and a GRN PDF; stock for the Head Office or a subsidiary), **Orders** (subsidiaries order with expected and maximum prices; the Head Office sets actual prices and approves or rejects, price exceptions need special approval; order sheet PDF), **Catalogue** (suppliers, categories, warehouses, units; cartons and cases on products), **Organisations** (the Head Office and its subsidiaries), **Users & Roles** (staff with one or more roles, per organisation), **Audit Log**, and **Change PIN** for everyone (sign-in is by username and PIN) |
 | Backups                                | Daily-ready `npm run db:backup` with an automatic, verified test restore; guarded emergency restore ([docs/backup-and-restore.md](docs/backup-and-restore.md)) |
 
 ## Project structure
@@ -142,17 +142,16 @@ npm run db:seed
 
 ### Create the first admin account
 
-Run this once in a terminal, with your own username and name. It asks for the password twice
-and does not show it while you type (the password is never accepted on the command line, so
-it cannot end up in your shell history):
+Run this once in a terminal, with your own username and name. The account starts on the PIN
+**1234**; at the first sign-in it must choose its own PIN before doing anything else:
 
 ```powershell
 npm run user:create -- --username your.name --name "Your Full Name" --role admin
 ```
 
-After that, add everyone else in the app: **Staff → Add staff** (admins only). Choose each
-person's first password and give it to them privately; they can change it under **Change
-password** in the menu. (`npm run user:create` with `--role storekeeper`, `salesperson` or
+After that, add everyone else in the app: **Users & Roles → Add staff** (admins only). Each
+new person signs in with the PIN 1234 and must then choose their own; they can change it later
+under **Change PIN** in the menu. (`npm run user:create` with `--role storekeeper`, `salesperson` or
 `accounts` also still works.) On Windows PowerShell, type `npm.cmd` instead of `npm` if
 PowerShell says running scripts is disabled.
 
@@ -167,9 +166,9 @@ a person may use.
 | ------------------------ | ------------ | ------------ |
 | System Administrator     | Head Office  | Organisations, users, roles, the product catalogue, stock corrections, the audit log |
 | HQ Warehouse Officer     | Head Office  | Receiving stock, confirming dispatches, barcode labels, stock reports, forecasts |
-| HQ Finance Officer       | Head Office  | Invoices, payments, credit limits, financial reports, forecasts |
+| HQ Finance Officer       | Head Office  | Invoices, payments, credit limits, financial reports, forecasts; verifying goods-received notes; pricing, approving and rejecting orders (including price exceptions) |
 | HQ Sales Officer         | Head Office  | Customer details and draft dispatches |
-| Subsidiary Manager       | Subsidiary   | Its own stock (orders from StockFlow Stage 5) |
+| Subsidiary Manager       | Subsidiary   | Its own stock; places and follows its orders |
 | Subsidiary Storekeeper   | Subsidiary   | Its own stock and its history |
 
 Head Office staff see every organisation's records; a subsidiary's staff only their own. Accounts
@@ -178,10 +177,15 @@ from before Stage 3 kept what they could do: an old `admin` holds all four Head 
 (`--role hq_finance_officer,hq_sales_officer`), and `--organisation CODE` for a subsidiary's
 staff.
 
-- Passwords: at least 10 characters (a short sentence is ideal), stored as Argon2id hashes.
-- A sign-in lasts 12 hours. After 10 wrong passwords from one network address in 15 minutes,
-  sign-in is paused for 15 minutes.
-- Deactivating an account or resetting its password signs that person out everywhere at once.
+- **Sign-in is by username and PIN** (since 2026-10-21; the owner's request). Every account
+  starts on the PIN **1234** (new accounts, and accounts an admin resets); while on it, the
+  account can do nothing but choose its own PIN. PINs are 4–8 digits; 1234 and easy ones
+  (0000, 1111, 4321, 2468 …) are refused. They are stored as Argon2id hashes.
+- A PIN is short, so guessing is limited twice: 5 wrong PINs in a row lock that account for
+  15 minutes (an admin's **Reset PIN** unlocks it), and 10 wrong attempts from one network
+  address in 15 minutes pause sign-in from it.
+- A sign-in lasts 12 hours. Deactivating an account or resetting its PIN signs that person out
+  everywhere at once.
 - Sign-ins, failed attempts, sign-outs, role changes and every sensitive action are recorded in
   the audit log, with the organisation and network address (Audit Log in the app, for System
   Administrators).
@@ -245,6 +249,7 @@ npm start
 | `RECEIPT_DOCUMENT_REQUIRED`   | `true`                  | Submitting a goods-received note needs a supplier document (authorised users may give a reason instead) |
 | `ATTACHMENT_MAX_BYTES`        | `10485760` (10 MB)      | Largest supplier document accepted                      |
 | `ATTACHMENT_STORAGE_DIR`      | `storage/attachments`   | Where supplier documents are kept (outside `WEB_APP_DIR`; back it up with the database) |
+| `ORDERS_ALLOW_BACKORDERS`     | `true`                  | Orders may be approved when the Head Office has less stock (the rest is a backorder); `false` needs enough stock |
 | `BACKUP_DIR`, `BACKUP_KEEP`, `PG_BIN_DIR`, `RESTORE_CHECK_DATABASE_URL` | see [backups](docs/backup-and-restore.md#settings-backendenv-all-optional) | Where backups go, how many to keep, where `pg_dump` is |
 
 **Billing week:** by default an invoice covers the last complete Monday-to-Sunday week, with
@@ -320,7 +325,8 @@ start takes about a minute while Flutter compiles; later starts are faster.
 ### Verify it is working
 
 1. The app opens on the **Sign in to Snackify** screen. Sign in with the admin account you
-   created. A wrong password shows "Incorrect username or password."
+   created (PIN 1234 the first time, then your own). A wrong PIN shows "Incorrect username or
+   PIN."
 2. The dashboard opens with today's figures from the database: packs dispatched today and this
    week, deliveries received, low and expiring stock, and a 14-day chart. Admins and accounts
    staff also see money (sales value, invoiced, payments received, owed and overdue), each
@@ -409,8 +415,11 @@ dart format .
 
 ## Known limitations
 
-- **StockFlow Stages 3 and 4 so far.** Organisations, permissions, the audit log, stock per
-  owner and warehouse, and goods-received notes are done. Subsidiary orders come in Stage 5.
+- **StockFlow Stages 3 to 5 are done.** Approved orders are not yet dispatched from the app:
+  dispatching subsidiary orders (and moving dispatches and invoices from customers to
+  subsidiaries) is the next stage. Approving an order does not reserve stock.
+- **Price exceptions** follow the file's rule exactly: any actual price above the maximum. There
+  is no tolerance setting yet.
 - **Deliveries need a goods-received note.** The old quick "receive stock" form now records only
   opening balances. Receipt documents are kept on the server's disk (`ATTACHMENT_STORAGE_DIR`):
   include that folder in backups. On Cloud Run that disk is temporary (see
@@ -473,8 +482,8 @@ dart format .
 - Product prices are shown in USD (the assumed base currency, set in
   `mobile_web/lib/core/config/app_config.dart`).
 - The products screen loads up to 200 products at a time; use search to find others.
-- Users are not forced to change a password an admin has set or reset; ask them to change it
-  under **Change password** after their first sign-in.
+- A 4–8 digit PIN is weaker than a long password: keep the app on your own network (or behind
+  HTTPS when deployed), and use Reset PIN for anyone who leaves or forgets theirs.
 - Usernames cannot be changed once an account exists (add a new account and deactivate the old
   one instead).
 - The sign-in attempt counter is kept in memory: it resets when the backend restarts and

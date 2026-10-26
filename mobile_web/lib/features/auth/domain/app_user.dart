@@ -43,6 +43,7 @@ class AppUser {
     required this.organisation,
     required this.roles,
     required this.permissions,
+    this.mustChangePin = false,
   });
 
   factory AppUser.fromJson(Map<String, dynamic> json) => AppUser(
@@ -54,6 +55,7 @@ class AppUser {
       for (final role in json['roles'] as List) RoleRef.fromJson(role as Map<String, dynamic>),
     ],
     permissions: {for (final code in json['permissions'] as List) code as String},
+    mustChangePin: json['mustChangePin'] as bool? ?? false,
   );
 
   final String id;
@@ -62,6 +64,9 @@ class AppUser {
   final OrganisationRef organisation;
   final List<RoleRef> roles;
   final Set<String> permissions;
+
+  /// Still on the starting PIN 1234: the app shows only "Choose your PIN" until it is changed.
+  final bool mustChangePin;
 
   /// True when one of the user's roles allows [permission], e.g. 'stock.receive'.
   bool can(String permission) => permissions.contains(permission);

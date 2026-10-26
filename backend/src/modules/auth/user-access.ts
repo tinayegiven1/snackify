@@ -7,7 +7,7 @@ import type { PublicUser } from './roles.js';
  */
 export const USER_ACCESS_COLUMNS = `
   o.id AS organisation_id, o.code AS organisation_code, o.name AS organisation_name,
-  o.organisation_type,
+  o.organisation_type, u.must_change_pin,
   COALESCE((SELECT json_agg(json_build_object('code', r.code, 'name', r.name) ORDER BY r.name)
             FROM user_roles ur JOIN roles r ON r.id = ur.role_id
             WHERE ur.user_id = u.id), '[]'::json) AS roles,
@@ -25,6 +25,7 @@ export interface UserAccessRow {
   organisation_type: OrganisationType;
   roles: RoleRef[];
   permissions: Permission[];
+  must_change_pin: boolean;
 }
 
 export function organisationRef(row: UserAccessRow): OrganisationRef {
@@ -44,5 +45,6 @@ export function toPublicUser(row: UserAccessRow): PublicUser {
     organisation: organisationRef(row),
     roles: row.roles,
     permissions: row.permissions,
+    mustChangePin: row.must_change_pin,
   };
 }

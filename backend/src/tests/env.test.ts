@@ -18,6 +18,7 @@ describe('loadConfig', () => {
       webAppDir: null,
       trustProxyHops: 0,
       receipts: { stockAvailableBeforeVerification: true, documentRequired: true },
+      orders: { allowBackorders: true },
       attachments: {
         storageDir: expect.stringMatching(/storage[\\/]attachments$/),
         maxBytes: 10485760,

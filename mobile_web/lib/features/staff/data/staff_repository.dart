@@ -28,14 +28,13 @@ class StaffRepository {
     required String fullName,
     required String organisationId,
     required List<String> roleCodes,
-    required String password,
   }) async {
+    // New accounts start on the PIN 1234 and choose their own at the first sign-in.
     final body = await _api.postJson('/api/v1/users', {
       'username': username,
       'fullName': fullName,
       'organisationId': organisationId,
       'roleCodes': roleCodes,
-      'password': password,
     });
     return StaffMember.fromJson(body['user'] as Map<String, dynamic>);
   }
@@ -57,8 +56,9 @@ class StaffRepository {
     return StaffMember.fromJson(body['user'] as Map<String, dynamic>);
   }
 
-  /// Gives someone else a new password and signs them out everywhere.
-  Future<void> resetPassword(String id, String newPassword) async {
-    await _api.postJson('/api/v1/users/$id/reset-password', {'newPassword': newPassword});
+  /// Puts someone back on the PIN 1234 (they choose a new one at their next sign-in), unlocks
+  /// their account and signs them out everywhere.
+  Future<void> resetPin(String id) async {
+    await _api.postJson('/api/v1/users/$id/reset-pin');
   }
 }

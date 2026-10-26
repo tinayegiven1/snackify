@@ -19,7 +19,7 @@ import {
 } from './db-test-helpers.js';
 
 const pools = createTestPools();
-const PASSWORD = 'correct horse battery';
+const PASSWORD = '4826';
 let app: Express;
 const tokens = {} as Record<Role, string>;
 let bbq: string; // Potato Crisps BBQ, default price 0.50, 100 in stock

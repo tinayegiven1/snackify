@@ -4,20 +4,9 @@ import { z } from 'zod';
 import { getAuth, requireAuth, requirePermission } from '../../middleware/authenticate.js';
 import { AppError } from '../../utils/app-error.js';
 import { parseBody } from '../../utils/validation.js';
-import {
-  fullNameSchema,
-  newPasswordSchema,
-  roleCodesSchema,
-  usernameSchema,
-} from '../auth/roles.js';
+import { DEFAULT_PIN, fullNameSchema, roleCodesSchema, usernameSchema } from '../auth/roles.js';
 import { scopeOf } from '../organisations/access.js';
-import {
-  assertUserInScope,
-  createUser,
-  listUsers,
-  setPassword,
-  updateUser,
-} from './users.service.js';
+import { assertUserInScope, createUser, listUsers, setPin, updateUser } from './users.service.js';
 
 const organisationIdSchema = z.uuid({ error: 'Must be an organisation id' });
 
@@ -26,7 +15,6 @@ const createUserSchema = z.object({
   fullName: fullNameSchema,
   organisationId: organisationIdSchema,
   roleCodes: roleCodesSchema,
-  password: newPasswordSchema,
 });
 
 const updateUserSchema = z
@@ -45,8 +33,6 @@ const updateUserSchema = z
   );
 
 const listQuerySchema = z.object({ organisationId: organisationIdSchema.optional() });
-
-const resetPasswordSchema = z.object({ newPassword: newPasswordSchema });
 
 /** An invalid id cannot match any account, so treat it as "not found". */
 function userIdParam(id: string | undefined): string {
@@ -97,24 +83,22 @@ export function usersRouter(db: pg.Pool): Router {
     res.json({ user: await updateUser(db, userId, changes, actor) });
   });
 
-  router.post('/:id/reset-password', async (req, res) => {
+  // Puts the account back on the default PIN (to be changed at the next sign-in), unlocks it
+  // and signs it out everywhere. For someone who forgot their PIN.
+  router.post('/:id/reset-pin', async (req, res) => {
     const userId = userIdParam(req.params.id);
-    const { newPassword } = parseBody(resetPasswordSchema, req.body);
     const actor = getAuth(res).user;
     if (userId === actor.id) {
-      // Changing your own password must prove you know the current one.
+      // Changing your own PIN must prove you know the current one.
       throw new AppError(
         409,
-        'USE_CHANGE_PASSWORD',
-        'To change your own password, use POST /api/v1/auth/change-password.',
+        'USE_CHANGE_PIN',
+        'To change your own PIN, use POST /api/v1/auth/change-pin.',
       );
     }
     await assertUserInScope(db, scopeOf(actor), userId);
-    await setPassword(db, userId, newPassword, {
-      actorUserId: actor.id,
-      action: 'user.password_reset',
-    });
-    res.status(204).end();
+    await setPin(db, userId, null, { actorUserId: actor.id, action: 'user.pin_reset' });
+    res.json({ pin: DEFAULT_PIN, mustChangePin: true });
   });
 
   return router;

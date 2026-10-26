@@ -23,6 +23,7 @@ bool _dashboard(AppUser user) => user.can('report.dashboard');
 bool _stock(AppUser user) => user.can('stock.view');
 bool _catalogue(AppUser user) =>
     user.can('catalogue.manage') || user.can('supplier.manage') || user.can('stock.receive');
+bool _orders(AppUser user) => user.can('order.view');
 bool _customers(AppUser user) => user.can('customer.view');
 bool _dispatches(AppUser user) => user.can('dispatch.view');
 bool _invoices(AppUser user) => user.can('invoice.manage');
@@ -57,6 +58,12 @@ const appDestinations = <AppDestination>[
     icon: Icons.move_to_inbox_outlined,
     selectedIcon: Icons.move_to_inbox,
     isVisibleTo: _stock,
+  ),
+  AppDestination(
+    label: 'Orders',
+    icon: Icons.shopping_cart_outlined,
+    selectedIcon: Icons.shopping_cart,
+    isVisibleTo: _orders,
   ),
   AppDestination(
     label: 'Catalogue',

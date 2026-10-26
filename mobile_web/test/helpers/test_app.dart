@@ -19,19 +19,23 @@ import 'package:snackify/features/customers/data/customers_repository.dart';
 import 'package:snackify/features/dispatches/data/dispatches_repository.dart';
 import 'package:snackify/features/forecasts/data/forecasts_repository.dart';
 import 'package:snackify/features/invoices/data/invoices_repository.dart';
+import 'package:snackify/features/orders/data/orders_repository.dart';
 import 'package:snackify/features/organisations/data/organisations_repository.dart';
 import 'package:snackify/features/payments/data/payments_repository.dart';
 import 'package:snackify/features/products/data/products_repository.dart';
 import 'package:snackify/features/receipts/data/receipts_repository.dart';
 import 'package:snackify/features/reports/data/reports_repository.dart';
 import 'package:snackify/features/staff/data/staff_repository.dart';
+import 'package:snackify/features/staff/domain/staff_member.dart' show checkNewPin;
 import 'package:snackify/features/stock/data/stock_repository.dart';
 
 const phoneSize = Size(390, 844);
 const desktopSize = Size(1280, 800);
 
 const testUsername = 'tendai';
-const testPassword = 'correct horse battery';
+
+/// The test user's PIN (their own, not the starting PIN 1234).
+const testPin = '4826';
 
 /// A pretend Snackify backend that follows the real API's rules for signing in and out,
 /// products (only admins may change them) and stock (storekeepers and admins receive stock;
@@ -118,8 +122,15 @@ class FakeBackend {
   /// Audit log entries, newest first, as the server returns them.
   final List<Map<String, Object?>> auditEntries = [];
 
-  /// Passwords set through the API: (account id, new password).
-  final List<(String, String)> passwordsSet = [];
+  /// The signed-in user's current PIN, and whether it is still the starting PIN.
+  String pin = testPin;
+  bool mustChangePin = false;
+
+  /// PINs chosen through the API: (account id, new PIN).
+  final List<(String, String)> pinsSet = [];
+
+  /// Accounts an admin put back on the starting PIN.
+  final List<String> pinResets = [];
 
   /// Adds a staff account directly, as if it already existed on the server. [role] is an old
   /// role name or a role code.
@@ -152,6 +163,7 @@ class FakeBackend {
   /// 20261021090000000 and 20261021110000000).
   static const rolePermissions = <String, List<String>>{
     'system_admin': [
+      'order.view',
       'catalogue.manage',
       'supplier.manage',
       'receipt.no_document',
@@ -186,6 +198,10 @@ class FakeBackend {
       'forecast.use',
     ],
     'hq_finance_officer': [
+      'order.view',
+      'order.price',
+      'order.approve',
+      'price.exception.approve',
       'receipt.verify',
       'stock.view',
       'customer.view',
@@ -199,6 +215,7 @@ class FakeBackend {
       'forecast.use',
     ],
     'hq_sales_officer': [
+      'order.view',
       'stock.view',
       'customer.view',
       'customer.edit_details',
@@ -206,7 +223,7 @@ class FakeBackend {
       'dispatch.draft',
       'report.dashboard',
     ],
-    'subsidiary_manager': ['stock.view'],
+    'subsidiary_manager': ['stock.view', 'order.view', 'order.create'],
     'subsidiary_storekeeper': ['stock.view'],
   };
 
@@ -256,6 +273,7 @@ class FakeBackend {
     'organisation': organisation,
     'roles': _rolesJson(roleCodes),
     'permissions': permissions.toList()..sort(),
+    'mustChangePin': mustChangePin,
   };
 
   /// Creates a valid session token, as the server would on sign-in.
@@ -384,7 +402,11 @@ class FakeBackend {
       validTokens.remove(token);
       return http.Response('', 204);
     }
-    if (route == 'POST /api/v1/auth/change-password') return _changePassword(request);
+    if (route == 'POST /api/v1/auth/change-pin') return _changePin(request);
+    // Like the real server: an account on the starting PIN may only choose its own.
+    if (mustChangePin && route != 'GET /api/v1/auth/me' && route != 'POST /api/v1/auth/logout') {
+      return _error(403, 'PIN_CHANGE_REQUIRED', 'Choose your own PIN first.');
+    }
     if (path.startsWith('/api/v1/users')) return _users(request);
     if (path.startsWith('/api/v1/organisations')) return _organisations(request);
     if (route == 'GET /api/v1/roles') return _roles();
@@ -394,6 +416,7 @@ class FakeBackend {
       return _catalogue(request);
     }
     if (path.startsWith('/api/v1/receipts')) return _receipts(request);
+    if (path.startsWith('/api/v1/orders')) return _orders(request);
     if (request.method == 'GET' && RegExp(r'^/api/v1/products/[^/]+$').hasMatch(path)) {
       final product = products.where((p) => path.endsWith('/${p['id']}')).firstOrNull;
       return product == null
@@ -443,19 +466,19 @@ class FakeBackend {
     return _error(404, 'NOT_FOUND', 'Not found');
   }
 
-  /// Like the real server: proving the current password is required, and the new one must
-  /// differ and have at least 10 characters.
-  http.Response _changePassword(http.Request request) {
+  /// Like the real server: proving the current PIN is required, and the new one must follow
+  /// the PIN rules and differ from it.
+  http.Response _changePin(http.Request request) {
     final body = jsonDecode(request.body) as Map<String, dynamic>;
-    final current = body['currentPassword'] as String;
-    final next = body['newPassword'] as String;
-    if (current != testPassword) return _fieldError('currentPassword', 'Incorrect password');
-    if (next.length < 10) return _fieldError('newPassword', 'Use at least 10 characters');
-    if (next == current) {
-      return _fieldError('newPassword', 'Must be different from the current password');
-    }
-    passwordsSet.add((user['id'] as String, next));
-    return http.Response('', 204);
+    final current = body['currentPin'] as String;
+    final next = body['newPin'] as String;
+    if (current != pin) return _fieldError('currentPin', 'Incorrect PIN');
+    if (checkNewPin(next) case final problem?) return _fieldError('newPin', problem);
+    if (next == current) return _fieldError('newPin', 'Must be different from the current PIN');
+    pin = next;
+    mustChangePin = false;
+    pinsSet.add((user['id'] as String, next));
+    return _json(200, {'user': user});
   }
 
   http.Response get _forbidden => _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
@@ -477,10 +500,10 @@ class FakeBackend {
   };
 
   /// Staff accounts (user.manage). Admins cannot change their own roles or organisation, or
-  /// deactivate themselves, nor reset their own password here. Roles must suit the organisation.
+  /// deactivate themselves, nor reset their own PIN here. Roles must suit the organisation.
   http.Response _users(http.Request request) {
     if (!can('user.manage')) return _forbidden;
-    final segments = request.url.pathSegments; // api, v1, users, [id], [reset-password]
+    final segments = request.url.pathSegments; // api, v1, users, [id], [reset-pin]
     final body = request.body.isEmpty
         ? const <String, dynamic>{}
         : jsonDecode(request.body) as Map<String, dynamic>;
@@ -501,7 +524,6 @@ class FakeBackend {
         codes.first,
         organisation: _organisationRef(organisation),
       )..['roles'] = _rolesJson(codes);
-      passwordsSet.add((added['id'] as String, body['password'] as String));
       return _json(201, {'user': added});
     }
 
@@ -509,12 +531,10 @@ class FakeBackend {
     if (member == null) return _error(404, 'USER_NOT_FOUND', 'No staff account has that id.');
     final isSelf = member['id'] == user['id'];
 
-    if (segments.length == 5 && segments[4] == 'reset-password') {
-      if (isSelf) {
-        return _error(409, 'USE_CHANGE_PASSWORD', 'Use change-password for your own account.');
-      }
-      passwordsSet.add((member['id'] as String, body['newPassword'] as String));
-      return http.Response('', 204);
+    if (segments.length == 5 && segments[4] == 'reset-pin') {
+      if (isSelf) return _error(409, 'USE_CHANGE_PIN', 'Use change-pin for your own account.');
+      pinResets.add(member['id'] as String);
+      return _json(200, {'pin': '1234', 'mustChangePin': true});
     }
 
     final currentCodes = [
@@ -1135,9 +1155,6 @@ class FakeBackend {
         if (grn!['status'] != 'DRAFT') {
           return _error(409, 'RECEIPT_WRONG_STATUS', wrongStatus('submitted'));
         }
-        if (grn['supplierId'] == null) {
-          return _fieldError('supplierId', 'Choose the supplier before submitting');
-        }
         final body = jsonDecode(request.body) as Map<String, dynamic>;
         final documents = (grn['documents'] as List<Map<String, Object?>>).where(
           (d) => d['verificationStatus'] != 'REJECTED',
@@ -1216,16 +1233,309 @@ class FakeBackend {
     return _error(404, 'NOT_FOUND', 'Not found');
   }
 
+  // ------------------------------------------------------------------ Orders
+
+  /// Subsidiary orders as the server stores them, oldest first.
+  final List<Map<String, Object?>> subsidiaryOrders = [];
+
+  /// When false, approval needs enough Head Office stock (ORDERS_ALLOW_BACKORDERS).
+  bool allowBackorders = true;
+
+  /// Adds an order directly, e.g. addOrder('org-sub-1', {'PC-BBQ-S': (10, '0.50', '0.55')}).
+  Map<String, Object?> addOrder(
+    String organisationId,
+    Map<String, (int, String, String)> lines, {
+    String status = 'SUBMITTED',
+  }) {
+    final order = <String, Object?>{
+      'id': 'order-${subsidiaryOrders.length + 1}',
+      'orderNumber': 'ORD${(subsidiaryOrders.length + 1).toString().padLeft(6, '0')}',
+      'status': status,
+      'organisationId': organisationId,
+      'orderDate': toApiDate(today()),
+      'requiredDate': null,
+      'notes': null,
+      'idempotencyKey': 'seeded-${subsidiaryOrders.length}',
+      'requestedBy': _person,
+      'submittedBy': status == 'DRAFT' ? null : _person,
+      'decidedBy': null,
+      'decisionComment': null,
+      'priceExceptionApproved': false,
+      'cancelReason': null,
+      'lines': [
+        for (final MapEntry(key: sku, value: (quantity, expected, maximum)) in lines.entries)
+          <String, Object?>{
+            'productId': products.firstWhere((p) => p['sku'] == sku)['id'],
+            'unitId': 'unit-pack',
+            'requestedQuantity': quantity,
+            'expectedUnitPrice': expected,
+            'maximumUnitPrice': maximum,
+            'actualUnitPrice': null,
+            'notes': null,
+          },
+      ],
+      'history': <Map<String, Object?>>[
+        _orderHistory(null, 'DRAFT', null),
+        if (status != 'DRAFT') _orderHistory('DRAFT', status, null),
+      ],
+      'changes': <Map<String, Object?>>[],
+    };
+    subsidiaryOrders.add(order);
+    return order;
+  }
+
+  Map<String, Object?> _orderHistory(String? from, String to, String? comment) => {
+    'fromStatus': from,
+    'toStatus': to,
+    'changedBy': _person,
+    'changedAt': '2026-10-21T08:00:00Z',
+    'comment': comment,
+  };
+
+  String _times(int quantity, String? price) =>
+      price == null ? '' : formatCents(quantity * parseCents(price)!);
+
+  Map<String, Object?> _orderJson(Map<String, Object?> order) {
+    final lines = order['lines'] as List<Map<String, Object?>>;
+    int sum(String field) => lines.fold(
+      0,
+      (total, l) => total + (l['requestedQuantity'] as int) * parseCents(l[field] as String)!,
+    );
+    final priced = lines.isNotEmpty && lines.every((l) => l['actualUnitPrice'] != null);
+    bool exception(Map<String, Object?> l) =>
+        l['actualUnitPrice'] != null &&
+        parseCents(l['actualUnitPrice'] as String)! > parseCents(l['maximumUnitPrice'] as String)!;
+    final headOffice = organisation['type'] == 'HQ';
+    return {
+      for (final MapEntry(:key, :value) in order.entries)
+        if (!['organisationId', 'lines', 'idempotencyKey'].contains(key)) key: value,
+      'organisation': _ref(organisations.firstWhere((o) => o['id'] == order['organisationId'])),
+      'currency': 'USD',
+      'lineCount': lines.length,
+      'expectedTotal': formatCents(sum('expectedUnitPrice')),
+      'maximumTotal': formatCents(sum('maximumUnitPrice')),
+      'actualTotal': priced ? formatCents(sum('actualUnitPrice')) : null,
+      'priceException': lines.any(exception),
+      'lines': [
+        for (final (index, l) in lines.indexed)
+          {
+            'id': '${order['id']}-line-${index + 1}',
+            'lineNumber': index + 1,
+            'product': () {
+              final p = products.firstWhere((p) => p['id'] == l['productId']);
+              return {
+                'id': p['id'],
+                'sku': p['sku'],
+                'description': '${p['name']} — ${p['flavour']} — ${p['size']}',
+              };
+            }(),
+            'unit': _ref(catalogue['units']!.firstWhere((u) => u['id'] == l['unitId'])),
+            'requestedQuantity': l['requestedQuantity'],
+            'baseQuantity': l['requestedQuantity'],
+            'expectedUnitPrice': l['expectedUnitPrice'],
+            'maximumUnitPrice': l['maximumUnitPrice'],
+            'actualUnitPrice': l['actualUnitPrice'],
+            'expectedLineTotal': _times(
+              l['requestedQuantity'] as int,
+              l['expectedUnitPrice'] as String,
+            ),
+            'maximumLineTotal': _times(
+              l['requestedQuantity'] as int,
+              l['maximumUnitPrice'] as String,
+            ),
+            'actualLineTotal': l['actualUnitPrice'] == null
+                ? null
+                : _times(l['requestedQuantity'] as int, l['actualUnitPrice'] as String),
+            'priceException': exception(l),
+            'notes': l['notes'],
+            if (headOffice) 'hqAvailable': onHand(l['productId']),
+          },
+      ],
+    };
+  }
+
+  http.Response _orders(http.Request request) {
+    final forbidden = _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
+    if (!can('order.view')) return forbidden;
+    final notFound = _error(404, 'ORDER_NOT_FOUND', 'No order has that id.');
+    final segments = request.url.pathSegments; // api, v1, orders, id?, action?
+    final headOffice = organisation['type'] == 'HQ';
+    final visible = subsidiaryOrders.where(
+      (o) => headOffice || o['organisationId'] == organisation['id'],
+    );
+    Map<String, Object?>? order;
+    if (segments.length > 3) {
+      order = visible.where((o) => o['id'] == segments[3]).firstOrNull;
+      if (order == null) return notFound;
+    }
+    final action = segments.length > 4 ? segments[4] : null;
+    final route = '${request.method} ${action ?? (order == null ? '' : ':id')}';
+    final body = request.body.isEmpty
+        ? const <String, dynamic>{}
+        : jsonDecode(request.body) as Map<String, dynamic>;
+    http.Response wrong(String what) => _error(
+      409,
+      'ORDER_WRONG_STATUS',
+      'This order is ${(order!['status'] as String).toLowerCase()}, so it cannot be $what.',
+    );
+    http.Response ok(Map<String, Object?> o, [Map<String, Object?> extra = const {}]) =>
+        _json(200, {'order': _orderJson(o), ...extra});
+    void move(String to, String? comment) {
+      final from = order!['status'] as String;
+      order['status'] = to;
+      (order['history'] as List<Map<String, Object?>>).add(_orderHistory(from, to, comment));
+    }
+
+    List<Map<String, Object?>> linesFrom(Map<String, dynamic> body) => [
+      for (final l in (body['lines'] as List).cast<Map<String, dynamic>>())
+        {
+          'productId': l['productId'],
+          'unitId': l['unitId'],
+          'requestedQuantity': l['requestedQuantity'],
+          'expectedUnitPrice': l['expectedUnitPrice'],
+          'maximumUnitPrice': l['maximumUnitPrice'],
+          'actualUnitPrice': null,
+          'notes': l['notes'],
+        },
+    ];
+
+    switch (route) {
+      case 'GET ':
+        final q = request.url.queryParameters;
+        final listed = visible
+            .map(_orderJson)
+            .where((o) => q['status'] == null || o['status'] == q['status'])
+            .where(
+              (o) =>
+                  q['organisationId'] == null ||
+                  (o['organisation'] as Map)['id'] == q['organisationId'],
+            )
+            .where((o) => q['priceException'] != 'true' || o['priceException'] == true)
+            .where((o) => (o['orderNumber'] as String).contains((q['q'] ?? '').toUpperCase()))
+            .toList()
+            .reversed
+            .toList();
+        return _json(200, {'orders': listed, 'total': listed.length});
+      case 'GET :id':
+        return ok(order!);
+      case 'GET pdf':
+        return http.Response.bytes(
+          utf8.encode('%PDF-1.4 order sheet ${order!['orderNumber']}'),
+          200,
+          headers: {'content-type': 'application/pdf'},
+        );
+      case 'POST ':
+        if (!can('order.create')) return forbidden;
+        final replay = subsidiaryOrders
+            .where((o) => o['idempotencyKey'] == body['idempotencyKey'])
+            .firstOrNull;
+        if (replay != null) return ok(replay, {'replayed': true});
+        final created = addOrder(
+          headOffice ? body['organisationId'] as String : organisation['id'] as String,
+          const {},
+          status: 'DRAFT',
+        );
+        created
+          ..['idempotencyKey'] = body['idempotencyKey']
+          ..['requiredDate'] = body['requiredDate']
+          ..['notes'] = body['notes']
+          ..['lines'] = linesFrom(body);
+        return _json(201, {'order': _orderJson(created), 'replayed': false});
+      case 'PUT :id':
+        if (!can('order.create')) return forbidden;
+        if (order!['status'] != 'DRAFT') return wrong('changed');
+        order
+          ..['requiredDate'] = body['requiredDate']
+          ..['notes'] = body['notes']
+          ..['lines'] = linesFrom(body);
+        return ok(order);
+      case 'POST submit':
+        if (!can('order.create')) return forbidden;
+        if (order!['status'] == 'SUBMITTED') return ok(order, {'alreadySubmitted': true});
+        if (order['status'] != 'DRAFT') return wrong('submitted');
+        order['submittedBy'] = _person;
+        move('SUBMITTED', null);
+        return ok(order, {'alreadySubmitted': false});
+      case 'POST cancel':
+        if (!can('order.create')) return forbidden;
+        if (order!['status'] != 'DRAFT' && order['status'] != 'SUBMITTED') {
+          return wrong('cancelled');
+        }
+        order['cancelReason'] = body['reason'];
+        move('CANCELLED', body['reason'] as String?);
+        return ok(order);
+      case 'POST review':
+        if (!can('order.price') || !headOffice) return forbidden;
+        if (order!['status'] != 'SUBMITTED') return wrong('taken into review');
+        move('UNDER_REVIEW', null);
+        return ok(order);
+      case 'PUT prices':
+        if (!can('order.price') || !headOffice) return forbidden;
+        if (order!['status'] != 'SUBMITTED' && order['status'] != 'UNDER_REVIEW') {
+          return wrong('priced');
+        }
+        if (order['status'] == 'SUBMITTED') move('UNDER_REVIEW', null);
+        final lines = order['lines'] as List<Map<String, Object?>>;
+        for (final price in (body['prices'] as List).cast<Map<String, dynamic>>()) {
+          final index = int.parse((price['itemId'] as String).split('-line-').last) - 1;
+          final old = lines[index]['actualUnitPrice'];
+          lines[index]['actualUnitPrice'] = price['actualUnitPrice'];
+          (order['changes'] as List<Map<String, Object?>>).add({
+            'lineNumber': index + 1,
+            'field': 'actual_unit_price',
+            'oldValue': old,
+            'newValue': price['actualUnitPrice'],
+            'changedBy': _person,
+            'changedAt': '2026-10-21T09:00:00Z',
+            'comment': price['comment'],
+          });
+        }
+        return ok(order);
+      case 'POST approve':
+        if (!can('order.approve') || !headOffice) return forbidden;
+        if (order!['status'] != 'UNDER_REVIEW') return wrong('approved');
+        final json = _orderJson(order);
+        if (json['actualTotal'] == null) {
+          return _error(409, 'PRICES_MISSING', 'Set the actual price of every line first.');
+        }
+        if (json['priceException'] == true) {
+          if (!can('price.exception.approve')) {
+            return _error(403, 'PRICE_EXCEPTION_NOT_ALLOWED', 'Not allowed to approve this price.');
+          }
+          if (body['comment'] == null) {
+            return _fieldError('comment', 'Explain why the price above the maximum is approved');
+          }
+        }
+        order
+          ..['decidedBy'] = _person
+          ..['decisionComment'] = body['comment']
+          ..['priceExceptionApproved'] = json['priceException'];
+        move('APPROVED', body['comment'] as String?);
+        return ok(order);
+      case 'POST reject':
+        if (!can('order.approve') || !headOffice) return forbidden;
+        if (order!['status'] != 'SUBMITTED' && order['status'] != 'UNDER_REVIEW') {
+          return wrong('rejected');
+        }
+        order
+          ..['decidedBy'] = _person
+          ..['decisionComment'] = body['comment'];
+        move('REJECTED', body['comment'] as String?);
+        return ok(order);
+    }
+    return _error(404, 'NOT_FOUND', 'Not found');
+  }
+
   http.Response _login(http.Request request) {
     final body = jsonDecode(request.body) as Map<String, dynamic>;
-    if (body['username'] == testUsername && body['password'] == testPassword) {
+    if (body['username'] == testUsername && body['pin'] == pin) {
       return _json(200, {
         'token': issueToken(),
         'expiresAt': '2026-10-13T00:00:00.000Z',
         'user': user,
       });
     }
-    return _error(401, 'INVALID_CREDENTIALS', 'Incorrect username or password.');
+    return _error(401, 'INVALID_CREDENTIALS', 'Incorrect username or PIN.');
   }
 
   http.Response _listProducts(Map<String, String> query) {
@@ -2510,6 +2820,7 @@ Future<TestApp> pumpSnackify(
     audit: AuditRepository(api),
     receipts: ReceiptsRepository(api),
     catalogue: CatalogueRepository(api),
+    orders: OrdersRepository(api),
     sharePdf: (bytes, filename) async =>
         sharedPdfs.add((filename, utf8.decode(bytes, allowMalformed: true))),
     readBarcode: scanner.read,
@@ -2523,9 +2834,9 @@ Future<TestApp> pumpSnackify(
 }
 
 /// Fills in the login form and presses "Sign in".
-Future<void> signInThroughForm(WidgetTester tester, String username, String password) async {
+Future<void> signInThroughForm(WidgetTester tester, String username, String pin) async {
   await tester.enterText(find.widgetWithText(TextFormField, 'Username'), username);
-  await tester.enterText(find.widgetWithText(TextFormField, 'Password'), password);
+  await tester.enterText(find.widgetWithText(TextFormField, 'PIN'), pin);
   await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
   await tester.pumpAndSettle();
 }

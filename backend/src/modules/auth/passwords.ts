@@ -1,5 +1,8 @@
 import { argon2, randomBytes, timingSafeEqual } from 'node:crypto';
 
+// Hashing for sign-in secrets. Since 2026-10-21 these are PINs; the functions keep their
+// names. Argon2id makes every guess slow, which matters even more for short PINs.
+
 // OWASP Password Storage Cheat Sheet settings for Argon2id: 19 MiB memory, 2 passes, 1 lane.
 const PARAMETERS = { memory: 19_456, passes: 2, parallelism: 1 } as const;
 const SALT_BYTES = 16;

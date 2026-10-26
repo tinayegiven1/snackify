@@ -18,6 +18,7 @@ export const testConfig: AppConfig = {
   webAppDir: null,
   trustProxyHops: 0,
   receipts: { stockAvailableBeforeVerification: true, documentRequired: true },
+  orders: { allowBackorders: true },
   attachments: {
     storageDir: join(tmpdir(), 'snackify-test-attachments'),
     maxBytes: 64 * 1024,

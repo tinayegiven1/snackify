@@ -204,11 +204,12 @@ void main() {
 
     final sections = await menuSections(tester);
     // A sales officer's menu: what the role may use, and nothing else.
-    expect(sections.sublist(0, sections.indexOf('Change password')), [
+    expect(sections.sublist(0, sections.indexOf('Change PIN')), [
       'Dashboard',
       'Products',
       'Stock',
       'Goods Received',
+      'Orders',
       'Customers',
       'Dispatches',
       'Organisations',

@@ -69,13 +69,28 @@ class RoleOption {
 
 // The same rules the server applies.
 final usernameFormat = RegExp(r'^[a-z0-9][a-z0-9._-]{2,31}$');
-const minPasswordLength = 10;
-const maxPasswordLength = 128;
 
-/// Checks a new password the way the server does; returns a message, or null when it is fine.
-String? checkNewPassword(String value) {
+/// The PIN every new account (and every account an admin resets) starts with.
+const defaultPin = '1234';
+const minPinLength = 4;
+const maxPinLength = 8;
+
+/// PINs anyone would try first: 0000, 1111, 1234, 4321, 2468 ...
+bool isEasyPin(String pin) {
+  if (RegExp(r'^(\d)\1+$').hasMatch(pin)) return true;
+  final digits = pin.split('').map(int.parse).toList();
+  final steps = {for (var i = 1; i < digits.length; i++) digits[i] - digits[i - 1]};
+  return steps.length == 1 && const [1, -1, 2, -2].contains(steps.first);
+}
+
+/// Checks a new PIN the way the server does; returns a message, or null when it is fine.
+String? checkNewPin(String value) {
   if (value.isEmpty) return 'Required';
-  if (value.length < minPasswordLength) return 'Use at least $minPasswordLength characters';
-  if (value.length > maxPasswordLength) return 'Use at most $maxPasswordLength characters';
+  if (!RegExp(r'^\d+$').hasMatch(value)) return 'Use digits only';
+  if (value.length < minPinLength) return 'Use at least $minPinLength digits';
+  if (value.length > maxPinLength) return 'Use at most $maxPinLength digits';
+  if (value == defaultPin || isEasyPin(value)) {
+    return 'Too easy to guess: avoid 1234, 0000, 4321 and the like';
+  }
   return null;
 }

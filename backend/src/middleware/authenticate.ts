@@ -17,7 +17,13 @@ function bearerToken(header: string | undefined): string | null {
  * Authorization header is read, never cookies, so another website cannot make a signed-in
  * browser act on Snackify (no cross-site request forgery).
  */
-export function requireAuth(db: pg.Pool): RequestHandler {
+export function requireAuth(
+  db: pg.Pool,
+  options: {
+    /** For the few routes an account on the default PIN may use: me, sign out, change PIN. */
+    allowDefaultPin?: boolean;
+  } = {},
+): RequestHandler {
   return async (req, res, next) => {
     const token = bearerToken(req.headers.authorization);
     if (!token) {
@@ -26,6 +32,14 @@ export function requireAuth(db: pg.Pool): RequestHandler {
     const auth = await findActiveSession(db, token);
     if (!auth) {
       throw new AppError(401, 'UNAUTHENTICATED', 'Your session has ended. Please sign in again.');
+    }
+    // The default PIN is public: until it is changed, the account can do nothing else.
+    if (auth.user.mustChangePin && !options.allowDefaultPin) {
+      throw new AppError(
+        403,
+        'PIN_CHANGE_REQUIRED',
+        'Choose your own PIN first (POST /api/v1/auth/change-pin).',
+      );
     }
     res.locals.auth = auth;
     const request = currentRequest();

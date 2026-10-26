@@ -4,6 +4,7 @@ import '../features/customers/data/customers_repository.dart';
 import '../features/dispatches/data/dispatches_repository.dart';
 import '../features/forecasts/data/forecasts_repository.dart';
 import '../features/invoices/data/invoices_repository.dart';
+import '../features/orders/data/orders_repository.dart';
 import '../features/organisations/data/organisations_repository.dart';
 import '../features/payments/data/payments_repository.dart';
 import '../features/products/data/products_repository.dart';
@@ -32,6 +33,7 @@ class AppServices {
     required this.audit,
     required this.receipts,
     required this.catalogue,
+    required this.orders,
     required this.sharePdf,
     required this.readBarcode,
     required this.pickDocuments,
@@ -58,6 +60,9 @@ class AppServices {
 
   /// Suppliers, categories, warehouses and units.
   final CatalogueRepository catalogue;
+
+  /// Subsidiary orders (StockFlow Stage 5).
+  final OrdersRepository orders;
 
   /// Downloads (web) or shares (phones) a PDF such as an invoice.
   final PdfSharer sharePdf;

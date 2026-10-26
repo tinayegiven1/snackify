@@ -17,7 +17,7 @@ import {
 } from './db-test-helpers.js';
 
 const pools = createTestPools();
-const PASSWORD = 'correct horse battery';
+const PASSWORD = '4826';
 let app: Express;
 let admin: StaffUser;
 let staff: StaffUser;
@@ -66,7 +66,7 @@ describe('staff account management (/api/v1/users)', () => {
         password: PASSWORD,
       }),
       await asStaff.patch(`/api/v1/users/${staff.id}`, { roleCodes: ['system_admin'] }),
-      await asStaff.post(`/api/v1/users/${admin.id}/reset-password`, { newPassword: PASSWORD }),
+      await asStaff.post(`/api/v1/users/${admin.id}/reset-pin`),
     ];
     for (const response of responses) {
       expect(response.status).toBe(403);
@@ -108,13 +108,12 @@ describe('staff account management (/api/v1/users)', () => {
     expect(JSON.stringify(response.body)).not.toMatch(/argon2|password/i);
   });
 
-  it('creates an account with several roles that can then sign in', async () => {
+  it('creates an account with several roles, which starts on the default PIN', async () => {
     const response = await as(adminToken).post('/api/v1/users', {
       username: 'Rudo',
       fullName: 'Rudo Chikore',
       organisationId: hq,
       roleCodes: ['hq_finance_officer', 'hq_warehouse_officer'],
-      password: 'rudo-first-passphrase',
     });
 
     expect(response.status).toBe(201);
@@ -126,8 +125,10 @@ describe('staff account management (/api/v1/users)', () => {
     expect(roleCodes(response.body.user)).toEqual(['hq_finance_officer', 'hq_warehouse_officer']);
     const signedIn = await request(app)
       .post('/api/v1/auth/login')
-      .send({ username: 'rudo', password: 'rudo-first-passphrase' });
+      .send({ username: 'rudo', pin: '1234' });
     expect(signedIn.status).toBe(200);
+    // ...and must choose their own PIN before anything else.
+    expect(signedIn.body.user.mustChangePin).toBe(true);
     // The permissions of both roles.
     expect(signedIn.body.user.permissions).toEqual(
       expect.arrayContaining(['invoice.manage', 'stock.receive']),
@@ -202,7 +203,6 @@ describe('staff account management (/api/v1/users)', () => {
       fullName: '',
       organisationId: 'nowhere',
       roleCodes: [],
-      password: 'short',
     });
 
     expect(response.status).toBe(400);
@@ -211,7 +211,6 @@ describe('staff account management (/api/v1/users)', () => {
       'fullName',
       'organisationId',
       'roleCodes',
-      'password',
     ]);
 
     const unknownRole = await as(adminToken).post('/api/v1/users', {
@@ -267,11 +266,8 @@ describe('staff account management (/api/v1/users)', () => {
     expect(response.body.user.isActive).toBe(false);
     expect((await as(staffToken).get('/api/v1/auth/me')).status).toBe(401);
     expect(
-      (
-        await request(app)
-          .post('/api/v1/auth/login')
-          .send({ username: 'tendai', password: PASSWORD })
-      ).status,
+      (await request(app).post('/api/v1/auth/login').send({ username: 'tendai', pin: PASSWORD }))
+        .status,
     ).toBe(401);
 
     const [entry] = await auditEntries(pools.owner, 'user.updated');
@@ -304,25 +300,30 @@ describe('staff account management (/api/v1/users)', () => {
     expect(renameSelf.status).toBe(200);
   });
 
-  it('resets a password and signs that user out everywhere', async () => {
-    const response = await as(adminToken).post(`/api/v1/users/${staff.id}/reset-password`, {
-      newPassword: 'temporary passphrase',
-    });
+  it('resets a PIN to the default, unlocks the account and signs it out everywhere', async () => {
+    await pools.owner.query(
+      `UPDATE users SET locked_until = now() + interval '10 minutes' WHERE username = 'tendai'`,
+    );
+    const response = await as(adminToken).post(`/api/v1/users/${staff.id}/reset-pin`);
 
-    expect(response.status).toBe(204);
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ pin: '1234', mustChangePin: true });
     expect((await as(staffToken).get('/api/v1/auth/me')).status).toBe(401);
-    expect(await signIn(app, 'tendai', 'temporary passphrase')).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const signedIn = await request(app)
+      .post('/api/v1/auth/login')
+      .send({ username: 'tendai', pin: '1234' });
+    expect(signedIn.status).toBe(200);
+    expect(signedIn.body.user.mustChangePin).toBe(true);
+    expect(await signIn(app, 'tendai', PASSWORD).catch(() => 'refused')).toBe('refused');
 
-    const [entry] = await auditEntries(pools.owner, 'user.password_reset');
+    const [entry] = await auditEntries(pools.owner, 'user.pin_reset');
     expect(entry).toMatchObject({ actor_user_id: admin.id, entity_id: staff.id, details: {} });
   });
 
-  it('refuses to reset your own password without the current one', async () => {
-    const response = await as(adminToken).post(`/api/v1/users/${admin.id}/reset-password`, {
-      newPassword: 'temporary passphrase',
-    });
+  it('refuses to reset your own PIN without the current one', async () => {
+    const response = await as(adminToken).post(`/api/v1/users/${admin.id}/reset-pin`);
     expect(response.status).toBe(409);
-    expect(response.body.error.code).toBe('USE_CHANGE_PASSWORD');
+    expect(response.body.error.code).toBe('USE_CHANGE_PIN');
   });
 
   it('returns 404 for unknown or malformed ids, and 400 for unknown fields', async () => {

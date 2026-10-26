@@ -3,6 +3,7 @@ import { isUniqueViolation, withTransaction, type Queryable } from '../../databa
 import { AppError } from '../../utils/app-error.js';
 import { changedFields, recordAudit, type AuditAction } from '../audit/audit.js';
 import { hashPassword } from '../auth/passwords.js';
+import { DEFAULT_PIN } from '../auth/roles.js';
 import type { OrganisationRef, RoleRef } from '../auth/permissions.js';
 import type { PublicUser } from '../auth/roles.js';
 import { revokeUserSessions } from '../auth/sessions.js';
@@ -90,15 +91,21 @@ export async function findUserById(db: Queryable, id: string): Promise<StaffUser
   return rows[0] ? toStaffUser(rows[0]) : null;
 }
 
-/** Everything needed to check a sign-in, including the password hash. Never send this out. */
+/** Everything needed to check a sign-in, including the PIN hash. Never send this out. */
 export async function findUserForSignIn(
   db: Queryable,
   username: string,
-): Promise<(PublicUser & { isActive: boolean; passwordHash: string }) | null> {
+): Promise<(PublicUser & { isActive: boolean; pinHash: string; locked: boolean }) | null> {
   const { rows } = await db.query<
-    UserAccessRow & { is_active: boolean; organisation_active: boolean; password_hash: string }
+    UserAccessRow & {
+      is_active: boolean;
+      organisation_active: boolean;
+      password_hash: string;
+      locked: boolean;
+    }
   >(
     `SELECT u.id, u.username, u.full_name, u.is_active, u.password_hash,
+            COALESCE(u.locked_until > now(), false) AS locked,
             o.is_active AS organisation_active, ${USER_ACCESS_COLUMNS}
      FROM users u
      JOIN organisations o ON o.id = u.organisation_id
@@ -111,8 +118,38 @@ export async function findUserForSignIn(
     ...toPublicUser(row),
     // Staff of a deactivated organisation cannot sign in either.
     isActive: row.is_active && row.organisation_active,
-    passwordHash: row.password_hash,
+    pinHash: row.password_hash,
+    locked: row.locked,
   };
+}
+
+/** Wrong PINs allowed in a row before the account is locked. */
+export const MAX_FAILED_PINS = 5;
+
+/**
+ * Counts a wrong PIN. The fifth in a row locks the account for 15 minutes (and starts the count
+ * again). Returns true when this attempt locked it.
+ */
+export async function recordFailedPin(db: Queryable, userId: string): Promise<boolean> {
+  const { rows } = await db.query<{ locked: boolean }>(
+    `UPDATE users
+     SET failed_pin_attempts = CASE WHEN failed_pin_attempts + 1 >= $2 THEN 0
+                                    ELSE failed_pin_attempts + 1 END,
+         locked_until = CASE WHEN failed_pin_attempts + 1 >= $2
+                             THEN now() + interval '15 minutes' ELSE locked_until END
+     WHERE id = $1
+     RETURNING failed_pin_attempts = 0 AND locked_until > now() AS locked`,
+    [userId, MAX_FAILED_PINS],
+  );
+  return rows[0]?.locked ?? false;
+}
+
+/** A correct PIN starts the count of wrong ones again. */
+export async function clearFailedPins(db: Queryable, userId: string): Promise<void> {
+  await db.query(
+    'UPDATE users SET failed_pin_attempts = 0, locked_until = NULL WHERE id = $1 AND (failed_pin_attempts > 0 OR locked_until IS NOT NULL)',
+    [userId],
+  );
 }
 
 export async function getPasswordHash(db: Queryable, userId: string): Promise<string> {
@@ -171,7 +208,11 @@ export interface NewUserInput {
   fullName: string;
   organisationId: string;
   roleCodes: string[];
-  password: string;
+  /**
+   * The first PIN. Left out, the account starts on the default PIN and must choose its own
+   * at the first sign-in (the normal case; tests and tools may set one).
+   */
+  pin?: string;
 }
 
 /** Creates a staff account. `actorUserId` is null when created by the setup command. */
@@ -180,7 +221,8 @@ export async function createUser(
   input: NewUserInput,
   audit: { actorUserId: string | null; via: 'api' | 'cli' },
 ): Promise<StaffUser> {
-  const passwordHash = await hashPassword(input.password);
+  const passwordHash = await hashPassword(input.pin ?? DEFAULT_PIN);
+  const mustChangePin = input.pin === undefined;
 
   try {
     const userId = await withTransaction(pool, async (client) => {
@@ -192,10 +234,10 @@ export async function createUser(
       const roles = await resolveRoles(client, input.roleCodes, organisation);
 
       const { rows } = await client.query<{ id: string }>(
-        `INSERT INTO users (username, full_name, organisation_id, password_hash)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO users (username, full_name, organisation_id, password_hash, must_change_pin)
+         VALUES ($1, $2, $3, $4, $5)
          RETURNING id`,
-        [input.username, input.fullName, organisation.id, passwordHash],
+        [input.username, input.fullName, organisation.id, passwordHash, mustChangePin],
       );
       const id = (rows[0] as { id: string }).id;
       await client.query(
@@ -358,26 +400,29 @@ export async function assertUserInScope(
 }
 
 /**
- * Sets a new password and signs the user out of every other session.
- * Used by admins resetting a password, and by users changing their own.
+ * Sets a PIN and signs the user out of every other session. A user choosing their own PIN
+ * passes it; an admin's reset leaves it out, which puts the account back on the default PIN
+ * (to be changed at the next sign-in) and unlocks it.
  */
-export async function setPassword(
+export async function setPin(
   pool: pg.Pool,
   userId: string,
-  newPassword: string,
+  newPin: string | null,
   audit: {
     actorUserId: string;
-    action: Extract<AuditAction, 'user.password_reset' | 'auth.password_changed'>;
+    action: Extract<AuditAction, 'user.pin_reset' | 'auth.pin_changed'>;
     keepSessionId?: string;
   },
 ): Promise<void> {
-  const passwordHash = await hashPassword(newPassword);
+  const pinHash = await hashPassword(newPin ?? DEFAULT_PIN);
 
   await withTransaction(pool, async (client) => {
-    const { rowCount } = await client.query('UPDATE users SET password_hash = $2 WHERE id = $1', [
-      userId,
-      passwordHash,
-    ]);
+    const { rowCount } = await client.query(
+      `UPDATE users SET password_hash = $2, must_change_pin = $3, failed_pin_attempts = 0,
+              locked_until = NULL
+       WHERE id = $1`,
+      [userId, pinHash, newPin === null],
+    );
     if (rowCount === 0) throw userNotFound();
 
     await revokeUserSessions(client, userId, audit.keepSessionId);

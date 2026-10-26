@@ -238,6 +238,25 @@ submitted receipt has a supplier; a rejected one a reason).
   `verification_status` (`PENDING`, `VERIFIED`, `REJECTED` with a reason), reviewer, review
   notes, and the `document_total` the reviewer read. The API role cannot delete them.
 
+### `orders`, `order_items`, `order_status_history`, `order_item_changes` (StockFlow Stage 5)
+
+- `orders`: `order_number` (`ORD000001`, from a sequence), `organisation_id` (a subsidiary only:
+  trigger), order and required dates, requested by, currency, notes, `status`,
+  `idempotency_key` (unique per person: a repeated request finds the first order),
+  `tax_amount`/`discount_amount` (hooks, 0), who submitted, decided (with comment and
+  `price_exception_approved`) and cancelled (with reason). CHECKs: a rejection has a comment, a
+  cancellation a reason, a decided order a decision time. Never deleted.
+- `order_items`: product, unit, `requested_quantity` and `base_quantity` (in packs),
+  `expected_unit_price`, `maximum_unit_price` (≥ expected), `actual_unit_price` (set by the
+  Head Office); **generated** columns `expected_line_total`, `maximum_line_total`,
+  `actual_line_total` and `price_exception` (actual > maximum), so the database itself works
+  them out. A product and unit appear once per order.
+- Trigger `orders_protect`: only the allowed status steps; a submitted order's details never
+  change. Trigger `order_items_protect`: lines change only in a draft; afterwards only the
+  actual price, and only while submitted or under review.
+- `order_status_history` (from, to, who, when, comment) and `order_item_changes` (line, field,
+  old, new, who, when, comment): the API role may only add rows, never change or delete them.
+
 ### `customers` (spec 6.5)
 
 Only what billing and deliveries need; no other personal details. Never deleted (the API role has

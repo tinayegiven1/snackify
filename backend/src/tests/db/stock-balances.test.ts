@@ -21,7 +21,7 @@ import {
 // StockFlow Stage 4.2 and 4.3: balances keyed by product + owner + warehouse + batch, kept in
 // step with the ledger by a trigger; dispatches take the batches that expire first.
 const pools = createTestPools();
-const PASSWORD = 'correct horse battery';
+const PASSWORD = '4826';
 let app: Express;
 let token: string;
 let product: string;

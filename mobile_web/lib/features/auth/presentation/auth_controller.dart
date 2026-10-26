@@ -50,16 +50,19 @@ class AuthController extends ChangeNotifier {
   }
 
   /// Throws [ApiException] with a user-friendly message if signing in fails.
-  Future<void> signIn(String username, String password) async {
-    _user = await _repository.signIn(username, password);
+  Future<void> signIn(String username, String pin) async {
+    _user = await _repository.signIn(username, pin);
     _status = AuthStatus.signedIn;
     _notice = null;
     notifyListeners();
   }
 
-  /// Throws [ApiException], e.g. with a field error when the current password is wrong.
-  Future<void> changePassword(String currentPassword, String newPassword) =>
-      _repository.changePassword(currentPassword, newPassword);
+  /// Throws [ApiException], e.g. with a field error when the current PIN is wrong. After the
+  /// first PIN is chosen, the app moves on from "Choose your PIN" to the main screens.
+  Future<void> changePin(String currentPin, String newPin) async {
+    _user = await _repository.changePin(currentPin, newPin);
+    notifyListeners();
+  }
 
   Future<void> signOut() async {
     await _repository.signOut();

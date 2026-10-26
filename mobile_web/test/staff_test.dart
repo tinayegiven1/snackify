@@ -43,7 +43,7 @@ void main() {
     expect(find.text('Deactivated'), findsOneWidget);
   });
 
-  testWidgets('an admin adds Head Office staff with several roles and a first password', (
+  testWidgets('an admin adds Head Office staff with several roles, starting on PIN 1234', (
     tester,
   ) async {
     final backend = adminBackend();
@@ -55,13 +55,10 @@ void main() {
     // The same rules as the server, checked before sending.
     await tester.enterText(field('Full name'), 'Rudo Chikore');
     await tester.enterText(field('Username'), 'r');
-    await tester.enterText(field('Password'), 'short');
-    await tester.enterText(field('Password again'), 'different');
+    expect(find.textContaining('first time with the PIN 1234'), findsOneWidget);
     await tapButton(tester, 'Add staff member');
     expect(find.textContaining('Use 3–32 letters'), findsOneWidget);
     expect(find.text('Choose at least one role'), findsOneWidget);
-    expect(find.text('Use at least 10 characters'), findsOneWidget);
-    expect(find.text('The two passwords differ'), findsOneWidget);
     expect(backend.requests.where((r) => r == 'POST /api/v1/users'), isEmpty);
 
     // Only Head Office roles are offered for Head Office staff.
@@ -70,8 +67,6 @@ void main() {
     await tickRole(tester, 'HQ Warehouse Officer');
     await tickRole(tester, 'HQ Sales Officer');
     expect(find.text('Choose at least one role'), findsNothing);
-    await tester.enterText(field('Password'), 'rudo-first-password');
-    await tester.enterText(field('Password again'), 'rudo-first-password');
     await tapButton(tester, 'Add staff member');
 
     final added = backend.staff.last;
@@ -80,8 +75,8 @@ void main() {
       'hq_sales_officer',
       'hq_warehouse_officer',
     ]);
-    expect(backend.passwordsSet.last, (added['id'], 'rudo-first-password'));
     expect(find.textContaining('Added Rudo Chikore (Head Office)'), findsOneWidget);
+    expect(find.textContaining('with the PIN 1234, then choose their own PIN'), findsOneWidget);
   });
 
   testWidgets("a subsidiary's staff can only be given subsidiary roles", (tester) async {
@@ -103,8 +98,6 @@ void main() {
     await tester.enterText(field('Full name'), 'Nyasha Moyo');
     await tester.enterText(field('Username'), 'nyasha');
     await tickRole(tester, 'Subsidiary Storekeeper');
-    await tester.enterText(field('Password'), 'nyasha-password-1');
-    await tester.enterText(field('Password again'), 'nyasha-password-1');
     await tapButton(tester, 'Add staff member');
 
     expect(backend.staff.last['organisation'], containsPair('code', 'SUB-01'));
@@ -123,8 +116,6 @@ void main() {
     await tester.enterText(field('Full name'), 'Chipo Two');
     await tester.enterText(field('Username'), 'chipo.n');
     await tickRole(tester, 'HQ Finance Officer');
-    await tester.enterText(field('Password'), 'a-good-password');
-    await tester.enterText(field('Password again'), 'a-good-password');
     await tapButton(tester, 'Add staff member');
 
     expect(find.text('The username "chipo.n" is already taken.'), findsOneWidget);
@@ -165,26 +156,32 @@ void main() {
     );
   });
 
-  testWidgets('an admin sets a new password for someone who forgot theirs', (tester) async {
+  testWidgets('an admin resets the PIN of someone who forgot theirs, after confirming', (
+    tester,
+  ) async {
     final backend = adminBackend();
     await pumpSnackify(tester, signedIn: true, backend: backend);
     await openSection(tester, 'Users & Roles');
     await tester.tap(find.text('Chipo Ndlovu'));
     await tester.pumpAndSettle();
 
-    await tapButton(tester, 'Set a new password');
-    await tester.enterText(field('New password'), 'chipo-new-pass-1');
-    await tester.enterText(field('New password again'), 'chipo-new-pass-2');
-    await tester.tap(find.text('Set password'));
+    await tapButton(tester, 'Reset PIN');
+    expect(find.text('Reset the PIN of Chipo Ndlovu?'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
-    expect(find.text('The two passwords differ'), findsOneWidget);
+    expect(backend.pinResets, isEmpty);
 
-    await tester.enterText(field('New password again'), 'chipo-new-pass-1');
-    await tester.tap(find.text('Set password'));
+    await tapButton(tester, 'Reset PIN');
+    await tester.tap(
+      find.descendant(of: find.byType(AlertDialog), matching: find.text('Reset PIN')),
+    );
     await tester.pumpAndSettle();
 
-    expect(backend.passwordsSet.last, (backend.staff[1]['id'], 'chipo-new-pass-1'));
-    expect(find.textContaining('New password set for Chipo Ndlovu.'), findsOneWidget);
+    expect(backend.pinResets, [backend.staff[1]['id']]);
+    expect(
+      find.textContaining('PIN reset for Chipo Ndlovu: they sign in with 1234'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('admins cannot lock themselves out', (tester) async {
@@ -199,11 +196,8 @@ void main() {
       expect(box.onChanged, isNull);
     }
     expect(tester.widget<Switch>(find.byType(Switch)).onChanged, isNull);
-    expect(find.text('Set a new password'), findsNothing);
-    expect(
-      find.text('To change your own password, use Change password in the menu.'),
-      findsOneWidget,
-    );
+    expect(find.text('Reset PIN'), findsNothing);
+    expect(find.text('To change your own PIN, use Change PIN in the menu.'), findsOneWidget);
 
     // Renaming yourself is fine.
     await tester.enterText(field('Full name'), 'Tendai B. Moyo');
@@ -222,28 +216,28 @@ void main() {
     expect(app.backend.requests.where((r) => r.contains('/users')), isEmpty);
   });
 
-  testWidgets('anyone can change their own password, proving the current one', (tester) async {
+  testWidgets('anyone can change their own PIN, proving the current one', (tester) async {
     final backend = FakeBackend(role: 'salesperson');
     await pumpSnackify(tester, signedIn: true, backend: backend);
-    await openSection(tester, 'Change password');
+    await openSection(tester, 'Change PIN');
 
-    await tester.enterText(field('Current password'), 'not my password');
-    await tester.enterText(field('New password'), 'my brand new password');
-    await tester.enterText(field('New password again'), 'my brand new password');
-    await tapButton(tester, 'Change password');
-    expect(find.text('Incorrect password'), findsOneWidget);
-    expect(backend.passwordsSet, isEmpty);
+    await tester.enterText(field('Current PIN'), '9999');
+    await tester.enterText(field('New PIN'), '73915');
+    await tester.enterText(field('New PIN again'), '73915');
+    await tapButton(tester, 'Change PIN');
+    expect(find.text('Incorrect PIN'), findsOneWidget);
+    expect(backend.pinsSet, isEmpty);
 
-    await tester.enterText(field('Current password'), testPassword);
-    await tester.enterText(field('New password again'), 'my brand new passwrd');
-    await tapButton(tester, 'Change password');
-    expect(find.text('The two new passwords differ'), findsOneWidget);
+    await tester.enterText(field('Current PIN'), testPin);
+    await tester.enterText(field('New PIN again'), '73916');
+    await tapButton(tester, 'Change PIN');
+    expect(find.text('The two PINs differ'), findsOneWidget);
 
-    await tester.enterText(field('New password again'), 'my brand new password');
-    await tapButton(tester, 'Change password');
+    await tester.enterText(field('New PIN again'), '73915');
+    await tapButton(tester, 'Change PIN');
 
-    expect(backend.passwordsSet, [(backend.user['id'], 'my brand new password')]);
-    expect(find.textContaining('Your password has been changed.'), findsOneWidget);
+    expect(backend.pinsSet, [(backend.user['id'], '73915')]);
+    expect(find.textContaining('Your PIN has been changed.'), findsOneWidget);
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
     expect(find.widgetWithText(AppBar, 'Dashboard'), findsOneWidget); // still signed in

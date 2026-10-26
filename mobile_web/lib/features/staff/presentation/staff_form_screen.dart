@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../../../core/network/api_client.dart';
 import '../../../shared/widgets/message_view.dart';
-import '../../../shared/widgets/password_field.dart';
 import '../../organisations/data/organisations_repository.dart';
 import '../../organisations/domain/organisation.dart';
 import '../data/staff_repository.dart';
@@ -39,8 +38,6 @@ class _StaffFormScreenState extends State<StaffFormScreen> {
   final _formKey = GlobalKey<FormState>();
   late final _fullName = TextEditingController(text: widget.member?.fullName);
   final _username = TextEditingController();
-  final _password = TextEditingController();
-  final _repeat = TextEditingController();
   late String _organisationId = widget.member?.organisation.id ?? widget.defaultOrganisationId;
   late Set<String> _roleCodes = {...?widget.member?.roleCodes};
   late bool _isActive = widget.member?.isActive ?? true;
@@ -52,7 +49,7 @@ class _StaffFormScreenState extends State<StaffFormScreen> {
   bool _saving = false;
   bool _rolesTouched = false;
   String? _error;
-  String? _passwordNote;
+  String? _pinNote;
   Map<String, String> _serverErrors = {};
 
   bool get _isNew => widget.member == null;
@@ -82,7 +79,7 @@ class _StaffFormScreenState extends State<StaffFormScreen> {
 
   @override
   void dispose() {
-    for (final controller in [_fullName, _username, _password, _repeat]) {
+    for (final controller in [_fullName, _username]) {
       controller.dispose();
     }
     super.dispose();
@@ -127,12 +124,10 @@ class _StaffFormScreenState extends State<StaffFormScreen> {
           fullName: _fullName.text.trim(),
           organisationId: _organisationId,
           roleCodes: roleCodes,
-          password: _password.text,
         );
         note =
             'Added ${added.fullName} (${added.organisation.name}) as ${added.roleNames}. They '
-            'sign in as "${added.username}" with the password you chose: give it to them '
-            'privately.';
+            'sign in as "${added.username}" with the PIN $defaultPin, then choose their own PIN.';
       } else {
         final fullName = _fullName.text.trim();
         final nameChanged = fullName != member.fullName;
@@ -192,17 +187,44 @@ class _StaffFormScreenState extends State<StaffFormScreen> {
     return confirmed ?? false;
   }
 
-  Future<void> _resetPassword(StaffMember member) async {
-    final reset = await showDialog<bool>(
+  Future<void> _resetPin(StaffMember member) async {
+    final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => _ResetPasswordDialog(repository: widget.repository, member: member),
+      builder: (context) => AlertDialog(
+        title: Text('Reset the PIN of ${member.fullName}?'),
+        content: Text(
+          'Their PIN goes back to $defaultPin, their account is unlocked, and they are signed '
+          'out on every phone and computer. At their next sign-in they must choose a new PIN.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Reset PIN'),
+          ),
+        ],
+      ),
     );
-    if (reset == true && mounted) {
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await widget.repository.resetPin(member.id);
+      if (!mounted) return;
       setState(
-        () => _passwordNote =
-            'New password set for ${member.fullName}. They were signed out everywhere; give '
-            'them the new password privately.',
+        () => _pinNote =
+            'PIN reset for ${member.fullName}: they sign in with $defaultPin and then choose '
+            'their own PIN.',
       );
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -283,7 +305,7 @@ class _StaffFormScreenState extends State<StaffFormScreen> {
                   const SizedBox(height: 16),
                   _rolesField(),
                   const SizedBox(height: 16),
-                  if (_isNew) ..._newPasswordFields(),
+                  if (_isNew) ..._firstPinNote(),
                   if (!_isNew)
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
@@ -310,7 +332,7 @@ class _StaffFormScreenState extends State<StaffFormScreen> {
                           )
                         : Text(_isNew ? 'Add staff member' : 'Save changes'),
                   ),
-                  if (member != null) ..._passwordSection(member),
+                  if (member != null) ..._pinSection(member),
                 ],
               ),
             ),
@@ -402,51 +424,33 @@ class _StaffFormScreenState extends State<StaffFormScreen> {
     );
   }
 
-  List<Widget> _newPasswordFields() => [
-    PasswordField(
-      controller: _password,
-      label: 'Password',
-      helper:
-          'At least $minPasswordLength characters. Give it to them privately (not in a group '
-          'chat); they can change it after signing in, under Change password in the menu.',
-      isNew: true,
-      enabled: !_saving,
-      errorText: _serverErrors['password'],
-      onChanged: (_) => _clearServerError('password'),
-      validator: checkNewPassword,
+  List<Widget> _firstPinNote() => [
+    const Text(
+      'They sign in the first time with the PIN $defaultPin and must then choose their own PIN '
+      'before they can use the app.',
     ),
-    const SizedBox(height: 16),
-    PasswordField(
-      controller: _repeat,
-      label: 'Password again',
-      isNew: true,
-      enabled: !_saving,
-      validator: (value) => value == _password.text ? null : 'The two passwords differ',
-    ),
+    const SizedBox(height: 8),
   ];
 
-  List<Widget> _passwordSection(StaffMember member) => [
+  List<Widget> _pinSection(StaffMember member) => [
     const Divider(height: 48),
-    Text('Password', style: Theme.of(context).textTheme.titleMedium),
+    Text('PIN', style: Theme.of(context).textTheme.titleMedium),
     const SizedBox(height: 8),
-    if (_passwordNote != null) ...[
-      SuccessBanner(message: _passwordNote!),
-      const SizedBox(height: 8),
-    ],
+    if (_pinNote != null) ...[SuccessBanner(message: _pinNote!), const SizedBox(height: 8)],
     if (widget.isSelf)
-      const Text('To change your own password, use Change password in the menu.')
+      const Text('To change your own PIN, use Change PIN in the menu.')
     else ...[
       Text(
-        'If ${member.fullName} has forgotten their password, set a new one and give it to them '
-        'privately.',
+        'If ${member.fullName} has forgotten their PIN, or is locked out after too many wrong '
+        'PINs, reset it to $defaultPin.',
       ),
       const SizedBox(height: 8),
       Align(
         alignment: Alignment.centerLeft,
         child: OutlinedButton.icon(
-          onPressed: _saving ? null : () => _resetPassword(member),
+          onPressed: _saving ? null : () => _resetPin(member),
           icon: const Icon(Icons.lock_reset),
-          label: const Text('Set a new password'),
+          label: const Text('Reset PIN'),
         ),
       ),
     ],
@@ -483,99 +487,6 @@ class _StaffFormScreenState extends State<StaffFormScreen> {
         onChanged: (_) => _clearServerError(field),
         validator: (raw) => validator?.call((raw ?? '').trim()),
       ),
-    );
-  }
-}
-
-/// Asks for a new password (twice) and sets it. Pops with true once it is set.
-class _ResetPasswordDialog extends StatefulWidget {
-  const _ResetPasswordDialog({required this.repository, required this.member});
-
-  final StaffRepository repository;
-  final StaffMember member;
-
-  @override
-  State<_ResetPasswordDialog> createState() => _ResetPasswordDialogState();
-}
-
-class _ResetPasswordDialogState extends State<_ResetPasswordDialog> {
-  final _formKey = GlobalKey<FormState>();
-  final _password = TextEditingController();
-  final _repeat = TextEditingController();
-  bool _saving = false;
-  String? _error;
-
-  @override
-  void dispose() {
-    _password.dispose();
-    _repeat.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    setState(() => _error = null);
-    if (_saving || !_formKey.currentState!.validate()) return;
-    setState(() => _saving = true);
-    try {
-      await widget.repository.resetPassword(widget.member.id, _password.text);
-      if (mounted) Navigator.of(context).pop(true);
-    } on ApiException catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _error = error.fieldErrors['newPassword'] ?? error.message;
-        _saving = false;
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text('New password for ${widget.member.fullName}'),
-      content: SizedBox(
-        width: 420,
-        child: Form(
-          key: _formKey,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (_error != null) ...[ErrorBanner(message: _error!), const SizedBox(height: 16)],
-                Text(
-                  'They are signed out on every phone and computer, and sign in again with the '
-                  'new password.',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 16),
-                PasswordField(
-                  controller: _password,
-                  label: 'New password',
-                  helper: 'At least $minPasswordLength characters.',
-                  isNew: true,
-                  enabled: !_saving,
-                  validator: checkNewPassword,
-                ),
-                const SizedBox(height: 16),
-                PasswordField(
-                  controller: _repeat,
-                  label: 'New password again',
-                  isNew: true,
-                  enabled: !_saving,
-                  validator: (value) => value == _password.text ? null : 'The two passwords differ',
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: _saving ? null : () => Navigator.of(context).pop(false),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(onPressed: _saving ? null : _submit, child: const Text('Set password')),
-      ],
     );
   }
 }

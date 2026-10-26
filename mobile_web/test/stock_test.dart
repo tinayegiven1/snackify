@@ -52,7 +52,6 @@ void main() {
     expect(find.text('Opening balance'), findsNothing); // administrators only
 
     await openReceiveForm(tester);
-    await chooseOption(tester, 'Supplier', 'Harare Potato Co-op (SUP-01)');
     await addLine(tester, product: 'Maize Puffs — Cheese — Small', bought: 48, batch: 'L2026-10A');
     app.documents.willPick([pdfDocument()]);
     await press(tester, find.text('Attach document'));

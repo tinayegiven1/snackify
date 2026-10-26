@@ -13,8 +13,8 @@ import '../../products/presentation/scan_product.dart';
 import '../domain/receipt_models.dart';
 import 'receipt_services.dart';
 
-/// Records a delivery as a goods-received note: whose stock it is, the supplier, each product
-/// with what was bought and what arrived, and the supplier's documents. Saved as a draft or
+/// Records a delivery as a goods-received note: whose stock it is, each product with what was
+/// bought and what arrived, and the supplier's documents. Saved as a draft or
 /// submitted for verification. Pops with the saved receipt.
 class ReceiptEditorScreen extends StatefulWidget {
   const ReceiptEditorScreen({super.key, required this.services, this.receipt});
@@ -44,7 +44,6 @@ class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
   late GoodsReceipt? _saved = widget.receipt;
   late String? _ownerId = widget.receipt?.owner.id ?? widget.services.user.organisation.id;
   late String? _warehouseId = widget.receipt?.warehouse.id;
-  late String? _supplierId = widget.receipt?.supplier?.id;
   late DateTime _receivedDate = widget.receipt == null
       ? today()
       : DateTime.parse(widget.receipt!.receivedDate);
@@ -59,7 +58,6 @@ class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
 
   List<Organisation>? _organisations;
   List<CatalogueItem>? _warehouses;
-  List<CatalogueItem>? _suppliers;
   String? _loadError;
 
   bool _saving = false;
@@ -86,14 +84,12 @@ class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
     try {
       final results = await Future.wait([
         _services.catalogue.list(CatalogueKind.warehouses),
-        _services.catalogue.list(CatalogueKind.suppliers),
         if (_services.canChooseOwner) _services.organisations.list(),
       ]);
       if (!mounted) return;
       setState(() {
         _warehouses = results[0] as List<CatalogueItem>;
-        _suppliers = results[1] as List<CatalogueItem>;
-        if (_services.canChooseOwner) _organisations = results[2] as List<Organisation>;
+        if (_services.canChooseOwner) _organisations = results[1] as List<Organisation>;
         _warehouseId ??= _warehouses!.where((w) => w.isDefault).firstOrNull?.id;
       });
     } on ApiException catch (error) {
@@ -185,7 +181,7 @@ class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
   ReceiptInput _input() => ReceiptInput(
     organisationId: _services.canChooseOwner ? _ownerId : null,
     warehouseId: _warehouseId,
-    supplierId: _supplierId,
+    supplierId: widget.receipt?.supplier?.id,
     supplierInvoiceNumber: _invoiceNumber.text.trim().isEmpty ? null : _invoiceNumber.text.trim(),
     purchaseDate: _purchaseDate == null ? null : toApiDate(_purchaseDate!),
     receivedDate: toApiDate(_receivedDate),
@@ -272,14 +268,13 @@ class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
     if (_loadError != null) {
       return MessageView(
         icon: Icons.cloud_off_outlined,
-        title: 'Could not load suppliers and warehouses',
+        title: 'Could not load the warehouses',
         message: _loadError!,
         action: RetryButton(onPressed: _loadChoices),
       );
     }
     final warehouses = _warehouses;
-    final suppliers = _suppliers;
-    if (warehouses == null || suppliers == null) {
+    if (warehouses == null) {
       return const Center(child: CircularProgressIndicator());
     }
     final organisations = _organisations;
@@ -320,22 +315,6 @@ class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
                   ),
                   const SizedBox(height: 16),
                 ],
-                DropdownButtonFormField<String>(
-                  initialValue: _supplierId,
-                  isExpanded: true,
-                  decoration: InputDecoration(
-                    labelText: 'Supplier',
-                    helperText: suppliers.isEmpty ? 'Add suppliers under Catalogue first.' : null,
-                    border: const OutlineInputBorder(),
-                    errorText: _serverErrors['supplierId'],
-                  ),
-                  items: [
-                    for (final supplier in suppliers)
-                      DropdownMenuItem(value: supplier.id, child: Text(supplier.label)),
-                  ],
-                  onChanged: _saving ? null : (value) => setState(() => _supplierId = value),
-                ),
-                const SizedBox(height: 16),
                 TextFormField(
                   controller: _invoiceNumber,
                   enabled: !_saving,

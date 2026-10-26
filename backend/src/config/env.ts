@@ -37,6 +37,14 @@ export interface AppConfig {
   };
   /** Receipt documents: where they are kept (outside the web app) and how large they may be. */
   attachments: { storageDir: string; maxBytes: number };
+  /** Subsidiary orders (StockFlow Stage 5). */
+  orders: {
+    /**
+     * True: an order may be approved although the Head Office has less stock than ordered (the
+     * rest waits as a backorder). False: approval needs enough stock for every line.
+     */
+    allowBackorders: boolean;
+  };
 }
 
 /** Private documents live here by default: inside the project, never inside the web app. */
@@ -142,6 +150,7 @@ const envSchema = z.object({
     .max(50 * 1024 * 1024, 'Must be at most 52428800 (50 MB)')
     .default(10 * 1024 * 1024),
   ATTACHMENT_STORAGE_DIR: z.string().trim().min(1).optional(),
+  ORDERS_ALLOW_BACKORDERS: booleanSetting(true),
 });
 
 const WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
@@ -184,6 +193,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       storageDir: attachmentDir(result.data.ATTACHMENT_STORAGE_DIR, result.data.WEB_APP_DIR),
       maxBytes: result.data.ATTACHMENT_MAX_BYTES,
     },
+    orders: { allowBackorders: result.data.ORDERS_ALLOW_BACKORDERS },
   };
 }
 

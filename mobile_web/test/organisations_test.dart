@@ -25,10 +25,11 @@ void main() {
     );
 
     final sections = await menuSections(tester);
-    expect(sections.sublist(0, sections.indexOf('Change password')), [
+    expect(sections.sublist(0, sections.indexOf('Change PIN')), [
       'Products',
       'Stock',
       'Goods Received',
+      'Orders',
       'Organisations',
       'Tendai Moyo',
     ]);

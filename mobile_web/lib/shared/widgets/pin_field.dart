@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
-/// A password box with a show/hide button. [isNew] tells password managers to offer a new
-/// password instead of filling in the saved one.
-class PasswordField extends StatefulWidget {
-  const PasswordField({
+/// A PIN box: digits only (a number keypad on phones), hidden with a show/hide button.
+/// [isNew] tells password managers to offer a new PIN instead of filling in the saved one.
+class PinField extends StatefulWidget {
+  const PinField({
     super.key,
     required this.controller,
     required this.label,
@@ -11,8 +12,10 @@ class PasswordField extends StatefulWidget {
     this.errorText,
     this.isNew = false,
     this.enabled = true,
+    this.autofocus = false,
     this.validator,
     this.onChanged,
+    this.onSubmitted,
   });
 
   final TextEditingController controller;
@@ -21,14 +24,16 @@ class PasswordField extends StatefulWidget {
   final String? errorText;
   final bool isNew;
   final bool enabled;
+  final bool autofocus;
   final String? Function(String value)? validator;
   final ValueChanged<String>? onChanged;
+  final ValueChanged<String>? onSubmitted;
 
   @override
-  State<PasswordField> createState() => _PasswordFieldState();
+  State<PinField> createState() => _PinFieldState();
 }
 
-class _PasswordFieldState extends State<PasswordField> {
+class _PinFieldState extends State<PinField> {
   bool _visible = false;
 
   @override
@@ -36,9 +41,15 @@ class _PasswordFieldState extends State<PasswordField> {
     return TextFormField(
       controller: widget.controller,
       enabled: widget.enabled,
+      autofocus: widget.autofocus,
       obscureText: !_visible,
       autocorrect: false,
       enableSuggestions: false,
+      keyboardType: TextInputType.number,
+      inputFormatters: [
+        FilteringTextInputFormatter.digitsOnly,
+        LengthLimitingTextInputFormatter(8),
+      ],
       autofillHints: [widget.isNew ? AutofillHints.newPassword : AutofillHints.password],
       decoration: InputDecoration(
         labelText: widget.label,
@@ -46,15 +57,16 @@ class _PasswordFieldState extends State<PasswordField> {
         helperMaxLines: 3,
         errorText: widget.errorText,
         errorMaxLines: 2,
-        prefixIcon: const Icon(Icons.lock_outline),
+        prefixIcon: const Icon(Icons.pin_outlined),
         border: const OutlineInputBorder(),
         suffixIcon: IconButton(
-          tooltip: _visible ? 'Hide password' : 'Show password',
+          tooltip: _visible ? 'Hide PIN' : 'Show PIN',
           icon: Icon(_visible ? Icons.visibility_off : Icons.visibility),
           onPressed: () => setState(() => _visible = !_visible),
         ),
       ),
       onChanged: widget.onChanged,
+      onFieldSubmitted: widget.onSubmitted,
       validator: widget.validator == null ? null : (raw) => widget.validator!(raw ?? ''),
     );
   }

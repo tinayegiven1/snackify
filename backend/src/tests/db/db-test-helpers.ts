@@ -65,7 +65,8 @@ export function createDbTestApp(appPool: pg.Pool): Express {
 export async function resetDatabase(ownerPool: pg.Pool): Promise<void> {
   await ownerPool.query(`
     TRUNCATE forecasts, forecast_runs, payment_allocations, payments, invoice_items, invoices, stock_balances, stock_movements, stock_batches, stock_receipt_attachments,
-             stock_receipt_lines, stock_receipts, dispatch_items, dispatches, audit_logs,
+             stock_receipt_lines, stock_receipts, order_item_changes, order_status_history,
+             order_items, orders, dispatch_items, dispatches, audit_logs,
              sessions, user_roles, users, unit_conversions, products, product_categories, suppliers, customers`);
   // Only what the migrations create stays: the default warehouse and the standard units.
   await ownerPool.query(`DELETE FROM warehouses WHERE NOT is_default`);
@@ -177,6 +178,7 @@ export async function createTestUser(
   user: {
     username: string;
     fullName?: string;
+    /** The account's PIN (test accounts get their own, so they need not change it). */
     password: string;
     role?: Role;
     roleCodes?: string[];
@@ -189,7 +191,7 @@ export async function createTestUser(
     {
       username: user.username,
       fullName: user.fullName ?? `Test ${user.username}`,
-      password: user.password,
+      pin: user.password,
       roleCodes: [...roleCodes].sort(),
       organisationId: user.organisationId ?? (await headOfficeId(appPool)),
     },
@@ -197,9 +199,9 @@ export async function createTestUser(
   );
 }
 
-/** Signs in through the API and returns the session token. */
+/** Signs in through the API with the user's PIN and returns the session token. */
 export async function signIn(app: Express, username: string, password: string): Promise<string> {
-  const response = await request(app).post('/api/v1/auth/login').send({ username, password });
+  const response = await request(app).post('/api/v1/auth/login').send({ username, pin: password });
   if (response.status !== 200) {
     throw new Error(`Sign-in failed: ${response.status} ${JSON.stringify(response.body)}`);
   }
