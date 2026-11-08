@@ -4,20 +4,20 @@ import 'package:snackify/core/formatting/dates.dart';
 
 import 'helpers/test_app.dart';
 
-/// Two products and two customers, with confirmed dispatches last week:
+/// Two products and two customers (subsidiaries), with confirmed dispatches last week:
 /// Avondale 12 BBQ + 5 Cheese (USD 7.50) and Mabelreign 4 BBQ (USD 2.00).
 /// Also a cancelled dispatch, a draft, and one from the week before, none of which are billed.
 FakeBackend backendForInvoices(String role) {
   final backend = FakeBackend(role: role)
     ..addProduct('PC-BBQ-S', 'Potato Crisps', 'BBQ', 'Small', '0.50')
     ..addProduct('MP-CH-S', 'Maize Puffs', 'Cheese', 'Small', '0.30')
-    ..addCustomer(
+    ..addOrganisation(
       'C0001',
       'Avondale Tuckshop',
       phone: '+263 00 000 0001',
       address: '1 Example Road',
     )
-    ..addCustomer('C0002', 'Mabelreign Grocers');
+    ..addOrganisation('C0002', 'Mabelreign Grocers');
   backend
     ..addConfirmedDispatch('C0001', {'PC-BBQ-S': 12, 'MP-CH-S': 5})
     ..addConfirmedDispatch('C0002', {'PC-BBQ-S': 4})
@@ -195,7 +195,9 @@ void main() {
     await tester.pumpAndSettle();
 
     // Another member of staff invoices Avondale while this preview is open.
-    await app.api.postJson('/api/v1/invoices', {'customerId': 'customer-1'});
+    await app.api.postJson('/api/v1/invoices', {
+      'customerId': app.backend.buyers.firstWhere((o) => o['code'] == 'C0001')['id'],
+    });
 
     await tapButton(tester, 'Create draft invoice');
     expect(

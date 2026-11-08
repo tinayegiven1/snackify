@@ -1,6 +1,5 @@
 import '../features/audit/data/audit_repository.dart';
 import '../features/catalogue/data/catalogue_repository.dart';
-import '../features/customers/data/customers_repository.dart';
 import '../features/dispatches/data/dispatches_repository.dart';
 import '../features/forecasts/data/forecasts_repository.dart';
 import '../features/invoices/data/invoices_repository.dart';
@@ -22,7 +21,6 @@ class AppServices {
     required this.checkBackendHealth,
     required this.products,
     required this.stock,
-    required this.customers,
     required this.dispatches,
     required this.invoices,
     required this.payments,
@@ -37,13 +35,13 @@ class AppServices {
     required this.sharePdf,
     required this.readBarcode,
     required this.pickDocuments,
+    required this.takePhoto,
   });
 
   /// Returns true when the Snackify API is reachable.
   final Future<bool> Function() checkBackendHealth;
   final ProductsRepository products;
   final StockRepository stock;
-  final CustomersRepository customers;
   final DispatchesRepository dispatches;
   final InvoicesRepository invoices;
   final PaymentsRepository payments;
@@ -72,4 +70,7 @@ class AppServices {
 
   /// Lets the user choose supplier documents (PDFs, photos) to attach.
   final DocumentPicker pickDocuments;
+
+  /// Takes a photo of a supplier document with the camera.
+  final PhotoTaker takePhoto;
 }

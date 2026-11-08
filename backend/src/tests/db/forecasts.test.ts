@@ -108,7 +108,8 @@ beforeEach(async () => {
     isActive: false,
   });
   const { rows } = await pools.owner.query<{ id: string }>(
-    `INSERT INTO customers (code, name) VALUES ('C0001', 'Avondale Tuckshop') RETURNING id`,
+    `INSERT INTO organisations (code, name, organisation_type)
+     VALUES ('C0001', 'Avondale Tuckshop', 'SUBSIDIARY') RETURNING id`,
   );
   shop = (rows[0] as { id: string }).id;
 });

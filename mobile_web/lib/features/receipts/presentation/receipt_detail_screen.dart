@@ -5,6 +5,7 @@ import '../../../core/formatting/dates.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/widgets/message_view.dart';
 import '../domain/receipt_models.dart';
+import 'document_preview.dart';
 import 'receipt_editor_screen.dart';
 import 'receipt_services.dart';
 import 'receipts_screen.dart' show ReceiptStatusBadge, receivedMessage;
@@ -29,6 +30,11 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
   /// What the last action did, shown at the top (a snackbar would cover the buttons).
   String? _note;
   bool _busy = false;
+
+  /// Pictures of the attached documents, downloaded for their thumbnails.
+  late final _pictures = DocumentPictureCache(
+    (documentId) => _services.receipts.document(widget.receiptId, documentId),
+  );
 
   ReceiptServices get _services => widget.services;
 
@@ -127,23 +133,32 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
     }
   }
 
-  Future<void> _review(GoodsReceipt receipt, ReceiptDocument document) async {
-    final result = await showDialog<_Review>(
-      context: context,
-      builder: (_) => _ReviewDialog(document: document, receiptTotal: receipt.total),
-    );
-    if (result == null) return;
+  Future<void> _takePhoto(GoodsReceipt receipt) async {
+    final photo = await _services.takePhoto();
+    if (photo == null || !mounted) return;
     await _run(
-      () => _services.receipts.reviewDocument(
-        receipt.id,
-        document.id,
-        status: result.status,
-        notes: result.notes,
-        documentTotal: result.documentTotal,
-      ),
-      result.status == DocumentStatus.verified
-          ? 'Verified ${document.filename}.'
-          : 'Rejected ${document.filename}.',
+      () => _services.receipts.addDocument(receipt.id, photo.name, photo.bytes),
+      'Attached ${photo.name}.',
+    );
+  }
+
+  Future<void> _preview(ReceiptDocument document) async {
+    try {
+      final bytes =
+          _pictures.bytesOf(document.id) ??
+          await _services.receipts.document(widget.receiptId, document.id);
+      if (mounted) await showDocumentPreview(context, document.filename, bytes);
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    }
+  }
+
+  Widget _thumbnail(ReceiptDocument document) {
+    if (!document.isPdf) _pictures.ensure(document.id, () => mounted ? setState(() {}) : null);
+    return DocumentThumbnail(
+      isPdf: document.isPdf,
+      bytes: _pictures.bytesOf(document.id),
+      loading: _pictures.isLoading(document.id),
     );
   }
 
@@ -237,9 +252,6 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
     if (receipt == null) return const Center(child: CircularProgressIndicator());
     final theme = Theme.of(context);
     final status = receipt.status;
-    final reviewable =
-        _services.canVerify &&
-        (status == ReceiptStatus.pendingVerification || status == ReceiptStatus.draft);
     final canAddDocuments =
         _services.canReceive &&
         (status == ReceiptStatus.draft || status == ReceiptStatus.pendingVerification);
@@ -336,9 +348,16 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
                 for (final document in receipt.documents)
                   ListTile(
                     contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      document.isPdf ? Icons.picture_as_pdf_outlined : Icons.image_outlined,
-                    ),
+                    leading: _thumbnail(document),
+                    // A photo opens in the preview; a PDF opens (downloads) as a file.
+                    onTap: document.isPdf
+                        ? () => _download(
+                            () async => _services.sharePdf(
+                              await _services.receipts.document(receipt.id, document.id),
+                              document.filename,
+                            ),
+                          )
+                        : () => _preview(document),
                     title: Text(document.filename),
                     subtitle: Text(
                       [
@@ -349,35 +368,22 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
                       ].join('\n'),
                     ),
                     isThreeLine: document.reviewNotes != null || document.documentTotal != null,
-                    trailing: Wrap(
-                      children: [
-                        IconButton(
-                          tooltip: 'Download ${document.filename}',
-                          icon: const Icon(Icons.download_outlined),
-                          onPressed: () => _download(
-                            () async => _services.sharePdf(
-                              await _services.receipts.document(receipt.id, document.id),
-                              document.filename,
-                            ),
-                          ),
-                        ),
-                        if (reviewable && document.status == DocumentStatus.pending)
-                          IconButton(
-                            tooltip: 'Review ${document.filename}',
-                            icon: const Icon(Icons.fact_check_outlined),
-                            onPressed: _busy ? null : () => _review(receipt, document),
-                          ),
-                      ],
-                    ),
                   ),
                 if (canAddDocuments)
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton.icon(
-                      onPressed: _busy ? null : () => _addDocuments(receipt),
-                      icon: const Icon(Icons.attach_file),
-                      label: const Text('Attach document'),
-                    ),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      TextButton.icon(
+                        onPressed: _busy ? null : () => _addDocuments(receipt),
+                        icon: const Icon(Icons.attach_file),
+                        label: const Text('Attach document'),
+                      ),
+                      TextButton.icon(
+                        onPressed: _busy ? null : () => _takePhoto(receipt),
+                        icon: const Icon(Icons.photo_camera_outlined),
+                        label: const Text('Take photo'),
+                      ),
+                    ],
                   ),
                 const SizedBox(height: 16),
                 Wrap(
@@ -449,110 +455,6 @@ class _Facts extends StatelessWidget {
               ],
             ),
           ),
-      ],
-    );
-  }
-}
-
-typedef _Review = ({DocumentStatus status, String? notes, String? documentTotal});
-
-/// Verifies or rejects one document (rejection needs a reason).
-class _ReviewDialog extends StatefulWidget {
-  const _ReviewDialog({required this.document, required this.receiptTotal});
-
-  final ReceiptDocument document;
-  final String receiptTotal;
-
-  @override
-  State<_ReviewDialog> createState() => _ReviewDialogState();
-}
-
-class _ReviewDialogState extends State<_ReviewDialog> {
-  final _formKey = GlobalKey<FormState>();
-  final _notes = TextEditingController();
-  final _total = TextEditingController();
-  DocumentStatus _status = DocumentStatus.verified;
-
-  @override
-  void dispose() {
-    _notes.dispose();
-    _total.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text('Review ${widget.document.filename}'),
-      content: SizedBox(
-        width: 420,
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              SegmentedButton<DocumentStatus>(
-                segments: const [
-                  ButtonSegment(value: DocumentStatus.verified, label: Text('Verify')),
-                  ButtonSegment(value: DocumentStatus.rejected, label: Text('Reject')),
-                ],
-                selected: {_status},
-                onSelectionChanged: (value) => setState(() => _status = value.first),
-              ),
-              const SizedBox(height: 12),
-              if (_status == DocumentStatus.verified) ...[
-                TextFormField(
-                  controller: _total,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(
-                    labelText: 'Total on the document (optional)',
-                    helperText: 'This receipt\'s total is ${widget.receiptTotal}.',
-                    border: const OutlineInputBorder(),
-                  ),
-                  validator: (value) {
-                    final text = (value ?? '').trim();
-                    if (text.isEmpty) return null;
-                    return RegExp(r'^\d{1,12}(\.\d{1,2})?$').hasMatch(text)
-                        ? null
-                        : 'Use an amount with up to 2 decimal places';
-                  },
-                ),
-                const SizedBox(height: 12),
-              ],
-              TextFormField(
-                controller: _notes,
-                maxLength: 500,
-                decoration: InputDecoration(
-                  labelText: _status == DocumentStatus.rejected
-                      ? 'Why is it rejected?'
-                      : 'Notes (optional)',
-                  border: const OutlineInputBorder(),
-                ),
-                validator: (value) =>
-                    _status == DocumentStatus.rejected && (value ?? '').trim().length < 3
-                    ? 'Say why the document is rejected'
-                    : null,
-              ),
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-        FilledButton(
-          onPressed: () {
-            if (!_formKey.currentState!.validate()) return;
-            Navigator.pop<_Review>(context, (
-              status: _status,
-              notes: _notes.text.trim().isEmpty ? null : _notes.text.trim(),
-              documentTotal: _status == DocumentStatus.verified && _total.text.trim().isNotEmpty
-                  ? _total.text.trim()
-                  : null,
-            ));
-          },
-          child: const Text('Save review'),
-        ),
       ],
     );
   }

@@ -95,9 +95,9 @@ beforeEach(async () => {
     });
   }
   const { rows } = await pools.owner.query<{ id: string }>(
-    `INSERT INTO customers (code, name, phone, address) VALUES
-       ('C0001', 'Avondale Tuckshop', '+263 00 000 0001', '1 Example Road'),
-       ('C0002', 'Mabelreign Grocers', NULL, NULL)
+    `INSERT INTO organisations (code, name, contact_phone, address, organisation_type) VALUES
+       ('C0001', 'Avondale Tuckshop', '+263 00 000 0001', '1 Example Road', 'SUBSIDIARY'),
+       ('C0002', 'Mabelreign Grocers', NULL, NULL, 'SUBSIDIARY')
      RETURNING id`,
   );
   [avondale, mabelreign] = rows.map((row) => row.id) as [string, string];
@@ -290,7 +290,9 @@ describe('issuing', () => {
     });
 
     // Changing the customer later does not change the issued invoice.
-    await pools.owner.query(`UPDATE customers SET name = 'Renamed Shop' WHERE id = $1`, [avondale]);
+    await pools.owner.query(`UPDATE organisations SET name = 'Renamed Shop' WHERE id = $1`, [
+      avondale,
+    ]);
     const later = await as('accounts').get(`/api/v1/invoices/${draft.id}`);
     expect(later.body.invoice.customer.name).toBe('Avondale Tuckshop');
 

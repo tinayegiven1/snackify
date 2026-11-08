@@ -210,7 +210,6 @@ void main() {
       'Stock',
       'Goods Received',
       'Orders',
-      'Customers',
       'Dispatches',
       'Organisations',
       'Tendai Moyo',

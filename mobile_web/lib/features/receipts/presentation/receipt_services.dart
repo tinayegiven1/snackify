@@ -16,6 +16,7 @@ class ReceiptServices {
     required this.products,
     required this.user,
     required this.pickDocuments,
+    required this.takePhoto,
     required this.sharePdf,
     required this.readBarcode,
   });
@@ -26,6 +27,9 @@ class ReceiptServices {
   final ProductsRepository products;
   final AppUser user;
   final DocumentPicker pickDocuments;
+
+  /// Takes a photo of a supplier document with the camera.
+  final PhotoTaker takePhoto;
 
   /// Downloads (web) or shares (phones) a file: the GRN PDF or a supplier document.
   final PdfSharer sharePdf;

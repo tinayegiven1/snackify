@@ -25,7 +25,7 @@ FakeBackend backendForBarcodes(String role) => FakeBackend(role: role)
   )
   ..addStock('PC-BBQ-S', 100)
   ..addStock('MP-CH-S', 50)
-  ..addCustomer('C0001', 'Avondale Tuckshop')
+  ..addOrganisation('C0001', 'Avondale Tuckshop')
   ..addSupplier('SUP-01', 'Harare Potato Co-op');
 
 Future<void> tapButton(WidgetTester tester, Finder finder) async {

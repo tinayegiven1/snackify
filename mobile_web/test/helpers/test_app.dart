@@ -15,7 +15,6 @@ import 'package:snackify/features/auth/data/token_store.dart';
 import 'package:snackify/features/auth/presentation/auth_controller.dart';
 import 'package:snackify/features/audit/data/audit_repository.dart';
 import 'package:snackify/features/catalogue/data/catalogue_repository.dart';
-import 'package:snackify/features/customers/data/customers_repository.dart';
 import 'package:snackify/features/dispatches/data/dispatches_repository.dart';
 import 'package:snackify/features/forecasts/data/forecasts_repository.dart';
 import 'package:snackify/features/invoices/data/invoices_repository.dart';
@@ -50,12 +49,12 @@ class FakeBackend {
   final Set<String> validTokens = {};
   final List<Map<String, Object?>> products = [];
   final List<Map<String, Object?>> receipts = [];
-  final List<Map<String, Object?>> customers = [];
 
   /// Dispatches, oldest first. Lines are stored as {productId, quantity, unitPrice}.
   final List<Map<String, Object?>> dispatches = [];
 
-  /// Adds a draft dispatch directly, e.g. addDraft('C0001', {'PC-BBQ-S': 12}).
+  /// Adds a draft dispatch directly, e.g. addDraft('C0001', {'PC-BBQ-S': 12}), where 'C0001' is
+  /// the code of the subsidiary it goes to.
   Map<String, Object?> addDraft(String customerCode, Map<String, int> quantities) {
     final dispatch = <String, Object?>{
       'id': 'dispatch-${dispatches.length + 1}',
@@ -63,7 +62,7 @@ class FakeBackend {
       'status': 'draft',
       'dispatchDate': toApiDate(today()),
       'notes': null,
-      'customerId': customers.firstWhere((c) => c['code'] == customerCode)['id'],
+      'customerId': buyers.firstWhere((c) => c['code'] == customerCode)['id'],
       'lines': [
         for (final MapEntry(key: sku, value: quantity) in quantities.entries)
           {
@@ -81,25 +80,36 @@ class FakeBackend {
     return dispatch;
   }
 
-  /// Adds a customer directly, as if it already existed on the server.
-  void addCustomer(
+  /// Adds an organisation directly, as if it already existed on the server, and returns its id.
+  /// Subsidiaries are the customers that dispatches, invoices and payments are for.
+  String addOrganisation(
     String code,
     String name, {
     String? phone,
     String? address,
     String? creditLimit,
     bool isActive = true,
+    bool isHeadOffice = false,
   }) {
-    customers.add({
-      'id': 'customer-${customers.length + 1}',
+    final id = 'org-${organisations.length + 1}';
+    organisations.add({
+      'id': id,
       'code': code,
       'name': name,
-      'phone': phone,
+      'type': isHeadOffice ? 'HQ' : 'SUBSIDIARY',
+      'isActive': isActive,
+      'contactPhone': phone,
       'address': address,
       'creditLimit': creditLimit,
-      'isActive': isActive,
     });
+    return id;
   }
+
+  /// The subsidiaries: the customers that dispatches, invoices and payments are for.
+  List<Map<String, Object?>> get buyers => [
+    for (final candidate in organisations)
+      if (candidate['type'] == 'SUBSIDIARY') candidate,
+  ];
 
   /// The stock ledger, oldest first.
   final List<Map<String, Object?>> movements = [];
@@ -115,8 +125,8 @@ class FakeBackend {
 
   /// The Head Office and subsidiaries, as the server lists them.
   final List<Map<String, Object?>> organisations = [
-    {...headOffice, 'isActive': true, 'customerId': null},
-    {...subsidiaryOne, 'isActive': true, 'contactPhone': '+263 00 100 0001', 'customerId': null},
+    {...headOffice, 'isActive': true, 'creditLimit': null},
+    {...subsidiaryOne, 'isActive': true, 'contactPhone': '+263 00 100 0001', 'creditLimit': null},
   ];
 
   /// Audit log entries, newest first, as the server returns them.
@@ -160,7 +170,7 @@ class FakeBackend {
   int _issued = 0;
 
   /// What each role may do: the same rows as the real database (migrations 20261020090000000,
-  /// 20261021090000000 and 20261021110000000).
+  /// 20261021090000000, 20261021110000000 and 20261108090000000).
   static const rolePermissions = <String, List<String>>{
     'system_admin': [
       'order.view',
@@ -176,9 +186,6 @@ class FakeBackend {
       'stock.view',
       'stock.opening_balance',
       'stock.adjust',
-      'customer.view',
-      'customer.edit_details',
-      'customer.change_active',
       'dispatch.view',
       'dispatch.reverse',
       'payment.void',
@@ -189,7 +196,6 @@ class FakeBackend {
       'label.print',
       'stock.view',
       'stock.receive',
-      'customer.view',
       'dispatch.view',
       'dispatch.draft',
       'dispatch.confirm',
@@ -204,8 +210,7 @@ class FakeBackend {
       'price.exception.approve',
       'receipt.verify',
       'stock.view',
-      'customer.view',
-      'customer.edit_credit_limit',
+      'organisation.edit_credit_limit',
       'dispatch.view',
       'invoice.manage',
       'payment.manage',
@@ -217,8 +222,6 @@ class FakeBackend {
     'hq_sales_officer': [
       'order.view',
       'stock.view',
-      'customer.view',
-      'customer.edit_details',
       'dispatch.view',
       'dispatch.draft',
       'report.dashboard',
@@ -456,7 +459,6 @@ class FakeBackend {
       return request.method == 'POST' ? _createProduct(body) : _updateProduct(path, body);
     }
     if (path.startsWith('/api/v1/stock')) return _stock(request);
-    if (path.startsWith('/api/v1/customers')) return _customers(request);
     if (path.startsWith('/api/v1/dispatches')) return _dispatches(request);
     if (path.startsWith('/api/v1/invoices')) return _invoices(request);
     if (path.startsWith('/api/v1/payments')) return _payments(request);
@@ -602,7 +604,8 @@ class FakeBackend {
   }
 
   /// Organisations: everyone sees those they may access (Head Office staff all, a subsidiary's
-  /// staff their own); adding and changing needs organisation.manage.
+  /// staff their own). Adding and changing needs organisation.manage, except the credit limit,
+  /// which needs organisation.edit_credit_limit; a user with one of them may change those fields.
   http.Response _organisations(http.Request request) {
     final segments = request.url.pathSegments; // api, v1, organisations, [id]
     final own = organisation;
@@ -610,17 +613,36 @@ class FakeBackend {
       for (final candidate in organisations)
         if (own['type'] == 'HQ' || candidate['id'] == own['id']) candidate,
     ];
+    if (request.method == 'GET' && segments.length > 3) {
+      final found = visible.where((o) => o['id'] == segments[3]).firstOrNull;
+      return found == null
+          ? _error(404, 'ORGANISATION_NOT_FOUND', 'No organisation has that id.')
+          : _json(200, {'organisation': found});
+    }
     if (request.method == 'GET') {
-      final includeInactive = request.url.queryParameters['includeInactive'] == 'true';
+      final query = request.url.queryParameters;
+      final includeInactive = query['includeInactive'] == 'true';
       return _json(200, {
         'organisations': [
           for (final candidate in visible)
-            if (includeInactive || candidate['isActive'] == true) candidate,
+            if ((includeInactive || candidate['isActive'] == true) &&
+                (query['type'] == null || candidate['type'] == query['type']))
+              candidate,
         ],
       });
     }
-    if (!can('organisation.manage')) return _forbidden;
     final body = jsonDecode(request.body) as Map<String, dynamic>;
+    final changesCreditLimit =
+        body.containsKey('creditLimit') &&
+        (request.method == 'PATCH' || body['creditLimit'] != null);
+    final changesOther = body.keys.any((field) => field != 'creditLimit');
+    if (changesCreditLimit && !can('organisation.edit_credit_limit')) return _forbidden;
+    if ((changesOther || request.method == 'POST') && !can('organisation.manage')) {
+      return _forbidden;
+    }
+    if (body['creditLimit'] case final String limit) {
+      body['creditLimit'] = double.parse(limit).toStringAsFixed(2);
+    }
     if (segments.length == 3) {
       final code = (body['code'] as String).toUpperCase();
       if (organisations.any((o) => o['code'] == code)) {
@@ -634,24 +656,14 @@ class FakeBackend {
           },
         });
       }
-      final id = 'org-${organisations.length + 1}';
-      String customerId;
-      if (body['existingCustomerId'] case final String existing) {
-        customerId = existing;
-        customers.firstWhere((c) => c['id'] == existing)['organisationId'] = id;
-      } else {
-        addCustomer(code, body['name'] as String, phone: body['contactPhone'] as String?);
-        customers.last['organisationId'] = id;
-        customerId = customers.last['id'] as String;
-      }
       final created = <String, Object?>{
+        'creditLimit': null,
         ...body,
-        'id': id,
+        'id': 'org-${organisations.length + 1}',
         'code': code,
         'type': 'SUBSIDIARY',
         'isActive': true,
-        'customerId': customerId,
-      }..remove('existingCustomerId');
+      };
       organisations.add(created);
       return _json(201, {'organisation': created});
     }
@@ -1182,12 +1194,11 @@ class FakeBackend {
           return _error(409, 'RECEIPT_WRONG_STATUS', wrongStatus('verified'));
         }
         final documents = grn['documents'] as List<Map<String, Object?>>;
-        if (documents.any((d) => d['verificationStatus'] == 'PENDING')) {
-          return _error(
-            409,
-            'DOCUMENTS_NOT_REVIEWED',
-            'Verify or reject every document before verifying the receipt.',
-          );
+        // Verifying the receipt also verifies documents not yet reviewed.
+        for (final d in documents.where((d) => d['verificationStatus'] == 'PENDING')) {
+          d
+            ..['verificationStatus'] = 'VERIFIED'
+            ..['reviewedBy'] = _person;
         }
         if (!documents.any((d) => d['verificationStatus'] == 'VERIFIED') &&
             grn['noDocumentReason'] == null) {
@@ -1590,83 +1601,6 @@ class FakeBackend {
     return _json(200, {'product': product});
   }
 
-  /// Which permission changes which customer field, as on the real server.
-  static const _customerFieldPermissions = {
-    'code': 'customer.edit_details',
-    'name': 'customer.edit_details',
-    'phone': 'customer.edit_details',
-    'address': 'customer.edit_details',
-    'creditLimit': 'customer.edit_credit_limit',
-    'isActive': 'customer.change_active',
-  };
-
-  http.Response _customers(http.Request request) {
-    final forbidden = _error(403, 'FORBIDDEN', 'Your role does not allow this action.');
-    if (request.method == 'GET') {
-      final query = request.url.queryParameters;
-      final q = (query['q'] ?? '').toLowerCase();
-      final matches =
-          customers
-              .where((c) => query['includeInactive'] == 'true' || c['isActive'] == true)
-              .where(
-                (c) =>
-                    q.isEmpty ||
-                    [
-                      'code',
-                      'name',
-                      'phone',
-                    ].any((field) => '${c[field] ?? ''}'.toLowerCase().contains(q)),
-              )
-              .toList()
-            ..sort(
-              (a, b) => (a['name'] as String).toLowerCase().compareTo(
-                (b['name'] as String).toLowerCase(),
-              ),
-            );
-      return _json(200, {'customers': matches, 'total': matches.length});
-    }
-
-    final body = jsonDecode(request.body) as Map<String, dynamic>;
-    for (final field in body.keys) {
-      if (body[field] != null || request.method == 'PATCH') {
-        if (!can(_customerFieldPermissions[field] ?? '-')) return forbidden;
-      }
-    }
-    final code = (body['code'] as String?)?.toUpperCase();
-    if (code != null &&
-        customers.any((c) => c['code'] == code && !request.url.path.endsWith('/${c['id']}'))) {
-      return _json(409, {
-        'error': {
-          'code': 'CUSTOMER_CODE_TAKEN',
-          'message': 'Another customer already uses the code "$code".',
-          'details': [
-            {'field': 'code', 'message': 'Already used by another customer'},
-          ],
-        },
-      });
-    }
-
-    if (request.method == 'POST') {
-      addCustomer(
-        code ?? 'C${(customers.length + 1).toString().padLeft(4, '0')}',
-        body['name'] as String,
-        phone: body['phone'] as String?,
-        address: body['address'] as String?,
-        creditLimit: body['creditLimit'] == null
-            ? null
-            : double.parse(body['creditLimit'] as String).toStringAsFixed(2),
-      );
-      return _json(201, {'customer': customers.last});
-    }
-
-    final customer = customers.firstWhere((c) => request.url.path.endsWith('/${c['id']}'));
-    customer.addAll({...body, 'code': ?code});
-    if (body['creditLimit'] != null) {
-      customer['creditLimit'] = double.parse(body['creditLimit'] as String).toStringAsFixed(2);
-    }
-    return _json(200, {'customer': customer});
-  }
-
   int _lineCents(Map<String, Object?> line) =>
       (line['quantity'] as int) * parseCents(line['unitPrice'] as String)!;
 
@@ -1679,7 +1613,7 @@ class FakeBackend {
       .fold(0, (sum, d) => sum + _totalCents(d));
 
   Map<String, Object?> _dispatchJson(Map<String, Object?> d) {
-    final customer = customers.firstWhere((c) => c['id'] == d['customerId']);
+    final customer = buyers.firstWhere((c) => c['id'] == d['customerId']);
     final lines = d['lines'] as List<Map<String, Object?>>;
     final total = _totalCents(d);
     final limit = customer['creditLimit'] as String?;
@@ -1918,12 +1852,12 @@ class FakeBackend {
       formatCents(lines.fold(0, (sum, l) => sum + parseCents(l['lineTotal'] as String)!));
 
   Map<String, Object?> _customerJson(Object? id) {
-    final c = customers.firstWhere((c) => c['id'] == id);
+    final c = buyers.firstWhere((c) => c['id'] == id);
     return {
       'id': c['id'],
       'code': c['code'],
       'name': c['name'],
-      'phone': c['phone'],
+      'phone': c['contactPhone'],
       'address': c['address'],
     };
   }
@@ -2045,7 +1979,7 @@ class FakeBackend {
         return _json(200, {'invoices': matching, 'total': matching.length});
       case ('GET', 'unbilled'):
         final unbilled = <Map<String, Object?>>[];
-        for (final c in customers) {
+        for (final c in buyers) {
           final lines = _eligibleLines(c['id'], from, to);
           if (lines.isEmpty) continue;
           unbilled.add({
@@ -2080,7 +2014,7 @@ class FakeBackend {
         return _json(201, {'invoice': _invoiceJson(invoice)});
       case ('POST', 'generate'):
         final created = <Map<String, Object?>>[];
-        for (final c in customers) {
+        for (final c in buyers) {
           final invoice = _createInvoice(c['id'], from, to);
           if (invoice != null) created.add(_invoiceJson(invoice));
         }
@@ -2172,7 +2106,7 @@ class FakeBackend {
       'id': 'payment-${payments.length + 1}',
       'paymentNumber': 'P${(payments.length + 1).toString().padLeft(6, '0')}',
       'status': 'recorded',
-      'customerId': customers.firstWhere((c) => c['code'] == customerCode)['id'],
+      'customerId': buyers.firstWhere((c) => c['code'] == customerCode)['id'],
       'paymentDate': toApiDate(today()),
       'amount': amount,
       'method': 'cash',
@@ -2201,7 +2135,7 @@ class FakeBackend {
       .fold(0, (sum, a) => sum + parseCents(a['amount'] as String)!);
 
   Map<String, Object?> _paymentJson(Map<String, Object?> p) {
-    final customer = customers.firstWhere((c) => c['id'] == p['customerId']);
+    final customer = buyers.firstWhere((c) => c['id'] == p['customerId']);
     final allocated = _allocatedCents(p);
     return {
       ...p,
@@ -2388,7 +2322,7 @@ class FakeBackend {
     final segments = request.url.pathSegments; // api, v1, balances, [customerId]
     if (segments.length == 3) {
       final balances = [
-        for (final c in customers)
+        for (final c in buyers)
           if (_balanceOf(c) case final b when b['active'] == true) b..remove('active'),
       ];
       int cents(Map<String, Object?> b, String key) {
@@ -2418,7 +2352,7 @@ class FakeBackend {
       });
     }
 
-    final customer = customers.firstWhere((c) => c['id'] == segments[3]);
+    final customer = buyers.firstWhere((c) => c['id'] == segments[3]);
     final query = request.url.queryParameters;
     final to = query['to'] ?? toApiDate(today());
     final from = query['from'] ?? toApiDate(DateTime.parse(to).subtract(const Duration(days: 89)));
@@ -2493,7 +2427,7 @@ class FakeBackend {
           'id': customer['id'],
           'code': customer['code'],
           'name': customer['name'],
-          'phone': customer['phone'],
+          'phone': customer['contactPhone'],
           'address': customer['address'],
           'creditLimit': customer['creditLimit'],
         },
@@ -2810,7 +2744,6 @@ Future<TestApp> pumpSnackify(
     checkBackendHealth: () async => apiHealthy,
     products: ProductsRepository(api),
     stock: StockRepository(api),
-    customers: CustomersRepository(api),
     dispatches: DispatchesRepository(api),
     invoices: InvoicesRepository(api),
     payments: PaymentsRepository(api),
@@ -2826,6 +2759,7 @@ Future<TestApp> pumpSnackify(
         sharedPdfs.add((filename, utf8.decode(bytes, allowMalformed: true))),
     readBarcode: scanner.read,
     pickDocuments: documents.pick,
+    takePhoto: documents.takePhoto,
   );
 
   await tester.pumpWidget(SnackifyApp(auth: auth, services: services));
@@ -2912,6 +2846,13 @@ class FakeDocumentPicker {
   void willPick(List<PickedDocument> documents) => queue.add(documents);
 
   Future<List<PickedDocument>> pick() async => queue.isEmpty ? [] : queue.removeAt(0);
+
+  /// Photos the pretend camera returns, one per use (none, as when cancelled, once empty).
+  final List<PickedDocument> photos = [];
+
+  void willPhotograph(PickedDocument photo) => photos.add(photo);
+
+  Future<PickedDocument?> takePhoto() async => photos.isEmpty ? null : photos.removeAt(0);
 }
 
 /// A device that cannot store the sign-in (like a browser page without WebCrypto).

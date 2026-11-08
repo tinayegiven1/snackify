@@ -7,8 +7,6 @@ import '../../features/audit/presentation/audit_log_screen.dart';
 import '../../features/auth/domain/app_user.dart';
 import '../../features/auth/presentation/change_pin_screen.dart';
 import '../../features/catalogue/presentation/catalogue_screen.dart';
-import '../../features/customers/domain/customer.dart';
-import '../../features/customers/presentation/customers_screen.dart';
 import '../../features/dashboard/presentation/dashboard_screen.dart';
 import '../../features/dispatches/domain/dispatch_models.dart';
 import '../../features/dispatches/presentation/dispatches_screen.dart';
@@ -68,6 +66,7 @@ class _AppShellState extends State<AppShell> {
       products: services.products,
       user: user,
       pickDocuments: services.pickDocuments,
+      takePhoto: services.takePhoto,
       sharePdf: services.sharePdf,
       readBarcode: services.readBarcode,
     );
@@ -98,13 +97,9 @@ class _AppShellState extends State<AppShell> {
         ),
       ),
       'Catalogue' => CatalogueScreen(repository: services.catalogue, user: user),
-      'Customers' => CustomersScreen(
-        repository: services.customers,
-        permissions: CustomerPermissions.forUser(user),
-      ),
       'Dispatches' => DispatchesScreen(
         dispatches: services.dispatches,
-        customers: services.customers,
+        organisations: services.organisations,
         products: services.products,
         permissions: DispatchPermissions.forUser(user),
         readBarcode: services.readBarcode,
@@ -112,7 +107,7 @@ class _AppShellState extends State<AppShell> {
       'Invoices' => InvoicesScreen(invoices: services.invoices, sharePdf: services.sharePdf),
       'Payments' => PaymentsScreen(
         payments: services.payments,
-        customers: services.customers,
+        organisations: services.organisations,
         invoices: services.invoices,
         sharePdf: services.sharePdf,
         canVoid: user.can('payment.void'),
@@ -124,8 +119,8 @@ class _AppShellState extends State<AppShell> {
       'Forecasts' => ForecastsScreen(forecasts: services.forecasts),
       'Organisations' => OrganisationsScreen(
         repository: services.organisations,
-        customers: services.customers,
         canManage: user.can('organisation.manage'),
+        canEditCreditLimit: user.can('organisation.edit_credit_limit'),
       ),
       'Users & Roles' => StaffScreen(
         repository: services.staff,

@@ -34,7 +34,7 @@ let dir: string;
 
 async function seed(): Promise<void> {
   await resetDatabase(pools.owner);
-  await pools.owner.query('ALTER SEQUENCE customer_code_seq RESTART');
+  await pools.owner.query('ALTER SEQUENCE dispatch_number_seq RESTART');
   await createTestProduct(pools.owner, { sku: 'PC-BBQ-S', reorderLevel: 24 });
   await createTestProduct(pools.owner, { sku: 'MP-CH-S', name: 'Maize Puffs', flavour: 'Cheese' });
   await createTestUser(pools.app, {
@@ -44,9 +44,9 @@ async function seed(): Promise<void> {
   });
   // Text that is easy to mangle (an apostrophe, a dash, an accent), a NULL and an exact amount.
   await pools.owner.query(
-    `INSERT INTO customers (code, name, phone, address, credit_limit)
-     VALUES ('C' || lpad(nextval('customer_code_seq')::text, 4, '0'),
-             'Mai Chipo''s Tuckshop — Mbare', NULL, 'Stand 12, Café Road', 1250.75)`,
+    `INSERT INTO organisations (code, name, organisation_type, contact_phone, address, credit_limit)
+     VALUES ('C' || lpad(nextval('dispatch_number_seq')::text, 4, '0'),
+             'Mai Chipo''s Tuckshop — Mbare', 'SUBSIDIARY', NULL, 'Stand 12, Café Road', 1250.75)`,
   );
 }
 
@@ -83,8 +83,8 @@ describe('backups', () => {
         ?.replace(/\.sql$/, ''),
     });
     expect(backup.manifest.fingerprint.tables.products?.rows).toBe(2);
-    expect(backup.manifest.fingerprint.tables.customers?.rows).toBe(1);
-    expect(backup.manifest.fingerprint.sequences.customer_code_seq).toEqual({
+    expect(backup.manifest.fingerprint.tables.organisations?.rows).toBe(2);
+    expect(backup.manifest.fingerprint.sequences.dispatch_number_seq).toEqual({
       lastValue: '1',
       isCalled: true,
     });
@@ -104,7 +104,7 @@ describe('backups', () => {
     await restoreBackup(backup.dumpPath, scratchUrl);
 
     const { rows } = await scratch.query<{ name: string; credit_limit: string }>(
-      'SELECT name, credit_limit FROM customers',
+      `SELECT name, credit_limit FROM organisations WHERE organisation_type = 'SUBSIDIARY'`,
     );
     expect(rows).toEqual([{ name: "Mai Chipo's Tuckshop — Mbare", credit_limit: '1250.75' }]);
     expect((await scratch.query('SELECT 1 FROM products')).rowCount).toBe(2);
@@ -117,17 +117,19 @@ describe('backups', () => {
     await restoreBackup(backup.dumpPath, scratchUrl);
 
     await scratch.query(`DELETE FROM products WHERE sku = 'MP-CH-S'`);
-    await scratch.query(`UPDATE customers SET credit_limit = 1250.70`);
-    await scratch.query(`SELECT setval('customer_code_seq', 1, false)`);
-    await scratch.query('DROP TRIGGER customers_set_updated_at ON customers');
+    await scratch.query(
+      `UPDATE organisations SET credit_limit = 1250.70 WHERE organisation_type = 'SUBSIDIARY'`,
+    );
+    await scratch.query(`SELECT setval('dispatch_number_seq', 1, false)`);
+    await scratch.query('DROP TRIGGER organisations_set_updated_at ON organisations');
     // The app role must never be able to rewrite the stock ledger.
     await scratch.query('GRANT UPDATE ON stock_movements TO snackify_app');
 
     expect(await compareWithBackup(scratchUrl, backup.manifest)).toEqual([
-      'table customers: same number of rows, but the contents differ',
+      'table organisations: same number of rows, but the contents differ',
       'table products: 2 rows in the backup, 1 restored',
-      'sequence customer_code_seq: at 1 in the backup, 1 restored (used/unused state differs)',
-      'triggers: 26 in the backup, 25 restored',
+      'sequence dispatch_number_seq: at 1 in the backup, 1 restored (used/unused state differs)',
+      'triggers: 25 in the backup, 24 restored',
       'privileges: same number, but the definitions differ',
     ]);
   });

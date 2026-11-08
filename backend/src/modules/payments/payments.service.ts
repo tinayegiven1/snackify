@@ -108,13 +108,13 @@ export async function getPayment(db: Queryable, id: string): Promise<Payment> {
     voided_at: Date | null;
     void_reason: string | null;
   }>(
-    `SELECT p.id, p.payment_number, p.status, p.customer_id, c.code, c.name, p.payment_date,
+    `SELECT p.id, p.payment_number, p.status, p.organisation_id AS customer_id, c.code, c.name, p.payment_date,
             p.amount, p.currency, p.method, p.reference, p.notes,
             COALESCE(a.amount_allocated, 0)::numeric(14, 2)::text AS allocated,
             rb.full_name AS recorded_by_name, p.created_at,
             vb.full_name AS voided_by_name, p.voided_at, p.void_reason
      FROM payments p
-     JOIN customers c ON c.id = p.customer_id
+     JOIN organisations c ON c.id = p.organisation_id
      JOIN users rb ON rb.id = p.recorded_by
      LEFT JOIN users vb ON vb.id = p.voided_by
      LEFT JOIN payment_amounts_allocated a ON a.payment_id = p.id
@@ -186,7 +186,7 @@ export async function listPayments(
     params.push(value);
     conditions.push(condition.replaceAll('?', `$${params.length}`));
   };
-  if (search.customerId) add('p.customer_id = ?', search.customerId);
+  if (search.customerId) add('p.organisation_id = ?', search.customerId);
   if (search.status) add('p.status = ?', search.status);
   if (search.from) add('p.payment_date >= ?', search.from);
   if (search.to) add('p.payment_date <= ?', search.to);
@@ -213,12 +213,12 @@ export async function listPayments(
     allocated: string;
     total_count: number;
   }>(
-    `SELECT p.id, p.payment_number, p.status, p.customer_id, c.code, c.name, p.payment_date,
+    `SELECT p.id, p.payment_number, p.status, p.organisation_id AS customer_id, c.code, c.name, p.payment_date,
             p.amount, p.currency, p.method, p.reference,
             COALESCE(a.amount_allocated, 0)::numeric(14, 2)::text AS allocated,
             count(*) OVER ()::integer AS total_count
      FROM payments p
-     JOIN customers c ON c.id = p.customer_id
+     JOIN organisations c ON c.id = p.organisation_id
      LEFT JOIN payment_amounts_allocated a ON a.payment_id = p.id
      ${where}
      ORDER BY p.payment_date DESC, p.payment_number DESC
@@ -256,7 +256,7 @@ interface LockedPayment {
 
 async function lockPayment(client: pg.PoolClient, id: string): Promise<LockedPayment> {
   const { rows } = await client.query<LockedPayment>(
-    `SELECT id, payment_number, customer_id, amount, currency, status
+    `SELECT id, payment_number, organisation_id AS customer_id, amount, currency, status
      FROM payments WHERE id = $1 FOR UPDATE`,
     [id],
   );
@@ -297,7 +297,7 @@ async function allocate(
     total: string;
     amount_paid: string;
   }>(
-    `SELECT v.id, v.invoice_number, v.status, v.customer_id, v.currency, v.total,
+    `SELECT v.id, v.invoice_number, v.status, v.organisation_id AS customer_id, v.currency, v.total,
             COALESCE(paid.amount_paid, 0)::numeric(14, 2)::text AS amount_paid
      FROM invoices v
      LEFT JOIN invoice_amounts_paid paid ON paid.invoice_id = v.id
@@ -382,7 +382,7 @@ async function findRepeat(db: Queryable, input: PaymentInput): Promise<Payment |
     amount: string;
     method: string;
   }>(
-    `SELECT id, customer_id, payment_date, amount, method
+    `SELECT id, organisation_id AS customer_id, payment_date, amount, method
      FROM payments WHERE idempotency_key = $1`,
     [input.idempotencyKey],
   );
@@ -420,17 +420,24 @@ export async function recordPayment(
 
   try {
     const payment = await withTransaction(pool, async (client) => {
-      const { rows: customers } = await client.query('SELECT 1 FROM customers WHERE id = $1', [
-        input.customerId,
-      ]);
-      if (!customers[0]) throw new AppError(404, 'CUSTOMER_NOT_FOUND', 'No customer has that id.');
+      const { rows: customers } = await client.query(
+        `SELECT 1 FROM organisations WHERE id = $1 AND organisation_type = 'SUBSIDIARY'`,
+        [input.customerId],
+      );
+      if (!customers[0]) {
+        throw new AppError(
+          404,
+          'CUSTOMER_NOT_FOUND',
+          'No organisation that buys from the Head Office has that id.',
+        );
+      }
 
       // The new row is locked by this transaction until it commits.
       const { rows } = await client.query<LockedPayment>(
-        `INSERT INTO payments (customer_id, payment_date, amount, currency, method, reference,
+        `INSERT INTO payments (organisation_id, payment_date, amount, currency, method, reference,
                                notes, idempotency_key, recorded_by)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING id, payment_number, customer_id, amount, currency, status`,
+         RETURNING id, payment_number, organisation_id AS customer_id, amount, currency, status`,
         [
           input.customerId,
           input.paymentDate,

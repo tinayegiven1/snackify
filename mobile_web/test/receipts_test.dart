@@ -94,7 +94,7 @@ void main() {
     expect(app.backend.grns, hasLength(1));
   });
 
-  testWidgets('finance reviews each document, sees a total that differs, and verifies', (
+  testWidgets('finance opens the document and verifies the receipt with its documents', (
     tester,
   ) async {
     final backend = backendFor('storekeeper');
@@ -112,22 +112,11 @@ void main() {
     await tester.tap(grnTile('GRN000001'));
     await tester.pumpAndSettle();
 
-    await press(tester, find.text('Verify receipt'));
-    await tester.tap(find.text('Verify').last);
-    await tester.pumpAndSettle();
-    expect(
-      find.text('Verify or reject every document before verifying the receipt.'),
-      findsOneWidget,
-    );
-
-    await press(tester, find.byTooltip('Review invoice.pdf'));
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Total on the document (optional)'),
-      '40.00',
-    );
-    await press(tester, find.text('Save review'));
-    expect(find.text('Verified invoice.pdf.'), findsOneWidget);
-    expect(find.text("A document's total differs from this receipt's total."), findsOneWidget);
+    // No download or review buttons on a document: tapping a PDF opens it.
+    expect(find.byTooltip('Download invoice.pdf'), findsNothing);
+    expect(find.byTooltip('Review invoice.pdf'), findsNothing);
+    await press(tester, find.text('invoice.pdf'));
+    expect(app.sharedPdfs.single.$1, 'invoice.pdf');
 
     await press(tester, find.text('Verify receipt'));
     await tester.tap(find.text('Verify').last);
@@ -135,14 +124,13 @@ void main() {
     expect(find.text('Receipt GRN000001 verified.'), findsOneWidget);
     expect(find.text('Posted'), findsOneWidget);
     expect(app.backend.grns.single['status'], 'POSTED');
+    expect(find.textContaining('Verified'), findsWidgets); // the document, verified with it
 
     await press(tester, find.byTooltip(sharePdfLabel));
-    expect(app.sharedPdfs.single.$1, 'GRN000001.pdf');
+    expect(app.sharedPdfs.last.$1, 'GRN000001.pdf');
   });
 
-  testWidgets('a rejected document needs a reason; rejecting the receipt takes its stock out', (
-    tester,
-  ) async {
+  testWidgets('rejecting the receipt takes its stock out', (tester) async {
     final backend = backendFor('admin');
     final app = await pumpSnackify(tester, signedIn: true, backend: backend);
     await submitThroughScreens(tester, app);
@@ -150,15 +138,6 @@ void main() {
 
     await tester.tap(grnTile('GRN000001'));
     await tester.pumpAndSettle();
-    await press(tester, find.byTooltip('Review invoice.pdf'));
-    await tester.tap(find.text('Reject'));
-    await tester.pumpAndSettle();
-    await press(tester, find.text('Save review'));
-    expect(find.text('Say why the document is rejected'), findsOneWidget);
-    await tester.enterText(find.widgetWithText(TextFormField, 'Why is it rejected?'), 'Blurry');
-    await press(tester, find.text('Save review'));
-    expect(find.textContaining('Blurry'), findsOneWidget);
-
     await press(tester, find.text('Reject receipt'));
     await tester.enterText(find.widgetWithText(TextField, 'Reason'), 'Not our order');
     await tester.tap(find.text('Reject').last);

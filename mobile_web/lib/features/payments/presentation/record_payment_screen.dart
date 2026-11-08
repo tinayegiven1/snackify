@@ -6,8 +6,8 @@ import '../../../core/formatting/money.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/request_id.dart';
 import '../../../shared/widgets/message_view.dart';
-import '../../customers/data/customers_repository.dart';
-import '../../customers/presentation/customer_picker.dart';
+import '../../organisations/data/organisations_repository.dart';
+import '../../organisations/presentation/organisation_picker.dart';
 import '../data/payments_repository.dart';
 import '../domain/payment_models.dart';
 import 'allocation_editor.dart';
@@ -23,12 +23,14 @@ class RecordPaymentScreen extends StatefulWidget {
   const RecordPaymentScreen({
     super.key,
     required this.payments,
-    required this.customers,
+    required this.organisations,
     this.customer,
   });
 
   final PaymentsRepository payments;
-  final CustomersRepository customers;
+
+  /// Subsidiaries: the customers to choose from.
+  final OrganisationsRepository organisations;
   final ChosenCustomer? customer;
 
   @override
@@ -80,7 +82,7 @@ class _RecordPaymentScreenState extends State<RecordPaymentScreen> {
   }
 
   Future<void> _chooseCustomer() async {
-    final customer = await pickCustomer(context, widget.customers);
+    final customer = await pickOrganisation(context, widget.organisations);
     if (customer == null || !mounted) return;
     _setCustomer((id: customer.id, code: customer.code, name: customer.name));
   }

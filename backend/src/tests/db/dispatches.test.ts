@@ -92,8 +92,9 @@ beforeEach(async () => {
     await receiveTestStock(pools.app, { productId, quantity });
   }
   const { rows } = await pools.owner.query<{ id: string }>(
-    `INSERT INTO customers (code, name, credit_limit) VALUES
-       ('C0001', 'Avondale Tuckshop', 10.00), ('C0002', 'Mabelreign Grocers', NULL)
+    `INSERT INTO organisations (code, name, credit_limit, organisation_type) VALUES
+       ('C0001', 'Avondale Tuckshop', 10.00, 'SUBSIDIARY'),
+       ('C0002', 'Mabelreign Grocers', NULL, 'SUBSIDIARY')
      RETURNING id`,
   );
   [limited, unlimited] = rows.map((row) => row.id) as [string, string];
@@ -316,8 +317,8 @@ describe('confirming', () => {
   it('cannot oversell when dispatches to different customers are confirmed at once', async () => {
     // A different customer for each dispatch, so only the product lock keeps them apart.
     const { rows } = await pools.owner.query<{ id: string }>(
-      `INSERT INTO customers (code, name)
-       SELECT 'BUSY' || n, 'Busy Customer ' || n FROM generate_series(1, 30) AS n
+      `INSERT INTO organisations (code, name, organisation_type)
+       SELECT 'BUSY' || n, 'Busy Customer ' || n, 'SUBSIDIARY' FROM generate_series(1, 30) AS n
        RETURNING id`,
     );
 

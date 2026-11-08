@@ -176,7 +176,8 @@ describe('dispatches', () => {
     await receive(20, '2027-03-31', 'B-LATE');
     await receive(15, '2026-11-15', 'B-SOON');
     const { rows } = await pools.owner.query<{ id: string }>(
-      `INSERT INTO customers (code, name) VALUES ('C1', 'Test Shop') RETURNING id`,
+      `INSERT INTO organisations (code, name, organisation_type)
+       VALUES ('C1', 'Test Shop', 'SUBSIDIARY') RETURNING id`,
     );
     const draft = await as().post('/api/v1/dispatches', {
       customerId: rows[0]?.id,

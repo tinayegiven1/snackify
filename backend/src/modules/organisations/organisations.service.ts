@@ -4,7 +4,6 @@ import { AppError } from '../../utils/app-error.js';
 import { changedFields, recordAudit } from '../audit/audit.js';
 import type { OrganisationType } from '../auth/permissions.js';
 import type { PublicUser } from '../auth/roles.js';
-import { insertCustomer } from '../customers/customers.service.js';
 import { canAccessOrganisation, organisationNotFound, type AccessScope } from './access.js';
 
 /** The Head Office or a subsidiary, with its contact and billing details. */
@@ -21,8 +20,8 @@ export interface Organisation {
   billingName: string | null;
   billingAddress: string | null;
   taxNumber: string | null;
-  /** The customer record dispatches and invoices use for this subsidiary (decision D1). */
-  customerId: string | null;
+  /** Most a subsidiary may owe the Head Office at once (null: no limit). */
+  creditLimit: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -40,7 +39,7 @@ interface OrganisationRow {
   billing_name: string | null;
   billing_address: string | null;
   tax_number: string | null;
-  customer_id: string | null;
+  credit_limit: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -48,9 +47,8 @@ interface OrganisationRow {
 const ORGANISATION_SELECT = `
   SELECT o.id, o.code, o.name, o.organisation_type, o.is_active, o.contact_name, o.contact_phone,
          o.contact_email, o.address, o.billing_name, o.billing_address, o.tax_number,
-         c.id AS customer_id, o.created_at, o.updated_at
-  FROM organisations o
-  LEFT JOIN customers c ON c.organisation_id = o.id`;
+         o.credit_limit, o.created_at, o.updated_at
+  FROM organisations o`;
 
 const toOrganisation = (row: OrganisationRow): Organisation => ({
   id: row.id,
@@ -65,7 +63,7 @@ const toOrganisation = (row: OrganisationRow): Organisation => ({
   billingName: row.billing_name,
   billingAddress: row.billing_address,
   taxNumber: row.tax_number,
-  customerId: row.customer_id,
+  creditLimit: row.credit_limit,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
@@ -80,6 +78,7 @@ export interface OrganisationDetails {
   billingName: string | null;
   billingAddress: string | null;
   taxNumber: string | null;
+  creditLimit: string | null;
 }
 
 const DETAIL_COLUMNS: Record<keyof OrganisationDetails, string> = {
@@ -91,6 +90,7 @@ const DETAIL_COLUMNS: Record<keyof OrganisationDetails, string> = {
   billingName: 'billing_name',
   billingAddress: 'billing_address',
   taxNumber: 'tax_number',
+  creditLimit: 'credit_limit',
 };
 
 function fieldError(field: string, message: string, status = 400, code = 'VALIDATION_ERROR') {
@@ -102,11 +102,14 @@ const codeTaken = (code: string) =>
     { field: 'code', message: 'Already used by another organisation' },
   ]);
 
-/** Organisations the user may see: all for the Head Office, otherwise only their own. */
+/**
+ * Organisations the user may see: all for the Head Office, otherwise only their own.
+ * [filter.type] narrows to the Head Office or the subsidiaries (the customers).
+ */
 export async function listOrganisations(
   db: Queryable,
   scope: AccessScope,
-  filter: { includeInactive: boolean },
+  filter: { includeInactive: boolean; type?: OrganisationType | undefined },
 ): Promise<Organisation[]> {
   const conditions: string[] = [];
   const params: unknown[] = [];
@@ -115,6 +118,10 @@ export async function listOrganisations(
     conditions.push(`o.id = $${params.length}`);
   }
   if (!filter.includeInactive) conditions.push('o.is_active');
+  if (filter.type) {
+    params.push(filter.type);
+    conditions.push(`o.organisation_type = $${params.length}`);
+  }
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   const { rows } = await db.query<OrganisationRow>(
     `${ORGANISATION_SELECT} ${where} ORDER BY o.organisation_type, o.name`,
@@ -137,14 +144,9 @@ export async function getOrganisation(
 
 export interface NewSubsidiaryInput extends OrganisationDetails {
   code: string;
-  /** Link an existing customer record instead of creating one (decision D1). */
-  existingCustomerId: string | null;
 }
 
-/**
- * Adds a subsidiary (there is only ever one Head Office) together with the customer record that
- * today's dispatch and invoice screens use for it, in one transaction.
- */
+/** Adds a subsidiary (there is only ever one Head Office); subsidiaries are the customers. */
 export async function createSubsidiary(
   pool: pg.Pool,
   input: NewSubsidiaryInput,
@@ -155,8 +157,8 @@ export async function createSubsidiary(
       const { rows } = await client.query<{ id: string }>(
         `INSERT INTO organisations (code, name, organisation_type, contact_name, contact_phone,
                                     contact_email, address, billing_name, billing_address,
-                                    tax_number)
-         VALUES ($1, $2, 'SUBSIDIARY', $3, $4, $5, $6, $7, $8, $9)
+                                    tax_number, credit_limit)
+         VALUES ($1, $2, 'SUBSIDIARY', $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING id`,
         [
           input.code,
@@ -168,50 +170,21 @@ export async function createSubsidiary(
           input.billingName,
           input.billingAddress,
           input.taxNumber,
+          input.creditLimit,
         ],
       );
       const organisationId = (rows[0] as { id: string }).id;
-
-      let customer: { id: string; code: string };
-      if (input.existingCustomerId) {
-        const { rows: linked } = await client.query<{ id: string; code: string }>(
-          `UPDATE customers SET organisation_id = $2
-           WHERE id = $1 AND organisation_id IS NULL
-           RETURNING id, code`,
-          [input.existingCustomerId, organisationId],
-        );
-        if (!linked[0]) {
-          throw fieldError(
-            'existingCustomerId',
-            'No customer with that id is free to link (it may already belong to a subsidiary)',
-          );
-        }
-        customer = linked[0];
-      } else {
-        // The subsidiary's code is used as the customer code when it is free.
-        const { rowCount } = await client.query('SELECT 1 FROM customers WHERE code = $1', [
-          input.code,
-        ]);
-        customer = await insertCustomer(
-          client,
-          {
-            code: rowCount ? undefined : input.code,
-            name: input.name,
-            phone: input.contactPhone,
-            address: input.address,
-            creditLimit: null,
-            organisationId,
-          },
-          actor.id,
-        );
-      }
 
       await recordAudit(client, {
         actorUserId: actor.id,
         action: 'organisation.created',
         entityType: 'organisation',
         entityId: organisationId,
-        details: { code: input.code, name: input.name, customerCode: customer.code },
+        details: {
+          code: input.code,
+          name: input.name,
+          ...(input.creditLimit === null ? {} : { creditLimit: input.creditLimit }),
+        },
       });
       return organisationId;
     });
@@ -229,8 +202,8 @@ export type OrganisationChanges = Partial<OrganisationDetails> & {
 
 /**
  * Changes an organisation's details. Deactivating a subsidiary signs its staff out and stops
- * them signing in, and deactivates its customer record; the Head Office cannot be deactivated.
- * The linked customer record keeps the subsidiary's name.
+ * them signing in, and stops new dispatches and payments for it; the Head Office cannot be
+ * deactivated.
  */
 export async function updateOrganisation(
   pool: pg.Pool,
@@ -275,13 +248,6 @@ export async function updateOrganisation(
         );
       }
 
-      if (before.customerId && (changes.name !== undefined || changes.isActive !== undefined)) {
-        await client.query(`UPDATE customers SET name = $2, is_active = $3 WHERE id = $1`, [
-          before.customerId,
-          changes.name ?? before.name,
-          changes.isActive ?? before.isActive,
-        ]);
-      }
       if (before.isActive && changes.isActive === false) {
         await client.query(
           `UPDATE sessions SET revoked_at = now()

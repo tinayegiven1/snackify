@@ -192,7 +192,24 @@ export function receiptsRouter(db: pg.Pool, config: AppConfig): Router {
 
   router.get('/:id/pdf', async (req, res) => {
     const receipt = await getReceipt(db, scope(res), receiptId(req.params.id));
-    const pdf = await renderGrnPdf(receipt, config.business);
+    // Photographed documents (not PDFs) are printed after the note.
+    const pictures = [];
+    for (const attachment of receipt.attachments) {
+      if (attachment.mimeType !== 'image/jpeg' && attachment.mimeType !== 'image/png') continue;
+      const document = await readAttachment(
+        db,
+        scope(res),
+        receipt.id,
+        attachment.id,
+        config.attachments.storageDir,
+      );
+      pictures.push({
+        filename: attachment.filename,
+        verificationStatus: attachment.verificationStatus,
+        content: document.content,
+      });
+    }
+    const pdf = await renderGrnPdf(receipt, config.business, pictures);
     res
       .type('application/pdf')
       .set('Content-Disposition', `inline; filename="${receipt.grnNumber}.pdf"`)

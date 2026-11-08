@@ -21,13 +21,3 @@ VALUES
   ('SUB-05', 'Sample Subsidiary Five', 'SUBSIDIARY', 'Sample Manager Five', '+263 00 100 0005',
    '5 Sample Street, Masvingo')
 ON CONFLICT (code) DO NOTHING;
-
--- Each subsidiary is a buyer (decision D1): it gets the customer record that dispatches and
--- invoices use, with the same code.
-INSERT INTO customers (code, name, phone, address, organisation_id)
-SELECT o.code, o.name, o.contact_phone, o.address, o.id
-FROM organisations o
-WHERE o.organisation_type = 'SUBSIDIARY'
-  AND o.code LIKE 'SUB-0_'
-  AND NOT EXISTS (SELECT 1 FROM customers c WHERE c.organisation_id = o.id)
-  AND NOT EXISTS (SELECT 1 FROM customers c WHERE c.code = o.code);

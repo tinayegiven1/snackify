@@ -67,7 +67,7 @@ export async function resetDatabase(ownerPool: pg.Pool): Promise<void> {
     TRUNCATE forecasts, forecast_runs, payment_allocations, payments, invoice_items, invoices, stock_balances, stock_movements, stock_batches, stock_receipt_attachments,
              stock_receipt_lines, stock_receipts, order_item_changes, order_status_history,
              order_items, orders, dispatch_items, dispatches, audit_logs,
-             sessions, user_roles, users, unit_conversions, products, product_categories, suppliers, customers`);
+             sessions, user_roles, users, unit_conversions, products, product_categories, suppliers`);
   // Only what the migrations create stays: the default warehouse and the standard units.
   await ownerPool.query(`DELETE FROM warehouses WHERE NOT is_default`);
   await ownerPool.query(`DELETE FROM units WHERE code NOT IN ('pack', 'carton', 'case')`);
@@ -77,7 +77,7 @@ export async function resetDatabase(ownerPool: pg.Pool): Promise<void> {
     UPDATE organisations
     SET code = 'HQ', name = 'Head Office', is_active = true, contact_name = NULL,
         contact_phone = NULL, contact_email = NULL, address = NULL, billing_name = NULL,
-        billing_address = NULL, tax_number = NULL
+        billing_address = NULL, tax_number = NULL, credit_limit = NULL
     WHERE organisation_type = 'HQ'`);
 }
 

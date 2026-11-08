@@ -813,20 +813,19 @@ export async function verifyReceipt(
   await withTransaction(pool, async (client) => {
     const current = await lockReceipt(client, scope, id);
     if (current.status !== 'PENDING_VERIFICATION') throw wrongStatus(current.status, 'verified');
-    const { rows } = await client.query<{ pending: number; verified: number }>(
-      `SELECT count(*) FILTER (WHERE verification_status = 'PENDING')::int AS pending,
-              count(*) FILTER (WHERE verification_status = 'VERIFIED')::int AS verified
+    // Verifying the receipt also verifies any document not yet reviewed on its own.
+    await client.query(
+      `UPDATE stock_receipt_attachments
+       SET verification_status = 'VERIFIED', reviewed_by = $2, reviewed_at = now()
+       WHERE receipt_id = $1 AND verification_status = 'PENDING'`,
+      [id, actor.id],
+    );
+    const { rows } = await client.query<{ verified: number }>(
+      `SELECT count(*) FILTER (WHERE verification_status = 'VERIFIED')::int AS verified
        FROM stock_receipt_attachments WHERE receipt_id = $1`,
       [id],
     );
-    const documents = rows[0] as { pending: number; verified: number };
-    if (documents.pending > 0) {
-      throw new AppError(
-        409,
-        'DOCUMENTS_NOT_REVIEWED',
-        'Verify or reject every document before verifying the receipt.',
-      );
-    }
+    const documents = rows[0] as { verified: number };
     if (documents.verified === 0 && !current.no_document_reason) {
       throw new AppError(
         409,

@@ -13,7 +13,6 @@ import 'features/auth/data/token_store.dart';
 import 'features/auth/presentation/auth_controller.dart';
 import 'features/audit/data/audit_repository.dart';
 import 'features/catalogue/data/catalogue_repository.dart';
-import 'features/customers/data/customers_repository.dart';
 import 'features/dispatches/data/dispatches_repository.dart';
 import 'features/forecasts/data/forecasts_repository.dart';
 import 'features/invoices/data/invoices_repository.dart';
@@ -33,7 +32,6 @@ void main() {
     checkBackendHealth: BackendHealthService(api).isHealthy,
     products: ProductsRepository(api),
     stock: StockRepository(api),
-    customers: CustomersRepository(api),
     dispatches: DispatchesRepository(api),
     invoices: InvoicesRepository(api),
     payments: PaymentsRepository(api),
@@ -48,6 +46,7 @@ void main() {
     sharePdf: sharePdfWithDevice,
     readBarcode: readBarcodeWithDevice,
     pickDocuments: pickDocumentsWithDevice,
+    takePhoto: takePhotoWithDevice,
   );
   runApp(SnackifyApp(auth: auth, services: services));
 }

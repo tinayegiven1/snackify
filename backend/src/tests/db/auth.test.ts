@@ -53,7 +53,6 @@ describe('POST /api/v1/auth/login', () => {
       organisation: { id: expect.any(String), code: 'HQ', name: 'Head Office', type: 'HQ' },
       roles: [{ code: 'hq_warehouse_officer', name: 'HQ Warehouse Officer' }],
       permissions: [
-        'customer.view',
         'dispatch.confirm',
         'dispatch.draft',
         'dispatch.view',

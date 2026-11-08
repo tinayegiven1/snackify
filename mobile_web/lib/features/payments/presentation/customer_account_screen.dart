@@ -5,7 +5,7 @@ import '../../../core/formatting/dates.dart';
 import '../../../core/formatting/money.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/widgets/message_view.dart';
-import '../../customers/data/customers_repository.dart';
+import '../../organisations/data/organisations_repository.dart';
 import '../../invoices/data/invoices_repository.dart';
 import '../../invoices/presentation/invoice_detail_screen.dart';
 import '../data/payments_repository.dart';
@@ -20,7 +20,7 @@ class CustomerAccountScreen extends StatefulWidget {
     super.key,
     required this.customerId,
     required this.payments,
-    required this.customers,
+    required this.organisations,
     required this.invoices,
     required this.sharePdf,
     required this.canVoidPayments,
@@ -28,7 +28,9 @@ class CustomerAccountScreen extends StatefulWidget {
 
   final String customerId;
   final PaymentsRepository payments;
-  final CustomersRepository customers;
+
+  /// Subsidiaries: the customers to choose from.
+  final OrganisationsRepository organisations;
   final InvoicesRepository invoices;
   final PdfSharer sharePdf;
   final bool canVoidPayments;
@@ -102,7 +104,7 @@ class _CustomerAccountScreenState extends State<CustomerAccountScreen> {
       MaterialPageRoute(
         builder: (_) => RecordPaymentScreen(
           payments: widget.payments,
-          customers: widget.customers,
+          organisations: widget.organisations,
           customer: (id: account.customerId, code: account.code, name: account.name),
         ),
       ),

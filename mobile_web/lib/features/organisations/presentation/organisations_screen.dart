@@ -2,24 +2,25 @@ import 'package:flutter/material.dart';
 
 import '../../../core/network/api_client.dart';
 import '../../../shared/widgets/message_view.dart';
-import '../../customers/data/customers_repository.dart';
 import '../data/organisations_repository.dart';
 import '../domain/organisation.dart';
 import 'organisation_form_screen.dart';
 
 /// The Head Office and its subsidiaries. Head Office staff see all of them; a subsidiary's staff
-/// see their own. Admins (organisation.manage) add subsidiaries and change details.
+/// see their own. Admins (organisation.manage) add subsidiaries and change details; finance
+/// officers (organisation.edit_credit_limit) set credit limits. Subsidiaries are the customers
+/// that dispatches, invoices and payments are for.
 class OrganisationsScreen extends StatefulWidget {
   const OrganisationsScreen({
     super.key,
     required this.repository,
-    required this.customers,
     required this.canManage,
+    required this.canEditCreditLimit,
   });
 
   final OrganisationsRepository repository;
-  final CustomersRepository customers;
   final bool canManage;
+  final bool canEditCreditLimit;
 
   @override
   State<OrganisationsScreen> createState() => _OrganisationsScreenState();
@@ -64,9 +65,9 @@ class _OrganisationsScreenState extends State<OrganisationsScreen> {
       MaterialPageRoute(
         builder: (_) => OrganisationFormScreen(
           repository: widget.repository,
-          customers: widget.customers,
           organisation: organisation,
-          canEdit: widget.canManage,
+          canManage: widget.canManage,
+          canEditCreditLimit: widget.canEditCreditLimit,
         ),
       ),
     );
@@ -143,13 +144,21 @@ class _OrganisationsScreenState extends State<OrganisationsScreen> {
                 subtitle: Text(
                   [
                     '${organisation.code} · ${organisation.typeLabel}',
+                    // Subsidiaries are the customers, so their credit limit matters.
+                    if (!organisation.isHeadOffice)
+                      organisation.formattedCreditLimit == null
+                          ? 'No credit limit'
+                          : 'Credit limit ${organisation.formattedCreditLimit}',
                     ?organisation.contactPhone,
                     ?organisation.address,
                   ].join('\n'),
-                  maxLines: 3,
+                  maxLines: 4,
                   overflow: TextOverflow.ellipsis,
                 ),
-                isThreeLine: organisation.contactPhone != null || organisation.address != null,
+                isThreeLine:
+                    !organisation.isHeadOffice ||
+                    organisation.contactPhone != null ||
+                    organisation.address != null,
                 trailing: organisation.isActive ? null : const StatusBadge('Deactivated'),
                 onTap: () => _open(organisation),
               ),

@@ -28,10 +28,21 @@ const HEADINGS: Record<Receipt['status'], string> = {
   REVERSED: 'REVERSED GOODS RECEIVED NOTE',
 };
 
-/** Renders a goods-received note as an A4 PDF. Anything not final is clearly marked. */
+/** A photographed supplier document (JPEG or PNG) to print after the note. */
+export interface DocumentPicture {
+  filename: string;
+  verificationStatus: string;
+  content: Buffer;
+}
+
+/**
+ * Renders a goods-received note as an A4 PDF. Anything not final is clearly marked.
+ * Each photographed document in [pictures] follows on a page of its own.
+ */
 export function renderGrnPdf(
   receipt: Receipt,
   business: { name: string; contact: string | null },
+  pictures: DocumentPicture[] = [],
 ): Promise<Buffer> {
   const doc = new PDFDocument({
     size: 'A4',
@@ -188,6 +199,39 @@ export function renderGrnPdf(
     .text(`All amounts in ${receipt.currency}. Quantities in the unit shown.`, LEFT, y + 10, {
       width: TABLE_WIDTH,
     });
+
+  for (const [index, picture] of pictures.entries()) {
+    doc.addPage();
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(11)
+      .text(
+        `${receipt.grnNumber}: supplier document ${index + 1} of ${pictures.length}`,
+        LEFT,
+        50,
+        {
+          width: TABLE_WIDTH,
+        },
+      );
+    doc
+      .font('Helvetica')
+      .fontSize(9)
+      .text(`${picture.filename} (${picture.verificationStatus.toLowerCase()})`, {
+        width: TABLE_WIDTH,
+      });
+    const top = doc.y + 10;
+    try {
+      doc.image(picture.content, LEFT, top, {
+        fit: [TABLE_WIDTH, PAGE_BOTTOM - top],
+        align: 'center',
+      });
+    } catch {
+      // A damaged picture should not stop the note itself from printing.
+      doc.text('This picture could not be shown; download it from the app.', LEFT, top, {
+        width: TABLE_WIDTH,
+      });
+    }
+  }
 
   doc.end();
   return finished;

@@ -44,19 +44,75 @@ void main() {
   });
 
   testWidgets('Head Office staff see every organisation; only admins change them', (tester) async {
-    await pumpSnackify(tester, signedIn: true, backend: FakeBackend(role: 'accounts'));
+    final backend = FakeBackend(role: 'salesperson')
+      ..addOrganisation('C0001', 'Avondale Tuckshop', creditLimit: '300.00');
+    await pumpSnackify(tester, signedIn: true, backend: backend, size: desktopSize);
     await openSection(tester, 'Organisations');
 
     expect(find.text('Head Office'), findsOneWidget);
     expect(find.text('Mbare Branch'), findsOneWidget);
     expect(find.text('Add subsidiary'), findsNothing);
+    // Each subsidiary shows its credit limit (they are the customers).
+    expect(find.textContaining('Credit limit USD 300.00'), findsOneWidget);
+    expect(find.textContaining('No credit limit'), findsOneWidget);
 
-    await tester.tap(find.text('Mbare Branch'));
+    // A sales officer has neither organisation.manage nor organisation.edit_credit_limit.
+    await tester.tap(find.text('Avondale Tuckshop'));
     await tester.pumpAndSettle();
     expect(find.text('Save changes'), findsNothing);
+    expect(field('Credit limit (optional)'), findsNothing);
   });
 
-  testWidgets('an admin adds a subsidiary, which brings its customer record', (tester) async {
+  testWidgets('a finance officer changes only a credit limit', (tester) async {
+    final backend = FakeBackend(role: 'accounts')
+      ..addOrganisation('C0001', 'Avondale Tuckshop', creditLimit: '300.00');
+    await pumpSnackify(tester, signedIn: true, backend: backend, size: desktopSize);
+    await openSection(tester, 'Organisations');
+    expect(find.text('Add subsidiary'), findsNothing);
+
+    await tester.tap(find.text('Avondale Tuckshop'));
+    await tester.pumpAndSettle();
+    // The details are shown but cannot be changed without organisation.manage.
+    expect(tester.widget<TextFormField>(field('Name')).enabled, isFalse);
+    expect(tester.widget<Switch>(find.byType(Switch)).onChanged, isNull);
+
+    await tester.enterText(field('Credit limit (optional)'), '12.345');
+    await tapButton(tester, 'Save changes');
+    expect(find.text('Use an amount like 500.00 (up to 2 decimal places)'), findsOneWidget);
+
+    await tester.enterText(field('Credit limit (optional)'), '450');
+    await tapButton(tester, 'Save changes');
+
+    // Only the credit limit is sent, so the server allows it.
+    expect(backend.buyers.last['creditLimit'], '450.00');
+    expect(backend.buyers.last['name'], 'Avondale Tuckshop');
+    expect(find.text('Saved Avondale Tuckshop.'), findsOneWidget);
+    expect(find.textContaining('Credit limit USD 450.00'), findsOneWidget);
+
+    // Emptying it removes the limit.
+    await tester.tap(find.text('Avondale Tuckshop'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('Credit limit (optional)'), '');
+    await tapButton(tester, 'Save changes');
+    expect(backend.buyers.last['creditLimit'], isNull);
+  });
+
+  testWidgets('an admin without finance rights does not see the credit limit', (tester) async {
+    final backend = FakeBackend(role: 'system_admin');
+    await pumpSnackify(tester, signedIn: true, backend: backend, size: desktopSize);
+    await openSection(tester, 'Organisations');
+    await tester.tap(find.text('Mbare Branch'));
+    await tester.pumpAndSettle();
+
+    expect(field('Credit limit (optional)'), findsNothing);
+    await tester.enterText(field('Contact person (optional)'), 'Rudo');
+    await tapButton(tester, 'Save changes');
+
+    expect(backend.organisations[1]['contactName'], 'Rudo');
+    expect(find.text('Saved Mbare Branch.'), findsOneWidget);
+  });
+
+  testWidgets('an admin adds a subsidiary, which can then be chosen as a customer', (tester) async {
     final backend = FakeBackend(role: 'admin');
     await pumpSnackify(tester, signedIn: true, backend: backend);
     await openSection(tester, 'Organisations');
@@ -75,11 +131,13 @@ void main() {
 
     await tester.enterText(field('Email (optional)'), 'orders@bulawayo.example');
     await tester.enterText(field('Phone (optional)'), '+263 00 222 3333');
+    await tester.enterText(field('Credit limit (optional)'), '250');
     await tapButton(tester, 'Add subsidiary');
 
     expect(backend.organisations.last, containsPair('code', 'BUL-01'));
     expect(backend.organisations.last, containsPair('contactEmail', 'orders@bulawayo.example'));
-    expect(backend.customers.last, containsPair('code', 'BUL-01'));
+    expect(backend.organisations.last, containsPair('creditLimit', '250.00'));
+    expect(backend.organisations.last, containsPair('type', 'SUBSIDIARY'));
     expect(
       find.text('Added Bulawayo Branch (BUL-01). Add its staff under Users & Roles.'),
       findsOneWidget,

@@ -82,3 +82,11 @@ Future<void> fillLine(
   }
   await press(tester, find.text('Done'));
 }
+
+/// A real 1×1 PNG, as if taken with the camera.
+PickedDocument photoDocument([String name = 'photo-20261108-090000.png']) => (
+  name: name,
+  bytes: base64Decode(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  ),
+);

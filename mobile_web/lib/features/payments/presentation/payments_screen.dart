@@ -7,7 +7,7 @@ import '../../../core/formatting/dates.dart';
 import '../../../core/formatting/money.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/widgets/message_view.dart';
-import '../../customers/data/customers_repository.dart';
+import '../../organisations/data/organisations_repository.dart';
 import '../../invoices/data/invoices_repository.dart';
 import '../data/payments_repository.dart';
 import '../domain/payment_models.dart';
@@ -21,14 +21,16 @@ class PaymentsScreen extends StatefulWidget {
   const PaymentsScreen({
     super.key,
     required this.payments,
-    required this.customers,
+    required this.organisations,
     required this.invoices,
     required this.sharePdf,
     required this.canVoid,
   });
 
   final PaymentsRepository payments;
-  final CustomersRepository customers;
+
+  /// Subsidiaries: the customers to choose from.
+  final OrganisationsRepository organisations;
   final InvoicesRepository invoices;
   final PdfSharer sharePdf;
 
@@ -47,7 +49,8 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     final payment = await Navigator.of(context).push<Payment>(
       MaterialPageRoute(
-        builder: (_) => RecordPaymentScreen(payments: widget.payments, customers: widget.customers),
+        builder: (_) =>
+            RecordPaymentScreen(payments: widget.payments, organisations: widget.organisations),
       ),
     );
     if (payment == null || !mounted) return;
@@ -150,7 +153,7 @@ class _BalancesTabState extends State<_BalancesTab> with AutomaticKeepAliveClien
         builder: (_) => CustomerAccountScreen(
           customerId: balance.customerId,
           payments: parent.payments,
-          customers: parent.customers,
+          organisations: parent.organisations,
           invoices: parent.invoices,
           sharePdf: parent.sharePdf,
           canVoidPayments: parent.canVoid,

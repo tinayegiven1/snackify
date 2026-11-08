@@ -257,32 +257,20 @@ submitted receipt has a supplier; a rejected one a reason).
 - `order_status_history` (from, to, who, when, comment) and `order_item_changes` (line, field,
   old, new, who, when, comment): the API role may only add rows, never change or delete them.
 
-### `customers` (spec 6.5)
+### Customers are organisations
 
-Only what billing and deliveries need; no other personal details. Never deleted (the API role has
-no `DELETE`), so dispatch and invoice history always points at a real customer.
-
-| Column         | Type            | Rules                                                     |
-| -------------- | --------------- | --------------------------------------------------------- |
-| `id`           | `uuid`          | Primary key                                               |
-| `code`         | `text`          | Unique, upper case, up to 20 chars. Generated as `C0001`, `C0002`, … from `customer_code_seq` when not given (skipping codes already used) |
-| `name`         | `text`          | Required, trimmed, 1–120 chars                            |
-| `phone`        | `text`          | Optional; digits, spaces, brackets, dashes, optional `+`  |
-| `address`      | `text`          | Optional delivery address, 1–300 chars                    |
-| `credit_limit` | `numeric(12,2)` | Optional, `>= 0`, base currency; `NULL` = no limit set    |
-| `is_active`    | `boolean`       | Defaults to `true`                                        |
-| `created_at`   | `timestamptz`   | Set on insert                                             |
-| `updated_at`   | `timestamptz`   | Updated automatically on every change                     |
-| `organisation_id` | `uuid`       | The subsidiary this customer record stands for (unique); `NULL` for customers added before Stage 3 |
-
-Which permissions may change which columns is enforced by the API (see the API documentation).
-Since StockFlow Stage 3 the buyers are the subsidiaries (decision D1): customer records are
-created with each subsidiary, not on their own.
+The `customers` table was removed on 2026-11-08 (migration
+`20261108090000000_organisations-replace-customers`): `dispatches`, `invoices` and `payments`
+point at `organisations` through `organisation_id` (only subsidiaries are used), and
+`organisations.credit_limit` (`numeric(12,2)`, `>= 0`, `NULL` = no limit) took over the credit
+limit. Customer records that belonged to no subsidiary became subsidiary organisations, with
+their dispatches and payments. Issued invoices keep the buyer details printed on them in
+`customer_code`, `customer_name`, `customer_phone` and `customer_address`.
 
 ### `dispatches` and `dispatch_items` (spec 6.6)
 
 `dispatches` is the header: `dispatch_number` (unique, `D000001`… from `dispatch_number_seq`,
-given when the draft is created), `customer_id`, `status` (`draft`, `confirmed`, `cancelled`,
+given when the draft is created), `organisation_id` (the buying subsidiary), `status` (`draft`, `confirmed`, `cancelled`,
 `reversed`), `dispatch_date` (business day the goods leave), optional `notes`, and who/when for
 each step: `created_by/at`, `confirmed_by/at`, `cancelled_by/at` + `cancel_reason`,
 `reversed_by/at` + `reversal_reason`. Check constraints require the who/when (and a reason) that
@@ -310,7 +298,7 @@ nothing is reversed twice). Confirming locks the dispatch, the customer and ever
 
 ### `invoices` and `invoice_items` (spec 6.8)
 
-`invoices` is the header: `customer_id`, `status` (`draft`, `issued`, `voided`), the billing
+`invoices` is the header: `organisation_id`, `status` (`draft`, `issued`, `voided`), the billing
 period (`period_from`, `period_to`, both included), `currency` (three letters, from
 `BASE_CURRENCY`), `subtotal` and `total` (`numeric(14,2)`; `total = subtotal` until discounts
 exist), and who/when for each step: `created_by/at`, `issued_by/at`, `voided_by/at` +
@@ -349,7 +337,7 @@ draft deletes its lines, which releases those dispatch lines to be invoiced agai
 ### `payments` and `payment_allocations` (spec 6.9)
 
 `payments` records money received: `payment_number` (unique receipt number `P000001`… from
-`payment_number_seq`), `customer_id`, `payment_date` (the business day it was received),
+`payment_number_seq`), `organisation_id`, `payment_date` (the business day it was received),
 `amount` (`numeric(14,2)`, above zero), `currency` (from `BASE_CURRENCY`), `method` (`cash`,
 `bank_transfer`, `mobile_money`, `card`, `cheque`, `other`), optional `reference` and `notes`,
 `recorded_by` and `created_at`. `status` is `recorded` or `voided` (with `voided_by/at` and a

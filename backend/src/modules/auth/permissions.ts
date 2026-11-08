@@ -5,6 +5,7 @@
  */
 export const PERMISSIONS = [
   'organisation.manage',
+  'organisation.edit_credit_limit',
   'user.manage',
   'role.manage',
   'audit.view',
@@ -14,10 +15,6 @@ export const PERMISSIONS = [
   'stock.receive',
   'stock.opening_balance',
   'stock.adjust',
-  'customer.view',
-  'customer.edit_details',
-  'customer.edit_credit_limit',
-  'customer.change_active',
   'dispatch.view',
   'dispatch.draft',
   'dispatch.confirm',

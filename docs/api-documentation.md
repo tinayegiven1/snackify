@@ -81,14 +81,14 @@ it. Which role has which permission is data (`GET /api/v1/roles`), changeable wi
 
 | Role (code)                                    | Organisation | Main permissions |
 | ---------------------------------------------- | ------------ | ---------------- |
-| System Administrator (`system_admin`)          | HQ           | `organisation.manage`, `user.manage`, `role.manage`, `audit.view`, `product.manage`, `stock.adjust`, `stock.opening_balance`, `dispatch.reverse`, `payment.void`, `customer.change_active` |
+| System Administrator (`system_admin`)          | HQ           | `organisation.manage`, `user.manage`, `role.manage`, `audit.view`, `product.manage`, `stock.adjust`, `stock.opening_balance`, `dispatch.reverse`, `payment.void` |
 | HQ Warehouse Officer (`hq_warehouse_officer`)  | HQ           | `stock.receive`, `dispatch.draft`, `dispatch.confirm`, `label.print`, `report.stock`, `forecast.use` |
-| HQ Finance Officer (`hq_finance_officer`)      | HQ           | `invoice.manage`, `payment.manage`, `customer.edit_credit_limit`, `report.financial`, `report.stock`, `forecast.use` |
-| HQ Sales Officer (`hq_sales_officer`)          | HQ           | `customer.edit_details`, `dispatch.draft` |
+| HQ Finance Officer (`hq_finance_officer`)      | HQ           | `invoice.manage`, `payment.manage`, `organisation.edit_credit_limit`, `report.financial`, `report.stock`, `forecast.use` |
+| HQ Sales Officer (`hq_sales_officer`)          | HQ           | `dispatch.draft` |
 | Subsidiary Manager (`subsidiary_manager`)      | Subsidiary   | `stock.view` (own organisation); orders from Stage 5 |
 | Subsidiary Storekeeper (`subsidiary_storekeeper`) | Subsidiary | `stock.view` (own organisation) |
 
-All Head Office roles also have `stock.view`, `customer.view`, `dispatch.view` and
+All Head Office roles also have `stock.view`, `dispatch.view` and
 `report.dashboard`. A subsidiary's staff can only hold subsidiary roles (the database refuses
 anything else).
 
@@ -160,7 +160,7 @@ Request:
     "fullName": "Tendai Moyo",
     "organisation": { "id": "3b1f...", "code": "HQ", "name": "Head Office", "type": "HQ" },
     "roles": [{ "code": "hq_warehouse_officer", "name": "HQ Warehouse Officer" }],
-    "permissions": ["customer.view", "dispatch.confirm", "dispatch.draft", "stock.receive", "stock.view"],
+    "permissions": ["dispatch.confirm", "dispatch.draft", "stock.receive", "stock.view"],
     "mustChangePin": false
   }
 }
@@ -264,7 +264,7 @@ change their own PIN with `/auth/change-pin` instead (`409 USE_CHANGE_PIN`). Aud
 ### `PUT /api/v1/roles/:code/permissions` (`role.manage`)
 
 ```json
-{ "permissions": ["stock.view", "customer.view", "report.dashboard", "forecast.use"] }
+{ "permissions": ["stock.view", "report.dashboard", "forecast.use"] }
 ```
 
 Replaces what the role allows, for everyone holding it, at once. **200 OK** with `{ "role" }`.
@@ -297,7 +297,7 @@ Optional `?includeInactive=true`. **200 OK**:
       "billingName": null,
       "billingAddress": null,
       "taxNumber": null,
-      "customerId": "41aa...",
+      "creditLimit": "500.00",
       "createdAt": "...",
       "updatedAt": "..."
     }
@@ -316,16 +316,21 @@ organisation the user may not see).
 { "code": "bul-01", "name": "Bulawayo Branch", "contactPhone": "+263 29 222 3333" }
 ```
 
-Codes are 2–20 letters, digits, `-` or `_`, stored in upper case. The subsidiaries are the
-buyers (decision D1), so a **customer record** is created with it, in the same transaction, for
-today's dispatch and invoice screens (its code is the subsidiary's code when free). To reuse an
-existing customer record instead, send `"existingCustomerId"` (only one not linked yet).
+Codes are 2–20 letters, digits, `-` or `_`, stored in upper case. **The subsidiaries are the
+customers**: dispatches, invoices and payments are for an organisation (their `customerId` is
+an organisation id; there is no separate customers list since 2026-11-08). An optional
+`creditLimit` (money string, `null` = no limit) needs `organisation.edit_credit_limit`.
 **201 Created**; **409** `ORGANISATION_CODE_TAKEN`.
+
+`GET /api/v1/organisations` takes optional `type=SUBSIDIARY` (the customers) or `type=HQ`, and
+`includeInactive=true`.
 
 ### `PATCH /api/v1/organisations/:id`
 
-Send any of `code`, `name`, the contact and billing fields (`null` clears one), `isActive`. The
-linked customer record keeps the subsidiary's name and active state. Deactivating a subsidiary
+Send any of `code`, `name`, the contact and billing fields (`null` clears one), `isActive`
+(all need `organisation.manage`), and `creditLimit` (needs `organisation.edit_credit_limit`). A
+field the role may not change is refused with **403** naming it, and nothing changes. Invoices
+are made out to the billing name and address when set. Deactivating a subsidiary
 signs its staff out and stops them signing in; the Head Office cannot be deactivated
 (`409 HEAD_OFFICE_ALWAYS_ACTIVE`).
 
@@ -781,8 +786,8 @@ reason (3–500 characters; audit action `receipt.no_document`).
 
 ### `POST /api/v1/receipts/:id/verify` (`receipt.verify`)
 
-`{ "notes": "Matches the invoice" }`. Every document must have been reviewed (**409**
-`DOCUMENTS_NOT_REVIEWED`) and at least one verified, unless the receipt was submitted without one
+`{ "notes": "Matches the invoice" }`. Documents not yet reviewed are verified with the receipt.
+At least one document must end up verified, unless the receipt was submitted without one
 (**409** `NO_VERIFIED_DOCUMENT`).
 
 ### `POST /api/v1/receipts/:id/reject` (`receipt.verify`)
@@ -929,82 +934,12 @@ Audit actions: `order.created`, `order.updated`, `order.submitted`, `order.revie
 
 ## Customers
 
-Customers are never deleted (there is no DELETE endpoint); admins deactivate them instead. Only
-the details billing and deliveries need are stored (spec 6.5).
-
-| Field         | Rules                                                                       |
-| ------------- | --------------------------------------------------------------------------- |
-| `code`        | Unique, stored in capitals, up to 20 letters/digits/`.`/`_`/`-`. Leave out (or send `""`) when adding to get the next code: `C0001`, `C0002`, … |
-| `name`        | Required, up to 120 characters                                              |
-| `phone`       | Optional. Digits, spaces, brackets, dashes, optional leading `+`            |
-| `address`     | Optional delivery address, up to 300 characters                             |
-| `creditLimit` | Optional money string (`"500.00"`) in the base currency; `null` for no limit |
-| `isActive`    | Changes only; `false` hides the customer from normal lists                  |
-
-**Who may do what** (spec section 5: salespeople manage *permitted* customer information).
-A request that tries to change a field the role may not change is refused with **403** and a
-`details` entry naming the field; nothing is changed.
-
-| Action                                       | Who                         |
-| -------------------------------------------- | --------------------------- |
-| View and search                              | Everyone signed in          |
-| Add a customer; change code, name, phone, address | Salespeople and admins |
-| Set or change `creditLimit`                  | Accounts staff and admins   |
-| Change `isActive`                            | Admins                      |
-
-Credit limits are stored now; checking them against unpaid balances starts when dispatches and
-invoices are added. Changes are recorded in the audit log (`customer.created`,
-`customer.updated` with exactly what changed).
-
-### `GET /api/v1/customers`
-
-Query: optional `q` (part of the code, name or phone, case ignored), `includeInactive=true`,
-`limit` (1–200, default 50), `offset`. Sorted by name.
-
-```json
-{
-  "customers": [
-    {
-      "id": "…",
-      "code": "C0001",
-      "name": "Avondale Tuckshop",
-      "phone": "+263 77 123 4567",
-      "address": "12 King George Road, Avondale",
-      "creditLimit": "500.00",
-      "isActive": true,
-      "createdAt": "2026-10-12T14:00:00.000Z",
-      "updatedAt": "2026-10-12T14:05:00.000Z"
-    }
-  ],
-  "total": 1
-}
-```
-
-### `GET /api/v1/customers/:id`
-
-**200 OK** with `{ "customer": { … } }`.
-
-### `POST /api/v1/customers` (no longer used)
-
-Since StockFlow Stage 3 the buyers are the subsidiaries (decision D1): a customer record is
-created with each subsidiary (`POST /api/v1/organisations`). This endpoint answers
-**409** `ADD_AS_SUBSIDIARY` for everyone. Customer records carry `organisationId` (the subsidiary
-they stand for, or `null` for customers added before Stage 3).
-
-### `PATCH /api/v1/customers/:id`
-
-Send only the fields to change; `null` clears `phone`, `address` or `creditLimit`.
-
-```json
-{ "creditLimit": "750.00" }
-```
-
-**200 OK** with `{ "customer": { … } }`.
-
-### Later: `GET /api/v1/customers/:id/history`
-
-Planned with dispatches and invoices: the customer's dispatches, invoices, payments and
-outstanding balance.
+There is no separate customers list any more (2026-11-08): the **subsidiary organisations are
+the customers**. `/api/v1/customers` no longer exists. In dispatches, invoices, payments,
+balances and reports, `customerId` and the `customer` object (`id`, `code`, `name`, …) refer to
+an organisation; credit limits are set on the organisation (see Organisations). Customers that
+were not linked to a subsidiary became subsidiary organisations of their own, with their
+history.
 
 ## Dispatches
 

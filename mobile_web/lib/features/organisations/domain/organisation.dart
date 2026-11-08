@@ -1,4 +1,7 @@
-/// The Head Office or a subsidiary, with its contact and billing details.
+import '../../../core/config/app_config.dart';
+
+/// The Head Office or a subsidiary, with its contact and billing details. Subsidiaries are also
+/// the customers that dispatches, invoices and payments are for.
 class Organisation {
   const Organisation({
     required this.id,
@@ -13,7 +16,7 @@ class Organisation {
     this.billingName,
     this.billingAddress,
     this.taxNumber,
-    this.customerId,
+    this.creditLimit,
   });
 
   factory Organisation.fromJson(Map<String, dynamic> json) => Organisation(
@@ -29,7 +32,7 @@ class Organisation {
     billingName: json['billingName'] as String?,
     billingAddress: json['billingAddress'] as String?,
     taxNumber: json['taxNumber'] as String?,
-    customerId: json['customerId'] as String?,
+    creditLimit: json['creditLimit'] as String?,
   );
 
   final String id;
@@ -45,8 +48,11 @@ class Organisation {
   final String? billingAddress;
   final String? taxNumber;
 
-  /// The customer record dispatches and invoices use for this subsidiary.
-  final String? customerId;
+  /// Most it may owe at once, as exact decimal text in the base currency; null means no limit.
+  final String? creditLimit;
 
   String get typeLabel => isHeadOffice ? 'Head Office' : 'Subsidiary';
+
+  String? get formattedCreditLimit =>
+      creditLimit == null ? null : '${AppConfig.currencyCode} $creditLimit';
 }

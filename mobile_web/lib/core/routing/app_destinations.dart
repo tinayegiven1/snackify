@@ -24,7 +24,6 @@ bool _stock(AppUser user) => user.can('stock.view');
 bool _catalogue(AppUser user) =>
     user.can('catalogue.manage') || user.can('supplier.manage') || user.can('stock.receive');
 bool _orders(AppUser user) => user.can('order.view');
-bool _customers(AppUser user) => user.can('customer.view');
 bool _dispatches(AppUser user) => user.can('dispatch.view');
 bool _invoices(AppUser user) => user.can('invoice.manage');
 bool _payments(AppUser user) => user.can('payment.manage');
@@ -70,12 +69,6 @@ const appDestinations = <AppDestination>[
     icon: Icons.category_outlined,
     selectedIcon: Icons.category,
     isVisibleTo: _catalogue,
-  ),
-  AppDestination(
-    label: 'Customers',
-    icon: Icons.people_outline,
-    selectedIcon: Icons.people,
-    isVisibleTo: _customers,
   ),
   AppDestination(
     label: 'Dispatches',

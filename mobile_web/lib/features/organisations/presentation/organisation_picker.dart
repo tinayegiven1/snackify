@@ -1,36 +1,33 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../../../core/network/api_client.dart';
 import '../../../shared/widgets/message_view.dart';
-import '../data/customers_repository.dart';
-import '../domain/customer.dart';
+import '../data/organisations_repository.dart';
+import '../domain/organisation.dart';
 
-/// Shows a searchable list of active customers and returns the one chosen (or null).
-Future<Customer?> pickCustomer(BuildContext context, CustomersRepository repository) {
-  return showDialog<Customer>(
+/// Shows a searchable list of active subsidiaries (the customers that dispatches, invoices and
+/// payments are for) and returns the one chosen (or null).
+Future<Organisation?> pickOrganisation(BuildContext context, OrganisationsRepository repository) {
+  return showDialog<Organisation>(
     context: context,
-    builder: (_) => _CustomerPickerDialog(repository: repository),
+    builder: (_) => _OrganisationPickerDialog(repository: repository),
   );
 }
 
-class _CustomerPickerDialog extends StatefulWidget {
-  const _CustomerPickerDialog({required this.repository});
+class _OrganisationPickerDialog extends StatefulWidget {
+  const _OrganisationPickerDialog({required this.repository});
 
-  final CustomersRepository repository;
+  final OrganisationsRepository repository;
 
   @override
-  State<_CustomerPickerDialog> createState() => _CustomerPickerDialogState();
+  State<_OrganisationPickerDialog> createState() => _OrganisationPickerDialogState();
 }
 
-class _CustomerPickerDialogState extends State<_CustomerPickerDialog> {
+class _OrganisationPickerDialogState extends State<_OrganisationPickerDialog> {
   final _search = TextEditingController();
-  Timer? _searchDelay;
-  int _latestRequest = 0;
   bool _loading = true;
   String? _error;
-  List<Customer> _customers = const [];
+  List<Organisation> _organisations = const [];
 
   @override
   void initState() {
@@ -40,31 +37,45 @@ class _CustomerPickerDialogState extends State<_CustomerPickerDialog> {
 
   @override
   void dispose() {
-    _searchDelay?.cancel();
     _search.dispose();
     super.dispose();
   }
 
+  /// The server has no search, so the whole (short) list is loaded once and filtered here.
   Future<void> _load() async {
-    final request = ++_latestRequest;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final page = await widget.repository.list(search: _search.text);
-      if (!mounted || request != _latestRequest) return;
+      final organisations = await widget.repository.list(subsidiariesOnly: true);
+      if (!mounted) return;
       setState(() {
-        _customers = page.customers;
+        // Only active subsidiaries can receive new dispatches and payments.
+        _organisations = organisations
+            .where((organisation) => organisation.isActive && !organisation.isHeadOffice)
+            .toList();
         _loading = false;
       });
     } on ApiException catch (error) {
-      if (!mounted || request != _latestRequest) return;
+      if (!mounted) return;
       setState(() {
         _error = error.message;
         _loading = false;
       });
     }
+  }
+
+  List<Organisation> get _matches {
+    final search = _search.text.trim().toLowerCase();
+    if (search.isEmpty) return _organisations;
+    return _organisations
+        .where(
+          (organisation) =>
+              organisation.name.toLowerCase().contains(search) ||
+              organisation.code.toLowerCase().contains(search),
+        )
+        .toList();
   }
 
   @override
@@ -96,12 +107,9 @@ class _CustomerPickerDialogState extends State<_CustomerPickerDialog> {
               child: TextField(
                 controller: _search,
                 autofocus: true,
-                onChanged: (_) {
-                  _searchDelay?.cancel();
-                  _searchDelay = Timer(const Duration(milliseconds: 300), _load);
-                },
+                onChanged: (_) => setState(() {}),
                 decoration: const InputDecoration(
-                  hintText: 'Search name, code or phone',
+                  hintText: 'Search name or code',
                   prefixIcon: Icon(Icons.search),
                   border: OutlineInputBorder(),
                   isDense: true,
@@ -125,28 +133,32 @@ class _CustomerPickerDialogState extends State<_CustomerPickerDialog> {
         action: RetryButton(onPressed: _load),
       );
     }
-    if (_loading && _customers.isEmpty) {
+    if (_loading) {
       return const Padding(
         padding: EdgeInsets.all(32),
         child: Center(child: CircularProgressIndicator()),
       );
     }
-    if (_customers.isEmpty) {
+    final matches = _matches;
+    if (matches.isEmpty) {
       return const MessageView(
         icon: Icons.search_off,
         title: 'No matching customers',
-        message: 'Check the spelling, or ask a salesperson to add the customer first.',
+        message:
+            'Customers are the subsidiaries. Check the spelling, or ask an admin to add the '
+            'subsidiary under Organisations first.',
       );
     }
     return ListView.builder(
       shrinkWrap: true,
-      itemCount: _customers.length,
+      itemCount: matches.length,
       itemBuilder: (context, index) {
-        final customer = _customers[index];
+        final organisation = matches[index];
         return ListTile(
-          title: Text(customer.name),
-          subtitle: Text([customer.code, ?customer.phone].join(' · ')),
-          onTap: () => Navigator.of(context).pop(customer),
+          leading: const Icon(Icons.storefront_outlined),
+          title: Text(organisation.name),
+          subtitle: Text([organisation.code, ?organisation.contactPhone].join(' · ')),
+          onTap: () => Navigator.of(context).pop(organisation),
         );
       },
     );

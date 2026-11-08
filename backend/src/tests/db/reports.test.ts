@@ -88,7 +88,7 @@ async function storedRecords() {
     value: string;
     dispatch_id: string;
   }>(
-    `SELECT d.dispatch_date AS date, d.customer_id, i.product_id, i.quantity, d.id AS dispatch_id,
+    `SELECT d.dispatch_date AS date, d.organisation_id AS customer_id, i.product_id, i.quantity, d.id AS dispatch_id,
             (i.quantity * i.unit_price)::numeric(14, 2)::text AS value
      FROM dispatches d JOIN dispatch_items i ON i.dispatch_id = d.id
      WHERE d.status = 'confirmed'`,
@@ -134,7 +134,8 @@ beforeEach(async () => {
     flavour: 'Cheese',
   });
   const { rows } = await pools.owner.query<{ id: string }>(
-    `INSERT INTO customers (code, name) VALUES ('C0001', 'Avondale Tuckshop'), ('C0002', 'Mabelreign Grocers')
+    `INSERT INTO organisations (code, name, organisation_type) VALUES
+       ('C0001', 'Avondale Tuckshop', 'SUBSIDIARY'), ('C0002', 'Mabelreign Grocers', 'SUBSIDIARY')
      RETURNING id`,
   );
   [avondale, mabelreign] = rows.map((row) => row.id) as [string, string];

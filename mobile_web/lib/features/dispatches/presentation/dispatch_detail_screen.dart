@@ -5,7 +5,7 @@ import '../../../core/formatting/money.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/scanning/barcode_reader.dart';
 import '../../../shared/widgets/message_view.dart';
-import '../../customers/data/customers_repository.dart';
+import '../../organisations/data/organisations_repository.dart';
 import '../../products/data/products_repository.dart';
 import '../data/dispatches_repository.dart';
 import '../domain/dispatch_models.dart';
@@ -17,7 +17,7 @@ class DispatchDetailScreen extends StatefulWidget {
     super.key,
     required this.dispatchId,
     required this.dispatches,
-    required this.customers,
+    required this.organisations,
     required this.products,
     required this.permissions,
     required this.readBarcode,
@@ -25,7 +25,9 @@ class DispatchDetailScreen extends StatefulWidget {
 
   final String dispatchId;
   final DispatchesRepository dispatches;
-  final CustomersRepository customers;
+
+  /// Subsidiaries: the customers to choose from.
+  final OrganisationsRepository organisations;
   final ProductsRepository products;
   final DispatchPermissions permissions;
   final BarcodeReader readBarcode;
@@ -79,7 +81,7 @@ class _DispatchDetailScreenState extends State<DispatchDetailScreen> {
       MaterialPageRoute(
         builder: (_) => DispatchEditorScreen(
           dispatches: widget.dispatches,
-          customers: widget.customers,
+          organisations: widget.organisations,
           products: widget.products,
           readBarcode: widget.readBarcode,
           existing: dispatch,

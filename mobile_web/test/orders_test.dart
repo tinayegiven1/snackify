@@ -140,7 +140,7 @@ void main() {
         'name': 'Glen View Branch',
         'type': 'SUBSIDIARY',
         'isActive': true,
-        'customerId': null,
+        'creditLimit': null,
       })
       ..addOrder('org-sub-1', {'PC-BBQ-S': (10, '0.50', '0.55')})
       ..addOrder('org-sub-2', {'PC-BBQ-S': (20, '0.50', '0.55')});

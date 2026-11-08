@@ -4,12 +4,12 @@ import 'package:snackify/core/formatting/dates.dart';
 
 import 'helpers/test_app.dart';
 
-/// Two products and two customers; tests add invoices and payments as needed.
+/// Two products and two customers (subsidiaries); tests add invoices and payments as needed.
 FakeBackend backendForPayments(String role) => FakeBackend(role: role)
   ..addProduct('PC-BBQ-S', 'Potato Crisps', 'BBQ', 'Small', '0.50')
   ..addProduct('MP-CH-S', 'Maize Puffs', 'Cheese', 'Small', '0.30')
-  ..addCustomer('C0001', 'Avondale Tuckshop')
-  ..addCustomer('C0002', 'Mabelreign Grocers');
+  ..addOrganisation('C0001', 'Avondale Tuckshop')
+  ..addOrganisation('C0002', 'Mabelreign Grocers');
 
 /// Avondale owes INV-000001 (USD 10.00, issued 14 days ago, overdue 7 days) and INV-000002
 /// (USD 5.00, issued today).

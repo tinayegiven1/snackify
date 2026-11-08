@@ -115,8 +115,9 @@ beforeEach(async () => {
     receivedDate: addDays(week(6).from, -1),
   });
   const { rows } = await pools.owner.query<{ id: string }>(
-    `INSERT INTO customers (code, name) VALUES
-       ('C0001', 'Avondale Tuckshop'), ('C0002', 'Mabelreign Grocers'), ('C0003', 'Quiet Customer')
+    `INSERT INTO organisations (code, name, organisation_type) VALUES
+       ('C0001', 'Avondale Tuckshop', 'SUBSIDIARY'), ('C0002', 'Mabelreign Grocers', 'SUBSIDIARY'),
+       ('C0003', 'Quiet Customer', 'SUBSIDIARY')
      RETURNING id`,
   );
   [avondale, mabelreign] = rows.map((row) => row.id) as [string, string];
@@ -476,8 +477,8 @@ describe('balances', () => {
     const { rows } = await pools.owner.query<{ balance: string }>(
       `SELECT ((SELECT sum(i.quantity * i.unit_price) FROM dispatches d
                 JOIN dispatch_items i ON i.dispatch_id = d.id
-                WHERE d.customer_id = $1 AND d.status = 'confirmed')
-             - (SELECT sum(amount) FROM payments WHERE customer_id = $1 AND status = 'recorded')
+                WHERE d.organisation_id = $1 AND d.status = 'confirmed')
+             - (SELECT sum(amount) FROM payments WHERE organisation_id = $1 AND status = 'recorded')
               )::text AS balance`,
       [avondale],
     );
@@ -486,7 +487,7 @@ describe('balances', () => {
 
   it('are what credit-limit warnings use, so payments lower the balance', async () => {
     await issuedInvoice(avondale, 20); // 10.00 owed
-    await pools.owner.query(`UPDATE customers SET credit_limit = 12 WHERE id = $1`, [avondale]);
+    await pools.owner.query(`UPDATE organisations SET credit_limit = 12 WHERE id = $1`, [avondale]);
     const draft = await as('admin').post('/api/v1/dispatches', {
       customerId: avondale,
       items: [{ productId: bbq, quantity: 8 }], // 4.00

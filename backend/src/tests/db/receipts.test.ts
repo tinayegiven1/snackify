@@ -221,10 +221,8 @@ describe('a Head Office receipt', () => {
       },
     ]);
 
-    // Verification: the warehouse cannot verify its own receipt; finance reviews each document.
+    // Verification: the warehouse cannot verify its own receipt; finance may review a document.
     expect((await as('storekeeper').post(`/api/v1/receipts/${draft.id}/verify`)).status).toBe(403);
-    const early = await as('accounts').post(`/api/v1/receipts/${draft.id}/verify`);
-    expect(early.body.error.code).toBe('DOCUMENTS_NOT_REVIEWED');
     const attachmentId = uploaded.body.receipt.attachments[0].id;
     const reviewed = await as('accounts').post(
       `/api/v1/receipts/${draft.id}/attachments/${attachmentId}/review`,
@@ -261,6 +259,44 @@ describe('a Head Office receipt', () => {
     expect(pdf.headers['content-type']).toBe('application/pdf');
     expect(pdf.headers['content-disposition']).toBe(`inline; filename="${draft.grnNumber}.pdf"`);
     expect((pdf.body as Buffer).subarray(0, 5).toString()).toBe('%PDF-');
+  });
+
+  it('verifies documents not yet reviewed when the receipt is verified', async () => {
+    const receipt = await submitted();
+    const verified = await as('accounts').post(`/api/v1/receipts/${receipt.id}/verify`);
+    expect(verified.status, JSON.stringify(verified.body)).toBe(200);
+    expect(verified.body.receipt.attachments).toMatchObject([
+      {
+        filename: 'invoice.pdf',
+        verificationStatus: 'VERIFIED',
+        reviewedBy: { fullName: 'Test accounts' },
+      },
+    ]);
+  });
+
+  it('prints photographed documents on the GRN PDF, each on its own page', async () => {
+    // A real 1x1 PNG (a camera photo), a PDF (not printed) and a damaged PNG (noted instead).
+    const photo = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const draft = await createDraft();
+    expect((await upload('storekeeper', draft.id, 'photo-1.png', photo)).status).toBe(201);
+    expect((await upload('storekeeper', draft.id, 'invoice.pdf', FILES.pdf)).status).toBe(201);
+    expect((await upload('storekeeper', draft.id, 'damaged.png', FILES.png)).status).toBe(201);
+
+    const pdf = await download('storekeeper', `/api/v1/receipts/${draft.id}/pdf`);
+    expect(pdf.status).toBe(200);
+    const text = (pdf.body as Buffer).toString('latin1');
+    // The note, then one page per picture; only the good photo is embedded as an image.
+    const pages = (pdf: string) => pdf.match(new RegExp('/Type /Page[^s]', 'g'))?.length ?? 0;
+    expect(pages(text)).toBe(3);
+    // Only the good photo is embedded: its picture plus its transparency mask.
+    expect(text.split('/Subtype /Image')).toHaveLength(3);
+
+    const plain = await createDraft();
+    const plainPdf = await download('storekeeper', `/api/v1/receipts/${plain.id}/pdf`);
+    expect(pages((plainPdf.body as Buffer).toString('latin1'))).toBe(1);
   });
 
   it('checks the details before saving anything', async () => {

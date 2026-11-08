@@ -126,7 +126,9 @@ describe('permissions', () => {
     'receipt.reverse': (who) =>
       as(who).post(`/api/v1/receipts/${randomUUID()}/reverse`, { reason: 'Wrong supplier' }),
     'stock.adjust': (who) => as(who).post('/api/v1/stock/adjustments', {}),
-    'customer.view': (who) => as(who).get('/api/v1/customers'),
+    // A credit limit for an organisation that does not exist: 404 when let in.
+    'organisation.edit_credit_limit': (who) =>
+      as(who).patch(`/api/v1/organisations/${randomUUID()}`, { creditLimit: '100.00' }),
     'dispatch.confirm': (who) => as(who).post(`/api/v1/dispatches/${randomUUID()}/confirm`, {}),
     'dispatch.reverse': (who) => as(who).post(`/api/v1/dispatches/${randomUUID()}/reverse`, {}),
     'invoice.manage': (who) => as(who).get('/api/v1/invoices'),
@@ -148,7 +150,6 @@ describe('permissions', () => {
       'stock.view',
       'stock.adjust',
       'receipt.reverse',
-      'customer.view',
       'dispatch.reverse',
       // Voiding also needs the payments area (finance), so an administrator without a finance
       // role cannot void payments on their own. (Old admins hold both roles: decision D2.)
@@ -157,7 +158,6 @@ describe('permissions', () => {
     hq_warehouse_officer: [
       'stock.view',
       'stock.receive',
-      'customer.view',
       'dispatch.confirm',
       'report.dashboard',
       'forecast.use',
@@ -165,14 +165,14 @@ describe('permissions', () => {
     hq_finance_officer: [
       'stock.view',
       'receipt.verify',
-      'customer.view',
+      'organisation.edit_credit_limit',
       'invoice.manage',
       'payment.manage',
       'report.dashboard',
       'report.financial',
       'forecast.use',
     ],
-    hq_sales_officer: ['stock.view', 'customer.view', 'report.dashboard'],
+    hq_sales_officer: ['stock.view', 'report.dashboard'],
     subsidiary_manager: ['stock.view'],
     subsidiary_storekeeper: ['stock.view'],
   };
@@ -201,7 +201,7 @@ describe('permissions', () => {
     expect((await as('hq_sales_officer').get('/api/v1/forecasts')).status).toBe(403);
 
     const changed = await as('system_admin').put('/api/v1/roles/hq_sales_officer/permissions', {
-      permissions: ['stock.view', 'customer.view', 'report.dashboard', 'forecast.use'],
+      permissions: ['stock.view', 'report.dashboard', 'forecast.use'],
     });
     expect(changed.status).toBe(200);
     expect(changed.body.role.permissions).toContain('forecast.use');
@@ -309,7 +309,7 @@ describe('organisation separation', () => {
 });
 
 describe('organisations', () => {
-  it('adds a subsidiary together with the customer record dispatches and invoices use', async () => {
+  it('adds a subsidiary: a customer of the Head Office, with its own credit limit', async () => {
     const response = await as('system_admin').post('/api/v1/organisations', {
       code: 'bul-01',
       name: 'Bulawayo Branch',
@@ -326,49 +326,67 @@ describe('organisations', () => {
       type: 'SUBSIDIARY',
       isActive: true,
       contactEmail: 'orders@bulawayo.example',
-      customerId: expect.any(String),
+      creditLimit: null,
     });
-    const customer = await as('hq_sales_officer').get(
-      `/api/v1/customers/${response.body.organisation.customerId}`,
-    );
-    expect(customer.body.customer).toMatchObject({
-      code: 'BUL-01',
-      name: 'Bulawayo Branch',
-      phone: '+263 29 222 3333',
-      organisationId: response.body.organisation.id,
-    });
+    expect(response.body.organisation).not.toHaveProperty('customerId');
 
     const [entry] = await auditEntries(pools.owner, 'organisation.created');
-    expect(entry?.details).toEqual({
-      code: 'BUL-01',
-      name: 'Bulawayo Branch',
-      customerCode: 'BUL-01',
-    });
+    expect(entry?.details).toEqual({ code: 'BUL-01', name: 'Bulawayo Branch' });
+
+    // There is no separate customers list any more.
+    expect((await as('system_admin').get('/api/v1/customers')).status).toBe(404);
   });
 
-  it('can link an existing customer instead, but only one that is not linked yet', async () => {
-    const { rows } = await pools.owner.query<{ id: string }>(
-      `INSERT INTO customers (code, name) VALUES ('C0042', 'Old Shop') RETURNING id`,
-    );
-    const customerId = rows[0]?.id;
-    const first = await as('system_admin').post('/api/v1/organisations', {
-      code: 'OLD',
-      name: 'Old Shop Ltd',
-      existingCustomerId: customerId,
-    });
-    expect(first.status).toBe(201);
-    expect(first.body.organisation.customerId).toBe(customerId);
+  it('lists only the subsidiaries (the customers) when asked', async () => {
+    const response = await as('hq_sales_officer').get('/api/v1/organisations?type=SUBSIDIARY');
+    expect(response.status).toBe(200);
+    const types = response.body.organisations.map((o: { type: string }) => o.type);
+    expect(types.length).toBeGreaterThan(0);
+    expect(new Set(types)).toEqual(new Set(['SUBSIDIARY']));
+    expect((await as('hq_sales_officer').get('/api/v1/organisations?type=SHOP')).status).toBe(400);
+  });
 
-    const second = await as('system_admin').post('/api/v1/organisations', {
-      code: 'OLD-2',
-      name: 'Old Shop Again',
-      existingCustomerId: customerId,
+  it('lets finance set credit limits, and only credit limits', async () => {
+    const limited = await as('hq_finance_officer').patch(`/api/v1/organisations/${subA}`, {
+      creditLimit: '500.00',
     });
-    expect(second.status).toBe(400);
-    expect(second.body.error.details[0].field).toBe('existingCustomerId');
-    // Nothing was half-saved.
-    const codes = await as('system_admin').get('/api/v1/organisations');
-    expect(codes.body.organisations.map((o: { code: string }) => o.code)).not.toContain('OLD-2');
+    expect(limited.status).toBe(200);
+    expect(limited.body.organisation.creditLimit).toBe('500.00');
+    const [entry] = await auditEntries(pools.owner, 'organisation.updated');
+    expect(entry?.details).toEqual({ changes: { creditLimit: { from: null, to: '500.00' } } });
+
+    // Finance cannot rename; an administrator without finance cannot change the limit.
+    const renamed = await as('hq_finance_officer').patch(`/api/v1/organisations/${subA}`, {
+      name: 'Renamed',
+      creditLimit: '600.00',
+    });
+    expect(renamed.status).toBe(403);
+    expect(renamed.body.error.details).toEqual([
+      { field: 'name', message: 'Your role cannot change this' },
+    ]);
+    const byAdmin = await as('system_admin').patch(`/api/v1/organisations/${subA}`, {
+      creditLimit: null,
+    });
+    expect(byAdmin.status).toBe(403);
+    expect(
+      (
+        await as('system_admin').post('/api/v1/organisations', {
+          code: 'NEW',
+          name: 'New Branch',
+          creditLimit: '10.00',
+        })
+      ).status,
+    ).toBe(403);
+
+    // A limit can be removed again, but never made negative.
+    const negative = await as('hq_finance_officer').patch(`/api/v1/organisations/${subA}`, {
+      creditLimit: '-1.00',
+    });
+    expect(negative.status).toBe(400);
+    const cleared = await as('hq_finance_officer').patch(`/api/v1/organisations/${subA}`, {
+      creditLimit: null,
+    });
+    expect(cleared.body.organisation.creditLimit).toBeNull();
   });
 
   it('refuses a code that is taken, and explains invalid fields', async () => {
@@ -390,26 +408,6 @@ describe('organisations', () => {
       'name',
       'contactEmail',
     ]);
-  });
-
-  it("renames the subsidiary's customer record with it", async () => {
-    const created = await as('system_admin').post('/api/v1/organisations', {
-      code: 'MUT',
-      name: 'Mutare Branch',
-    });
-    const renamed = await as('system_admin').patch(
-      `/api/v1/organisations/${created.body.organisation.id}`,
-      { name: 'Mutare Depot' },
-    );
-    expect(renamed.status).toBe(200);
-    const customer = await as('hq_sales_officer').get(
-      `/api/v1/customers/${created.body.organisation.customerId}`,
-    );
-    expect(customer.body.customer.name).toBe('Mutare Depot');
-    const [entry] = await auditEntries(pools.owner, 'organisation.updated');
-    expect(entry?.details).toEqual({
-      changes: { name: { from: 'Mutare Branch', to: 'Mutare Depot' } },
-    });
   });
 
   it('deactivating a subsidiary signs its staff out and keeps them out', async () => {

@@ -37,11 +37,11 @@ void main() {
 
     await tester.tap(find.byTooltip('Open navigation menu'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Customers'));
+    await tester.tap(find.text('Dispatches'));
     await tester.pumpAndSettle();
 
     expect(find.byType(Drawer), findsNothing);
-    expect(find.widgetWithText(AppBar, 'Customers'), findsOneWidget);
+    expect(find.widgetWithText(AppBar, 'Dispatches'), findsOneWidget);
   });
 
   testWidgets('wide layout uses a permanent sidebar and a low-stock table', (tester) async {
@@ -51,10 +51,23 @@ void main() {
     expect(find.byType(DataTable), findsOneWidget);
     expect(find.text('Tendai Moyo'), findsOneWidget);
 
-    await tester.tap(find.text('Customers'));
+    await tester.tap(find.text('Dispatches'));
     await tester.pumpAndSettle();
 
-    expect(find.widgetWithText(AppBar, 'Customers'), findsOneWidget);
+    expect(find.widgetWithText(AppBar, 'Dispatches'), findsOneWidget);
+  });
+
+  testWidgets('there is no Customers section: the customers are the organisations', (tester) async {
+    await pumpSnackify(
+      tester,
+      signedIn: true,
+      size: desktopSize,
+      backend: FakeBackend(role: 'admin'),
+    );
+
+    final sections = await menuSections(tester);
+    expect(sections, containsAll(['Dispatches', 'Invoices', 'Payments', 'Organisations']));
+    expect(sections, isNot(contains('Customers')));
   });
 
   testWidgets('shows API online when the backend health check passes', (tester) async {
@@ -88,9 +101,9 @@ void main() {
     await tester.scrollUntilVisible(find.text('Sign out'), 100, scrollable: menu);
     expect(find.text('Sign out'), findsOneWidget);
 
-    await tester.scrollUntilVisible(find.text('Customers'), -100, scrollable: menu);
-    await tester.tap(find.text('Customers'));
+    await tester.scrollUntilVisible(find.text('Dispatches'), -100, scrollable: menu);
+    await tester.tap(find.text('Dispatches'));
     await tester.pumpAndSettle();
-    expect(find.text('No customers yet'), findsOneWidget);
+    expect(find.text('No dispatches found'), findsOneWidget);
   });
 }

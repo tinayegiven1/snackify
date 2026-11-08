@@ -207,26 +207,26 @@ export async function customerSummaryReport(
     paid: string;
   }>(
     `WITH sold AS (
-       SELECT d.customer_id, count(DISTINCT d.id)::integer AS dispatches,
+       SELECT d.organisation_id AS customer_id, count(DISTINCT d.id)::integer AS dispatches,
               sum(i.quantity)::integer AS packs, sum(i.quantity * i.unit_price) AS value
        FROM dispatches d JOIN dispatch_items i ON i.dispatch_id = d.id
        WHERE d.status = 'confirmed' AND d.dispatch_date BETWEEN $1 AND $2
-       GROUP BY d.customer_id
+       GROUP BY d.organisation_id
      ),
      billed AS (
-       SELECT customer_id, sum(total) AS amount FROM invoices
-       WHERE status = 'issued' AND issue_date BETWEEN $1 AND $2 GROUP BY customer_id
+       SELECT organisation_id AS customer_id, sum(total) AS amount FROM invoices
+       WHERE status = 'issued' AND issue_date BETWEEN $1 AND $2 GROUP BY organisation_id
      ),
      paid AS (
-       SELECT customer_id, sum(amount) AS amount FROM payments
-       WHERE status = 'recorded' AND payment_date BETWEEN $1 AND $2 GROUP BY customer_id
+       SELECT organisation_id AS customer_id, sum(amount) AS amount FROM payments
+       WHERE status = 'recorded' AND payment_date BETWEEN $1 AND $2 GROUP BY organisation_id
      )
      SELECT c.id, c.code, c.name,
             COALESCE(s.dispatches, 0) AS dispatches, COALESCE(s.packs, 0) AS packs,
             COALESCE(s.value, 0)::numeric(14, 2)::text AS value,
             COALESCE(b.amount, 0)::numeric(14, 2)::text AS invoiced,
             COALESCE(p.amount, 0)::numeric(14, 2)::text AS paid
-     FROM customers c
+     FROM organisations c
      LEFT JOIN sold s ON s.customer_id = c.id
      LEFT JOIN billed b ON b.customer_id = c.id
      LEFT JOIN paid p ON p.customer_id = c.id

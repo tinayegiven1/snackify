@@ -3,16 +3,16 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'helpers/test_app.dart';
 
-/// Two products in stock (BBQ 100, Cheese 50) and two customers: Avondale has a credit limit
-/// of 10.00, Mabelreign has none.
+/// Two products in stock (BBQ 100, Cheese 50) and two customers (subsidiaries): Avondale has a
+/// credit limit of 10.00, Mabelreign has none.
 FakeBackend backendForDispatches(String role) {
   return FakeBackend(role: role)
     ..addProduct('PC-BBQ-S', 'Potato Crisps', 'BBQ', 'Small', '0.50')
     ..addProduct('MP-CH-S', 'Maize Puffs', 'Cheese', 'Small', '0.30')
     ..addStock('PC-BBQ-S', 100)
     ..addStock('MP-CH-S', 50)
-    ..addCustomer('C0001', 'Avondale Tuckshop', creditLimit: '10.00')
-    ..addCustomer('C0002', 'Mabelreign Grocers');
+    ..addOrganisation('C0001', 'Avondale Tuckshop', creditLimit: '10.00')
+    ..addOrganisation('C0002', 'Mabelreign Grocers');
 }
 
 Future<void> openDispatch(WidgetTester tester, String title) async {
@@ -59,6 +59,39 @@ void main() {
     expect(find.text('12 × USD 0.50 · in stock: 100'), findsOneWidget);
     expect(find.text('Confirm dispatch'), findsNothing);
     expect(app.backend.onHand('product-1'), 100);
+  });
+
+  testWidgets('the customer picker lists active subsidiaries only, and searches them', (
+    tester,
+  ) async {
+    final backend = backendForDispatches('salesperson')
+      ..addOrganisation('C0003', 'Closed Kiosk', isActive: false);
+    await pumpSnackify(tester, signedIn: true, backend: backend);
+    await openSection(tester, 'Dispatches');
+    await tester.tap(find.text('New dispatch'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choose a customer'));
+    await tester.pumpAndSettle();
+
+    Finder inPicker(String text) =>
+        find.descendant(of: find.byType(Dialog), matching: find.text(text));
+    // Customers are the subsidiaries: never the Head Office, nor a deactivated one.
+    expect(backend.requests, contains('GET /api/v1/organisations?type=SUBSIDIARY'));
+    expect(inPicker('Avondale Tuckshop'), findsOneWidget);
+    expect(inPicker('Mabelreign Grocers'), findsOneWidget);
+    expect(inPicker('Mbare Branch'), findsOneWidget);
+    expect(inPicker('Head Office'), findsNothing);
+    expect(inPicker('Closed Kiosk'), findsNothing);
+
+    // The search runs in the app, by name or code.
+    await tester.enterText(find.widgetWithText(TextField, 'Search name or code'), 'c0002');
+    await tester.pumpAndSettle();
+    expect(inPicker('Mabelreign Grocers'), findsOneWidget);
+    expect(inPicker('Avondale Tuckshop'), findsNothing);
+
+    await tester.tap(inPicker('Mabelreign Grocers'));
+    await tester.pumpAndSettle();
+    expect(find.text('Mabelreign Grocers (C0002)'), findsOneWidget);
   });
 
   testWidgets('the editor asks for a customer and at least one product', (tester) async {

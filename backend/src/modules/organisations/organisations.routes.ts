@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import type pg from 'pg';
 import { z } from 'zod';
-import { getAuth, requireAuth, requirePermission } from '../../middleware/authenticate.js';
-import { optionalText } from '../../utils/schemas.js';
+import { can, getAuth, requireAuth, requirePermission } from '../../middleware/authenticate.js';
+import { AppError } from '../../utils/app-error.js';
+import { moneySchema, optionalText } from '../../utils/schemas.js';
 import { parseBody } from '../../utils/validation.js';
 import { organisationNotFound, scopeOf } from './access.js';
 import {
@@ -44,14 +45,14 @@ const details = {
   taxNumber: optionalText(40),
 };
 
+/** Most a subsidiary may owe at once, in the base currency; null for "no limit". */
+const creditLimitSchema = moneySchema.nullable();
+
 const createSchema = z.object({
   code: codeSchema,
   name: nameSchema,
   ...details,
-  existingCustomerId: z
-    .uuid({ error: 'Must be a customer id' })
-    .nullish()
-    .transform((value) => value ?? null),
+  creditLimit: creditLimitSchema.optional().transform((value) => value ?? null),
 });
 
 const updateSchema = z
@@ -66,6 +67,7 @@ const updateSchema = z
       billingName: details.billingName.optional(),
       billingAddress: details.billingAddress.optional(),
       taxNumber: details.taxNumber.optional(),
+      creditLimit: creditLimitSchema.optional(),
       isActive: z.boolean({ error: 'Must be true or false' }).optional(),
     },
     { error: 'This field cannot be changed' },
@@ -77,6 +79,7 @@ const listQuerySchema = z.object({
     .enum(['true', 'false'], { error: 'Must be true or false' })
     .optional()
     .transform((value) => value === 'true'),
+  type: z.enum(['HQ', 'SUBSIDIARY'], { error: 'Must be HQ or SUBSIDIARY' }).optional(),
 });
 
 function idParam(id: unknown): string {
@@ -85,9 +88,31 @@ function idParam(id: unknown): string {
 }
 
 /**
- * The Head Office and its subsidiaries. Everyone signed in sees the organisations they may
- * access (Head Office staff: all; a subsidiary's staff: their own). Adding and changing them
- * needs organisation.manage.
+ * The credit limit is finance's (organisation.edit_credit_limit); every other detail needs
+ * organisation.manage. Someone with one of the two may change just those fields.
+ */
+function checkFieldPermissions(user: Parameters<typeof can>[0], fields: string[]): void {
+  for (const field of fields) {
+    const permission =
+      field === 'creditLimit' ? 'organisation.edit_credit_limit' : 'organisation.manage';
+    if (!can(user, permission)) {
+      throw new AppError(
+        403,
+        'FORBIDDEN',
+        field === 'creditLimit'
+          ? 'Your role does not allow changing credit limits.'
+          : "Your role does not allow changing organisations' details.",
+        [{ field, message: 'Your role cannot change this' }],
+      );
+    }
+  }
+}
+
+/**
+ * The Head Office and its subsidiaries; the subsidiaries are the customers that dispatches,
+ * invoices and payments are for. Everyone signed in sees the organisations they may access
+ * (Head Office staff: all; a subsidiary's staff: their own). Adding them needs
+ * organisation.manage; changing them, see checkFieldPermissions.
  */
 export function organisationsRouter(db: pg.Pool): Router {
   const router = Router();
@@ -107,17 +132,27 @@ export function organisationsRouter(db: pg.Pool): Router {
 
   router.post('/', requirePermission('organisation.manage'), async (req, res) => {
     const input = parseBody(createSchema, req.body);
-    const organisation = await createSubsidiary(db, input, getAuth(res).user);
+    const { user } = getAuth(res);
+    if (input.creditLimit !== null) checkFieldPermissions(user, ['creditLimit']);
+    const organisation = await createSubsidiary(db, input, user);
     res.status(201).json({ organisation });
   });
 
-  router.patch('/:id', requirePermission('organisation.manage'), async (req, res) => {
-    const id = idParam(req.params.id);
-    const { user } = getAuth(res);
-    await getOrganisation(db, scopeOf(user), id);
-    const changes = parseBody(updateSchema, req.body);
-    res.json({ organisation: await updateOrganisation(db, id, changes, user) });
-  });
+  router.patch(
+    '/:id',
+    requirePermission('organisation.manage', 'organisation.edit_credit_limit'),
+    async (req, res) => {
+      const id = idParam(req.params.id);
+      const { user } = getAuth(res);
+      const changes = parseBody(updateSchema, req.body);
+      checkFieldPermissions(
+        user,
+        Object.keys(changes).filter((key) => changes[key as keyof typeof changes] !== undefined),
+      );
+      await getOrganisation(db, scopeOf(user), id);
+      res.json({ organisation: await updateOrganisation(db, id, changes, user) });
+    },
+  );
 
   return router;
 }

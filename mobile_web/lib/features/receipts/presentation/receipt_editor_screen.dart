@@ -11,6 +11,7 @@ import '../../products/domain/product.dart';
 import '../../products/presentation/product_picker.dart';
 import '../../products/presentation/scan_product.dart';
 import '../domain/receipt_models.dart';
+import 'document_preview.dart';
 import 'receipt_services.dart';
 
 /// Records a delivery as a goods-received note: whose stock it is, each product with what was
@@ -55,6 +56,11 @@ class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
       _LineEntry(line.toInput(), line.unit.name),
   ];
   final List<PickedDocument> _newDocuments = [];
+
+  /// Pictures of documents saved earlier, downloaded for their thumbnails.
+  late final _pictures = DocumentPictureCache(
+    (documentId) => _services.receipts.document(_saved!.id, documentId),
+  );
 
   List<Organisation>? _organisations;
   List<CatalogueItem>? _warehouses;
@@ -139,6 +145,18 @@ class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
   Future<void> _addDocuments() async {
     final picked = await _services.pickDocuments();
     if (picked.isNotEmpty && mounted) setState(() => _newDocuments.addAll(picked));
+  }
+
+  Future<void> _takePhoto() async {
+    final photo = await _services.takePhoto();
+    if (photo != null && mounted) setState(() => _newDocuments.add(photo));
+  }
+
+  Future<void> _previewSaved(ReceiptDocument document) async {
+    final bytes =
+        _pictures.bytesOf(document.id) ??
+        await _services.receipts.document(_saved!.id, document.id);
+    if (mounted) await showDocumentPreview(context, document.filename, bytes);
   }
 
   /// Asks an authorised user why there is no supplier document; null when they cancel.
@@ -251,6 +269,15 @@ class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
           'Line ${int.parse(match.group(1)!) + 1}: $value',
     ];
     return lines.isEmpty ? null : lines.join('\n');
+  }
+
+  Widget _savedThumbnail(ReceiptDocument document) {
+    if (!document.isPdf) _pictures.ensure(document.id, () => mounted ? setState(() {}) : null);
+    return DocumentThumbnail(
+      isPdf: document.isPdf,
+      bytes: _pictures.bytesOf(document.id),
+      loading: _pictures.isLoading(document.id),
+    );
   }
 
   @override
@@ -394,18 +421,23 @@ class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
                 for (final document in previousDocuments)
                   ListTile(
                     contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      document.isPdf ? Icons.picture_as_pdf_outlined : Icons.image_outlined,
-                    ),
+                    leading: _savedThumbnail(document),
                     title: Text(document.filename),
                     subtitle: Text('${document.sizeLabel} · ${document.status.label}'),
+                    onTap: document.isPdf ? null : () => _previewSaved(document),
                   ),
                 for (final (index, document) in _newDocuments.indexed)
                   ListTile(
                     contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.upload_file_outlined),
+                    leading: DocumentThumbnail(
+                      isPdf: !isPicture(document.bytes),
+                      bytes: document.bytes,
+                    ),
                     title: Text(document.name),
                     subtitle: const Text('Uploaded when you save'),
+                    onTap: isPicture(document.bytes)
+                        ? () => showDocumentPreview(context, document.name, document.bytes)
+                        : null,
                     trailing: IconButton(
                       tooltip: 'Remove ${document.name}',
                       icon: const Icon(Icons.close),
@@ -414,13 +446,20 @@ class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
                           : () => setState(() => _newDocuments.removeAt(index)),
                     ),
                   ),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: _saving ? null : _addDocuments,
-                    icon: const Icon(Icons.attach_file),
-                    label: const Text('Attach document'),
-                  ),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    TextButton.icon(
+                      onPressed: _saving ? null : _addDocuments,
+                      icon: const Icon(Icons.attach_file),
+                      label: const Text('Attach document'),
+                    ),
+                    TextButton.icon(
+                      onPressed: _saving ? null : _takePhoto,
+                      icon: const Icon(Icons.photo_camera_outlined),
+                      label: const Text('Take photo'),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 16),
                 TextFormField(

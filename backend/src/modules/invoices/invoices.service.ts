@@ -120,7 +120,7 @@ async function eligibleLines(
      FROM dispatch_items i
      JOIN dispatches d ON d.id = i.dispatch_id
      JOIN products p ON p.id = i.product_id
-     WHERE d.customer_id = $1
+     WHERE d.organisation_id = $1
        AND d.status = 'confirmed'
        AND d.dispatch_date BETWEEN $2 AND $3
        AND NOT EXISTS (SELECT 1 FROM invoice_items ii WHERE ii.dispatch_item_id = i.id)
@@ -161,10 +161,19 @@ async function loadCustomer(db: Queryable, customerId: string, lock = false) {
     phone: string | null;
     address: string | null;
   }>(
-    `SELECT id, code, name, phone, address FROM customers WHERE id = $1${lock ? ' FOR UPDATE' : ''}`,
+    // An invoice is made out to the organisation's billing name and address when it has them.
+    `SELECT id, code, COALESCE(billing_name, name) AS name, contact_phone AS phone,
+            COALESCE(billing_address, address) AS address
+     FROM organisations WHERE id = $1 AND organisation_type = 'SUBSIDIARY'${lock ? ' FOR UPDATE' : ''}`,
     [customerId],
   );
-  if (!rows[0]) throw new AppError(404, 'CUSTOMER_NOT_FOUND', 'No customer has that id.');
+  if (!rows[0]) {
+    throw new AppError(
+      404,
+      'CUSTOMER_NOT_FOUND',
+      'No organisation that buys from the Head Office has that id.',
+    );
+  }
   return rows[0];
 }
 
@@ -205,7 +214,7 @@ export async function listUnbilledCustomers(
             sum(i.quantity * i.unit_price)::numeric(14, 2)::text AS subtotal
      FROM dispatch_items i
      JOIN dispatches d ON d.id = i.dispatch_id
-     JOIN customers c ON c.id = d.customer_id
+     JOIN organisations c ON c.id = d.organisation_id
      WHERE d.status = 'confirmed'
        AND d.dispatch_date BETWEEN $1 AND $2
        AND NOT EXISTS (SELECT 1 FROM invoice_items ii WHERE ii.dispatch_item_id = i.id)
@@ -274,16 +283,16 @@ export async function getInvoice(db: Queryable, id: string, today?: string): Pro
     issued_at: Date | null;
     void_reason: string | null;
   }>(
-    `SELECT v.id, v.invoice_number, v.status, v.customer_id,
+    `SELECT v.id, v.invoice_number, v.status, v.organisation_id AS customer_id,
             v.customer_code, v.customer_name, v.customer_phone, v.customer_address,
-            c.code AS current_code, c.name AS current_name, c.phone AS current_phone,
-            c.address AS current_address,
+            c.code AS current_code, COALESCE(c.billing_name, c.name) AS current_name,
+            c.contact_phone AS current_phone, COALESCE(c.billing_address, c.address) AS current_address,
             v.period_from, v.period_to, v.issue_date, v.due_date, v.currency, v.subtotal, v.total,
             COALESCE(paid.amount_paid, 0)::numeric(14, 2)::text AS amount_paid,
             cb.full_name AS created_by_name, v.created_at,
             ib.full_name AS issued_by_name, v.issued_at, v.void_reason
      FROM invoices v
-     JOIN customers c ON c.id = v.customer_id
+     JOIN organisations c ON c.id = v.organisation_id
      JOIN users cb ON cb.id = v.created_by
      LEFT JOIN users ib ON ib.id = v.issued_by
      LEFT JOIN invoice_amounts_paid paid ON paid.invoice_id = v.id
@@ -400,7 +409,7 @@ export async function listInvoices(
     conditions.push(`v.status = 'issued' AND v.total > COALESCE(paid.amount_paid, 0)`);
     if (search.payment === 'overdue') add('v.due_date < ?', today);
   }
-  if (search.customerId) add('v.customer_id = ?', search.customerId);
+  if (search.customerId) add('v.organisation_id = ?', search.customerId);
   if (search.q) add('(v.invoice_number ILIKE ? OR c.name ILIKE ?)', `%${escapeLike(search.q)}%`);
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
@@ -428,7 +437,7 @@ export async function listInvoices(
             (SELECT count(*) FROM invoice_items ii WHERE ii.invoice_id = v.id)::integer AS line_count,
             count(*) OVER ()::integer AS total_count
      FROM invoices v
-     JOIN customers c ON c.id = v.customer_id
+     JOIN organisations c ON c.id = v.organisation_id
      LEFT JOIN invoice_amounts_paid paid ON paid.invoice_id = v.id
      ${where}
      ORDER BY v.created_at DESC
@@ -496,7 +505,7 @@ export async function createDraftInvoice(
       );
 
       const { rows: created } = await client.query<{ id: string }>(
-        `INSERT INTO invoices (customer_id, period_from, period_to, currency, subtotal, total, created_by)
+        `INSERT INTO invoices (organisation_id, period_from, period_to, currency, subtotal, total, created_by)
          VALUES ($1, $2, $3, $4, $5, $5, $6) RETURNING id`,
         [input.customerId, input.from, input.to, currency, subtotal, actor.id],
       );
@@ -570,7 +579,10 @@ async function lockInvoice(client: pg.PoolClient, id: string) {
     status: InvoiceStatus;
     customer_id: string;
     total: string;
-  }>('SELECT status, customer_id, total FROM invoices WHERE id = $1 FOR UPDATE', [id]);
+  }>(
+    'SELECT status, organisation_id AS customer_id, total FROM invoices WHERE id = $1 FOR UPDATE',
+    [id],
+  );
   if (!rows[0]) throw invoiceNotFound();
   return rows[0];
 }

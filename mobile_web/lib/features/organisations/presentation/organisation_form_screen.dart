@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../../../core/config/app_config.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/widgets/message_view.dart';
-import '../../customers/data/customers_repository.dart';
-import '../../customers/domain/customer.dart';
 import '../data/organisations_repository.dart';
 import '../domain/organisation.dart';
 
@@ -11,21 +11,25 @@ import '../domain/organisation.dart';
 final _codeFormat = RegExp(r'^[A-Z0-9][A-Z0-9_-]{1,19}$');
 final _phoneFormat = RegExp(r'^\+?[0-9][0-9 ()-]{5,22}$');
 final _emailFormat = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+final _moneyFormat = RegExp(r'^\d{1,10}(\.\d{1,2})?$');
 
-/// Adds a subsidiary, or shows (and, with [canEdit], changes) [organisation]. Pops with a short
-/// note for the list.
+/// Adds a subsidiary, or shows (and changes) [organisation]. Pops with a short note for the list.
+///
+/// [canManage] (organisation.manage) allows the details and the active switch; [canEditCreditLimit]
+/// (organisation.edit_credit_limit) allows the credit limit, which is shown only to those users.
+/// A finance officer with just the second can open a subsidiary and change only its limit.
 class OrganisationFormScreen extends StatefulWidget {
   const OrganisationFormScreen({
     super.key,
     required this.repository,
-    required this.customers,
-    required this.canEdit,
+    required this.canManage,
+    required this.canEditCreditLimit,
     this.organisation,
   });
 
   final OrganisationsRepository repository;
-  final CustomersRepository customers;
-  final bool canEdit;
+  final bool canManage;
+  final bool canEditCreditLimit;
   final Organisation? organisation;
 
   @override
@@ -45,42 +49,30 @@ class _OrganisationFormScreenState extends State<OrganisationFormScreen> {
     'billingAddress': TextEditingController(text: widget.organisation?.billingAddress),
     'taxNumber': TextEditingController(text: widget.organisation?.taxNumber),
   };
+  late final _creditLimit = TextEditingController(text: widget.organisation?.creditLimit);
   late bool _isActive = widget.organisation?.isActive ?? true;
-
-  /// For a new subsidiary: an existing customer record to reuse, or null to create one.
-  String? _existingCustomerId;
-  List<Customer> _unlinkedCustomers = const [];
 
   bool _saving = false;
   String? _error;
   Map<String, String> _serverErrors = {};
 
   bool get _isNew => widget.organisation == null;
-  bool get _editable => widget.canEdit && !_saving;
 
-  @override
-  void initState() {
-    super.initState();
-    if (_isNew) _loadUnlinkedCustomers();
-  }
+  /// Details (name, code, contact, billing, active) need organisation.manage.
+  bool get _editable => widget.canManage && !_saving;
 
-  Future<void> _loadUnlinkedCustomers() async {
-    try {
-      final page = await widget.customers.list();
-      if (!mounted) return;
-      setState(() {
-        _unlinkedCustomers = page.customers.where((c) => c.organisationId == null).toList();
-      });
-    } on ApiException {
-      // Without customer access the choice is simply not offered: a new record is created.
-    }
-  }
+  /// Only subsidiaries are customers, so only they have a credit limit.
+  bool get _showsCreditLimit =>
+      widget.canEditCreditLimit && !(widget.organisation?.isHeadOffice ?? false);
+
+  bool get _canSave => widget.canManage || _showsCreditLimit;
 
   @override
   void dispose() {
     for (final controller in _fields.values) {
       controller.dispose();
     }
+    _creditLimit.dispose();
     super.dispose();
   }
 
@@ -95,8 +87,9 @@ class _OrganisationFormScreenState extends State<OrganisationFormScreen> {
       builder: (context) => AlertDialog(
         title: Text('Deactivate ${organisation.name}?'),
         content: const Text(
-          'Its staff are signed out at once and can no longer sign in, and its customer record '
-          'is deactivated. Everything recorded so far is kept. You can reactivate it later.',
+          'Its staff are signed out at once and can no longer sign in, and it can no longer '
+          'receive new dispatches. Everything recorded so far is kept. You can reactivate it '
+          'later.',
         ),
         actions: [
           TextButton(
@@ -124,23 +117,27 @@ class _OrganisationFormScreenState extends State<OrganisationFormScreen> {
       if (!await _confirmDeactivate(organisation)) return;
     }
 
+    // Only the fields this user may change are sent; the server refuses the others.
     final details = <String, Object?>{
-      for (final field in _fields.keys)
-        field: field == 'code' ? _valueOf(field)?.toUpperCase() : _valueOf(field),
+      if (widget.canManage)
+        for (final field in _fields.keys)
+          field: field == 'code' ? _valueOf(field)?.toUpperCase() : _valueOf(field),
     };
+    final creditLimit = _creditLimit.text.trim().isEmpty ? null : _creditLimit.text.trim();
     setState(() => _saving = true);
     try {
       final String note;
       if (organisation == null) {
         final added = await widget.repository.create({
           ...details,
-          'existingCustomerId': _existingCustomerId,
+          if (_showsCreditLimit && creditLimit != null) 'creditLimit': creditLimit,
         });
         note = 'Added ${added.name} (${added.code}). Add its staff under Users & Roles.';
       } else {
         final saved = await widget.repository.update(organisation.id, {
           ...details,
-          if (!organisation.isHeadOffice) 'isActive': _isActive,
+          if (widget.canManage && !organisation.isHeadOffice) 'isActive': _isActive,
+          if (_showsCreditLimit) 'creditLimit': creditLimit,
         });
         note = organisation.isActive && !saved.isActive
             ? 'Deactivated ${saved.name}. Its staff can no longer sign in.'
@@ -163,7 +160,7 @@ class _OrganisationFormScreenState extends State<OrganisationFormScreen> {
     final organisation = widget.organisation;
     final title = _isNew
         ? 'Add subsidiary'
-        : widget.canEdit
+        : _canSave
         ? 'Edit ${organisation!.typeLabel.toLowerCase()}'
         : organisation!.name;
     return Scaffold(
@@ -193,9 +190,7 @@ class _OrganisationFormScreenState extends State<OrganisationFormScreen> {
                       'code',
                       'Code',
                       hint: 'e.g. BUL-01',
-                      helper: _isNew
-                          ? 'Short and unique. Also used as its customer code when free.'
-                          : null,
+                      helper: _isNew ? 'Short and unique.' : null,
                       capitalization: TextCapitalization.characters,
                       validator: (value) => _codeFormat.hasMatch(value.toUpperCase())
                           ? null
@@ -227,7 +222,11 @@ class _OrganisationFormScreenState extends State<OrganisationFormScreen> {
                     _field('billingName', 'Billing name (optional)'),
                     _field('billingAddress', 'Billing address (optional)', maxLines: 2),
                     _field('taxNumber', 'Tax number (optional)'),
-                    if (_isNew && _unlinkedCustomers.isNotEmpty) _customerChoice(),
+                    if (_showsCreditLimit) ...[
+                      Text('Credit', style: Theme.of(context).textTheme.titleSmall),
+                      const SizedBox(height: 8),
+                      _creditLimitField(),
+                    ],
                     if (organisation != null && !organisation.isHeadOffice)
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
@@ -238,7 +237,7 @@ class _OrganisationFormScreenState extends State<OrganisationFormScreen> {
                         value: _isActive,
                         onChanged: _editable ? (value) => setState(() => _isActive = value) : null,
                       ),
-                    if (widget.canEdit) ...[
+                    if (_canSave) ...[
                       const SizedBox(height: 16),
                       FilledButton(
                         onPressed: _saving ? null : _save,
@@ -261,31 +260,34 @@ class _OrganisationFormScreenState extends State<OrganisationFormScreen> {
     );
   }
 
-  Widget _customerChoice() {
+  Widget _creditLimitField() {
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
-      child: DropdownButtonFormField<String?>(
-        initialValue: _existingCustomerId,
-        isExpanded: true,
+      child: TextFormField(
+        controller: _creditLimit,
+        enabled: !_saving,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
         decoration: InputDecoration(
-          labelText: 'Customer record',
-          border: const OutlineInputBorder(),
-          helperText: 'Dispatches and invoices use this record for the subsidiary.',
+          labelText: 'Credit limit (optional)',
+          prefixText: '${AppConfig.currencyCode} ',
+          helperText: 'Most this subsidiary may owe at once. Leave empty for no limit.',
           helperMaxLines: 2,
-          errorText: _serverErrors['existingCustomerId'],
+          border: const OutlineInputBorder(),
+          errorText: _serverErrors['creditLimit'],
+          errorMaxLines: 2,
         ),
-        items: [
-          const DropdownMenuItem(value: null, child: Text('Create a new one')),
-          for (final customer in _unlinkedCustomers)
-            DropdownMenuItem(
-              value: customer.id,
-              child: Text(
-                'Use ${customer.name} (${customer.code})',
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-        ],
-        onChanged: _saving ? null : (value) => setState(() => _existingCustomerId = value),
+        onChanged: (_) {
+          if (_serverErrors.containsKey('creditLimit')) {
+            setState(() => _serverErrors = {..._serverErrors}..remove('creditLimit'));
+          }
+        },
+        validator: (raw) {
+          final value = (raw ?? '').trim();
+          return value.isEmpty || _moneyFormat.hasMatch(value)
+              ? null
+              : 'Use an amount like 500.00 (up to 2 decimal places)';
+        },
       ),
     );
   }
@@ -322,7 +324,7 @@ class _OrganisationFormScreenState extends State<OrganisationFormScreen> {
             setState(() => _serverErrors = {..._serverErrors}..remove(field));
           }
         },
-        validator: widget.canEdit ? (raw) => validator?.call((raw ?? '').trim()) : null,
+        validator: widget.canManage ? (raw) => validator?.call((raw ?? '').trim()) : null,
       ),
     );
   }

@@ -6,8 +6,8 @@ import '../../../core/formatting/money.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/scanning/barcode_reader.dart';
 import '../../../shared/widgets/message_view.dart';
-import '../../customers/data/customers_repository.dart';
-import '../../customers/presentation/customer_picker.dart';
+import '../../organisations/data/organisations_repository.dart';
+import '../../organisations/presentation/organisation_picker.dart';
 import '../../products/data/products_repository.dart';
 import '../../products/presentation/product_picker.dart';
 import '../../products/presentation/scan_product.dart';
@@ -20,14 +20,16 @@ class DispatchEditorScreen extends StatefulWidget {
   const DispatchEditorScreen({
     super.key,
     required this.dispatches,
-    required this.customers,
+    required this.organisations,
     required this.products,
     required this.readBarcode,
     this.existing,
   });
 
   final DispatchesRepository dispatches;
-  final CustomersRepository customers;
+
+  /// Subsidiaries: the customers to choose from.
+  final OrganisationsRepository organisations;
   final ProductsRepository products;
   final BarcodeReader readBarcode;
   final Dispatch? existing;
@@ -96,7 +98,7 @@ class _DispatchEditorScreenState extends State<DispatchEditorScreen> {
   }
 
   Future<void> _chooseCustomer() async {
-    final customer = await pickCustomer(context, widget.customers);
+    final customer = await pickOrganisation(context, widget.organisations);
     if (customer != null) {
       setState(() {
         _customerId = customer.id;

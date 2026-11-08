@@ -110,10 +110,10 @@ async function creditCheck(
        SELECT
          (SELECT COALESCE(sum(i.quantity * i.unit_price), 0)
           FROM dispatches d JOIN dispatch_items i ON i.dispatch_id = d.id
-          WHERE d.customer_id = $1 AND d.status = 'confirmed')
+          WHERE d.organisation_id = $1 AND d.status = 'confirmed')
          - (SELECT COALESCE(sum(p.amount), 0)
             FROM payments p
-            WHERE p.customer_id = $1 AND p.status = 'recorded') AS before
+            WHERE p.organisation_id = $1 AND p.status = 'recorded') AS before
      )
      SELECT before::numeric(14, 2)::text AS before,
             (before + $2::numeric)::numeric(14, 2)::text AS after,
@@ -141,7 +141,7 @@ export async function getDispatch(db: Queryable, id: string): Promise<Dispatch> 
             d.cancelled_by, xb.full_name AS cancelled_by_name, d.cancelled_at, d.cancel_reason,
             d.reversed_by, rb.full_name AS reversed_by_name, d.reversed_at, d.reversal_reason
      FROM dispatches d
-     JOIN customers c ON c.id = d.customer_id
+     JOIN organisations c ON c.id = d.organisation_id
      JOIN users cb ON cb.id = d.created_by
      LEFT JOIN users fb ON fb.id = d.confirmed_by
      LEFT JOIN users xb ON xb.id = d.cancelled_by
@@ -264,7 +264,7 @@ export async function listDispatches(
     conditions.push(condition.replaceAll('?', `$${params.length}`));
   };
   if (search.status) add('d.status = ?', search.status);
-  if (search.customerId) add('d.customer_id = ?', search.customerId);
+  if (search.customerId) add('d.organisation_id = ?', search.customerId);
   if (search.from) add('d.dispatch_date >= ?', search.from);
   if (search.to) add('d.dispatch_date <= ?', search.to);
   if (search.q) add('(d.dispatch_number ILIKE ? OR c.name ILIKE ?)', `%${escapeLike(search.q)}%`);
@@ -292,7 +292,7 @@ export async function listDispatches(
             u.full_name AS created_by_name,
             count(*) OVER ()::integer AS total
      FROM dispatches d
-     JOIN customers c ON c.id = d.customer_id
+     JOIN organisations c ON c.id = d.organisation_id
      JOIN users u ON u.id = d.created_by
      LEFT JOIN dispatch_items i ON i.dispatch_id = d.id
      ${where}
@@ -330,15 +330,19 @@ export interface DraftInput {
 /** Checks the customer and products are active and fills in default prices. */
 async function prepareLines(client: pg.PoolClient, input: DraftInput) {
   const { rows: customers } = await client.query<{ is_active: boolean }>(
-    'SELECT is_active FROM customers WHERE id = $1',
+    `SELECT is_active FROM organisations WHERE id = $1 AND organisation_type = 'SUBSIDIARY'`,
     [input.customerId],
   );
   if (!customers[0]) {
-    throw new AppError(404, 'CUSTOMER_NOT_FOUND', 'No customer has that id.');
+    throw new AppError(
+      404,
+      'CUSTOMER_NOT_FOUND',
+      'No organisation that buys from the Head Office has that id.',
+    );
   }
   if (!customers[0].is_active) {
-    throw new AppError(409, 'CUSTOMER_INACTIVE', 'This customer is inactive.', [
-      { field: 'customerId', message: 'This customer is inactive' },
+    throw new AppError(409, 'CUSTOMER_INACTIVE', 'This organisation is inactive.', [
+      { field: 'customerId', message: 'This organisation is inactive' },
     ]);
   }
 
@@ -392,7 +396,7 @@ export async function createDraft(
   return withTransaction(pool, async (client) => {
     const lines = await prepareLines(client, input);
     const { rows } = await client.query<{ id: string }>(
-      `INSERT INTO dispatches (customer_id, dispatch_date, notes, created_by)
+      `INSERT INTO dispatches (organisation_id, dispatch_date, notes, created_by)
        VALUES ($1, $2, $3, $4) RETURNING id`,
       [input.customerId, input.dispatchDate, input.notes, actor.id],
     );
@@ -410,7 +414,7 @@ async function lockDispatch(client: pg.PoolClient, id: string) {
     customer_id: string;
     dispatch_date: string;
   }>(
-    'SELECT status, dispatch_number, customer_id, dispatch_date FROM dispatches WHERE id = $1 FOR UPDATE',
+    'SELECT status, dispatch_number, organisation_id AS customer_id, dispatch_date FROM dispatches WHERE id = $1 FOR UPDATE',
     [id],
   );
   if (!rows[0]) throw dispatchNotFound();
@@ -432,7 +436,7 @@ export async function updateDraft(pool: pg.Pool, id: string, input: DraftInput):
 
     const lines = await prepareLines(client, input);
     await client.query(
-      'UPDATE dispatches SET customer_id = $2, dispatch_date = $3, notes = $4 WHERE id = $1',
+      'UPDATE dispatches SET organisation_id = $2, dispatch_date = $3, notes = $4 WHERE id = $1',
       [id, input.customerId, input.dispatchDate, input.notes],
     );
     await client.query('DELETE FROM dispatch_items WHERE dispatch_id = $1', [id]);
@@ -503,7 +507,7 @@ export async function confirmDispatch(
       is_active: boolean;
       name: string;
       credit_limit: string | null;
-    }>('SELECT is_active, name, credit_limit FROM customers WHERE id = $1 FOR UPDATE', [
+    }>('SELECT is_active, name, credit_limit FROM organisations WHERE id = $1 FOR UPDATE', [
       current.customer_id,
     ]);
     const customer = customers[0] as {
@@ -512,7 +516,7 @@ export async function confirmDispatch(
       credit_limit: string | null;
     };
     if (!customer.is_active) {
-      throw new AppError(409, 'CUSTOMER_INACTIVE', 'This customer is inactive.');
+      throw new AppError(409, 'CUSTOMER_INACTIVE', 'This organisation is inactive.');
     }
 
     // Lock every product on the dispatch, always in the same order to avoid deadlocks.
