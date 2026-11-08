@@ -22,7 +22,6 @@ import '../../features/receipts/presentation/receipts_screen.dart';
 import '../../features/reports/presentation/reports_screen.dart';
 import '../../features/staff/presentation/staff_screen.dart';
 import '../../features/stock/presentation/stock_screen.dart';
-import 'api_status_indicator.dart';
 import 'ui_kit.dart';
 import 'snackify_logo.dart';
 
@@ -157,15 +156,11 @@ class _AppShellState extends State<AppShell> {
       },
     );
     final page = _pageFor(destination.label);
-    final health = ApiStatusIndicator(checkHealth: widget.services.checkBackendHealth);
 
     if (!isWide) {
       return Scaffold(
         key: _scaffoldKey,
-        appBar: AppBar(
-          title: Text(destination.label),
-          actions: [health, const SizedBox(width: 12)],
-        ),
+        appBar: AppBar(title: Text(destination.label)),
         drawer: Drawer(
           shape: const RoundedRectangleBorder(
             borderRadius: BorderRadius.horizontal(right: Radius.circular(24)),
@@ -210,7 +205,6 @@ class _AppShellState extends State<AppShell> {
                                 : destination.description,
                           ),
                         ),
-                        health,
                         const SizedBox(width: 12),
                         _UserChip(user: widget.user),
                       ],

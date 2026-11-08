@@ -74,16 +74,11 @@ void main() {
     expect(sections, isNot(contains('Customers')));
   });
 
-  testWidgets('shows API online when the backend health check passes', (tester) async {
-    await pumpSnackify(tester, signedIn: true, apiHealthy: true);
-
-    expect(find.text('API online'), findsOneWidget);
-  });
-
-  testWidgets('shows API offline when the backend cannot be reached', (tester) async {
+  testWidgets('the top bar has no API status chip', (tester) async {
     await pumpSnackify(tester, signedIn: true, apiHealthy: false);
 
-    expect(find.text('API offline'), findsOneWidget);
+    expect(find.text('API online'), findsNothing);
+    expect(find.text('API offline'), findsNothing);
   });
 
   testWidgets('login screen fits a small phone without overflowing', (tester) async {
