@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/theme/app_theme.dart';
+
 import '../../../core/formatting/dates.dart';
 import '../domain/report_models.dart';
 
@@ -26,35 +28,50 @@ class MetricTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // A coloured edge on the left, as on the stat cards: blue, or amber for a warning.
+    final accent = alert ? SnackifyColors.warn : SnackifyColors.brandBlue;
+    final fill = alert ? SnackifyColors.warnFill : SnackifyColors.infoFill;
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+      clipBehavior: Clip.antiAlias,
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(left: BorderSide(color: accent, width: 4)),
+        ),
+        padding: const EdgeInsets.fromLTRB(16, 14, 14, 14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(icon, size: 20, color: theme.colorScheme.primary),
-                const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     label,
-                    style: theme.textTheme.labelLarge,
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: SnackifyColors.muted,
+                      fontWeight: FontWeight.w700,
+                    ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: fill, borderRadius: BorderRadius.circular(10)),
+                  child: Icon(icon, size: 18, color: accent),
+                ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             FittedBox(
               fit: BoxFit.scaleDown,
               alignment: Alignment.centerLeft,
               child: Text(
                 value,
                 style: theme.textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: alert ? theme.colorScheme.error : null,
+                  fontWeight: FontWeight.w800,
+                  color: alert ? theme.colorScheme.error : SnackifyColors.ink,
                 ),
               ),
             ),

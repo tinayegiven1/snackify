@@ -31,7 +31,6 @@ void main() {
       'Goods Received',
       'Orders',
       'Organisations',
-      'Tendai Moyo',
     ]);
     // They start on their own stock, not the Head Office's dashboard.
     expect(find.widgetWithText(AppBar, 'Products'), findsOneWidget);

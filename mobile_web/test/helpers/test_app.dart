@@ -2808,13 +2808,17 @@ Future<List<String>> menuSections(WidgetTester tester) async {
     await tester.tap(menuButton);
     await tester.pumpAndSettle();
   }
-  final tiles = find.descendant(
+  // Each menu entry is a tappable row with one label.
+  final entries = find.descendant(
     of: find.byType(onPhone ? Drawer : ListView).first,
-    matching: find.byType(ListTile),
+    matching: find.byType(InkWell),
   );
   final labels = [
-    for (final tile in tester.widgetList<ListTile>(tiles))
-      if (tile.title case Text(:final data?)) data,
+    for (final entry in entries.evaluate())
+      for (final text in tester.widgetList<Text>(
+        find.descendant(of: find.byWidget(entry.widget), matching: find.byType(Text)),
+      ))
+        ?text.data,
   ];
   if (onPhone) {
     Navigator.of(tester.element(find.byType(Drawer))).pop();

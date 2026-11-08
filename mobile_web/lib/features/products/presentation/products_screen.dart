@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 
 import '../../../core/network/api_client.dart';
 import '../../../core/scanning/barcode_reader.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../../shared/widgets/message_view.dart';
+import '../../../shared/widgets/ui_kit.dart';
 import '../../catalogue/data/catalogue_repository.dart';
 import '../data/products_repository.dart';
 import '../domain/product.dart';
@@ -142,44 +144,45 @@ class _ProductsScreenState extends State<ProductsScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _search,
-                    onChanged: _onSearchChanged,
-                    decoration: InputDecoration(
-                      hintText: 'Search name, flavour, size, SKU or barcode',
-                      prefixIcon: const Icon(Icons.search),
-                      border: const OutlineInputBorder(),
-                      isDense: true,
-                      suffixIcon: _search.text.isEmpty
-                          ? IconButton(
-                              tooltip: 'Scan a barcode',
-                              icon: const Icon(Icons.qr_code_scanner),
-                              onPressed: _scan,
-                            )
-                          : IconButton(
-                              tooltip: 'Clear search',
-                              icon: const Icon(Icons.clear),
-                              onPressed: () {
-                                _search.clear();
-                                _onSearchChanged('');
-                              },
-                            ),
+            child: Panel(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _search,
+                      onChanged: _onSearchChanged,
+                      decoration: InputDecoration(
+                        hintText: 'Search name, flavour, size, SKU or barcode',
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: _search.text.isEmpty
+                            ? IconButton(
+                                tooltip: 'Scan a barcode',
+                                icon: const Icon(Icons.qr_code_scanner),
+                                onPressed: _scan,
+                              )
+                            : IconButton(
+                                tooltip: 'Clear search',
+                                icon: const Icon(Icons.clear),
+                                onPressed: () {
+                                  _search.clear();
+                                  _onSearchChanged('');
+                                },
+                              ),
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                FilterChip(
-                  label: const Text('Show inactive'),
-                  selected: _includeInactive,
-                  onSelected: (value) {
-                    setState(() => _includeInactive = value);
-                    _load();
-                  },
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  FilterChip(
+                    label: const Text('Show inactive'),
+                    selected: _includeInactive,
+                    onSelected: (value) {
+                      setState(() => _includeInactive = value);
+                      _load();
+                    },
+                  ),
+                ],
+              ),
             ),
           ),
           if (_loading && _page != null) const LinearProgressIndicator(),
@@ -225,8 +228,11 @@ class _ProductsScreenState extends State<ProductsScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-            child: Text(count, style: Theme.of(context).textTheme.bodySmall),
+            padding: const EdgeInsets.fromLTRB(20, 4, 16, 8),
+            child: Text(
+              count,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: SnackifyColors.muted),
+            ),
           ),
           Expanded(
             child: constraints.maxWidth >= _tableBreakpoint
@@ -239,7 +245,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
   }
 }
 
-/// Phones: touch-friendly rows.
+/// Phones: touch-friendly rows on one white panel.
 class _ProductList extends StatelessWidget {
   const _ProductList({required this.products, required this.onTap});
 
@@ -248,34 +254,66 @@ class _ProductList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView.separated(
-      padding: const EdgeInsets.only(bottom: 88), // Room for the Add button.
-      itemCount: products.length,
-      separatorBuilder: (_, _) => const Divider(height: 1),
-      itemBuilder: (context, index) {
-        final product = products[index];
-        return ListTile(
-          title: Text('${product.name} — ${product.flavour}'),
-          subtitle: Text(
-            [product.size, product.sku, ?product.barcode].join(' · '),
-            overflow: TextOverflow.ellipsis,
-          ),
-          trailing: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.end,
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 96), // Room for the Add button.
+      children: [
+        Panel(
+          padding: EdgeInsets.zero,
+          child: Column(
             children: [
-              Text(product.formattedPrice, style: const TextStyle(fontWeight: FontWeight.w600)),
-              if (!product.isActive) const StatusBadge('Inactive'),
+              for (final (index, product) in products.indexed) ...[
+                if (index > 0) const Divider(height: 1, indent: 16, endIndent: 16),
+                InkWell(
+                  onTap: onTap == null ? null : () => onTap!(product),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${product.name} — ${product.flavour}',
+                                style: const TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                [product.size, product.sku, ?product.barcode].join(' · '),
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(color: SnackifyColors.muted, fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              product.formattedPrice,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                color: SnackifyColors.ink,
+                              ),
+                            ),
+                            if (!product.isActive) const StatusBadge('Inactive'),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
-          onTap: onTap == null ? null : () => onTap!(product),
-        );
-      },
+        ),
+      ],
     );
   }
 }
 
-/// Wide screens: a table.
+/// Wide screens: a table with the code first, as on a stock sheet.
 class _ProductTable extends StatelessWidget {
   const _ProductTable({required this.products, required this.onTap});
 
@@ -285,39 +323,58 @@ class _ProductTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 88),
-      child: Card(
-        clipBehavior: Clip.antiAlias,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: DataTable(
-            showCheckboxColumn: false,
-            columns: const [
-              DataColumn(label: Text('Product')),
-              DataColumn(label: Text('Flavour')),
-              DataColumn(label: Text('Size')),
-              DataColumn(label: Text('SKU')),
-              DataColumn(label: Text('Barcode')),
-              DataColumn(label: Text('Price'), numeric: true),
-              DataColumn(label: Text('Status')),
-            ],
-            rows: [
-              for (final product in products)
-                DataRow(
-                  onSelectChanged: onTap == null ? null : (_) => onTap!(product),
-                  cells: [
-                    DataCell(Text(product.name)),
-                    DataCell(Text(product.flavour)),
-                    DataCell(Text(product.size)),
-                    DataCell(Text(product.sku)),
-                    DataCell(Text(product.barcode ?? '—')),
-                    DataCell(Text(product.formattedPrice)),
-                    DataCell(
-                      product.isActive ? const Text('Active') : const StatusBadge('Inactive'),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
+      child: Panel(
+        padding: EdgeInsets.zero,
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: constraints.maxWidth),
+              child: DataTable(
+                showCheckboxColumn: false,
+                columns: const [
+                  DataColumn(label: Text('SKU')),
+                  DataColumn(label: Text('PRODUCT')),
+                  DataColumn(label: Text('FLAVOUR')),
+                  DataColumn(label: Text('SIZE')),
+                  DataColumn(label: Text('BARCODE')),
+                  DataColumn(label: Text('PRICE'), numeric: true),
+                  DataColumn(label: Text('STATUS')),
+                ],
+                rows: [
+                  for (final product in products)
+                    DataRow(
+                      onSelectChanged: onTap == null ? null : (_) => onTap!(product),
+                      cells: [
+                        DataCell(CodeText(product.sku)),
+                        DataCell(
+                          Text(product.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                        ),
+                        DataCell(Text(product.flavour)),
+                        DataCell(Text(product.size)),
+                        DataCell(
+                          Text(
+                            product.barcode ?? '—',
+                            style: const TextStyle(color: SnackifyColors.muted),
+                          ),
+                        ),
+                        DataCell(
+                          Text(
+                            product.formattedPrice,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        DataCell(
+                          product.isActive
+                              ? const Pill('Active', tone: Tone.good)
+                              : const Pill('Inactive', tone: Tone.neutral),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-            ],
+                ],
+              ),
+            ),
           ),
         ),
       ),

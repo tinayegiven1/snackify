@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:snackify/shared/widgets/ui_kit.dart';
+
 import 'helpers/test_app.dart';
 
 /// BBQ (12 packs) is below its reorder level of 50; Cheese (40) is above its level of 5.
@@ -54,7 +56,9 @@ void main() {
     await tester.tap(find.text('Dispatches'));
     await tester.pumpAndSettle();
 
-    expect(find.widgetWithText(AppBar, 'Dispatches'), findsOneWidget);
+    // Wide screens show the section's title and what it is for in the page header.
+    expect(find.widgetWithText(PageHeader, 'Dispatches'), findsOneWidget);
+    expect(find.text('Goods sent out to the subsidiaries.'), findsOneWidget);
   });
 
   testWidgets('there is no Customers section: the customers are the organisations', (tester) async {

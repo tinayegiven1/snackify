@@ -23,6 +23,7 @@ import '../../features/reports/presentation/reports_screen.dart';
 import '../../features/staff/presentation/staff_screen.dart';
 import '../../features/stock/presentation/stock_screen.dart';
 import 'api_status_indicator.dart';
+import 'ui_kit.dart';
 import 'snackify_logo.dart';
 
 /// Screen width at which navigation moves from a drawer (phones) to a permanent sidebar.
@@ -143,6 +144,7 @@ class _AppShellState extends State<AppShell> {
       selectedIndex: selected,
       onSelected: _onDestinationSelected,
       user: widget.user,
+      showUser: !isWide,
       onChangePin: () {
         _scaffoldKey.currentState?.closeDrawer();
         Navigator.of(context).push(
@@ -155,27 +157,143 @@ class _AppShellState extends State<AppShell> {
       },
     );
     final page = _pageFor(destination.label);
+    final health = ApiStatusIndicator(checkHealth: widget.services.checkBackendHealth);
 
+    if (!isWide) {
+      return Scaffold(
+        key: _scaffoldKey,
+        appBar: AppBar(
+          title: Text(destination.label),
+          actions: [health, const SizedBox(width: 12)],
+        ),
+        drawer: Drawer(
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.horizontal(right: Radius.circular(24)),
+          ),
+          child: _SidebarBackground(child: SafeArea(child: navigation)),
+        ),
+        body: page,
+      );
+    }
+
+    // Wide screens: a floating blue sidebar, and a header with the page's title, what it is
+    // for, the API status and who is signed in.
     return Scaffold(
       key: _scaffoldKey,
-      appBar: AppBar(
-        title: Text(destination.label),
-        actions: [
-          ApiStatusIndicator(checkHealth: widget.services.checkBackendHealth),
-          const SizedBox(width: 12),
-        ],
+      body: SafeArea(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 0, 12),
+              child: SizedBox(
+                width: 236,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(24),
+                  child: _SidebarBackground(child: navigation),
+                ),
+              ),
+            ),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 20, 20, 8),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: PageHeader(
+                            title: destination.label,
+                            subtitle: destination.description.isEmpty
+                                ? null
+                                : destination.description,
+                          ),
+                        ),
+                        health,
+                        const SizedBox(width: 12),
+                        _UserChip(user: widget.user),
+                      ],
+                    ),
+                  ),
+                  Expanded(child: page),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
-      drawer: isWide ? null : Drawer(child: SafeArea(child: navigation)),
-      body: isWide
-          ? Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                SizedBox(width: 240, child: navigation),
-                const VerticalDivider(width: 1),
-                Expanded(child: page),
-              ],
-            )
-          : page,
+    );
+  }
+}
+
+/// The blue of the sidebar and the phone menu.
+class _SidebarBackground extends StatelessWidget {
+  const _SidebarBackground({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [SnackifyColors.brandBlueLight, SnackifyColors.brandBlue],
+        ),
+      ),
+      child: child,
+    );
+  }
+}
+
+/// Who is signed in, top right on wide screens.
+class _UserChip extends StatelessWidget {
+  const _UserChip({required this.user});
+
+  final AppUser user;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 200),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                user.fullName,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w700, color: SnackifyColors.ink),
+              ),
+              Text(
+                user.organisation.name.toUpperCase(),
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 10,
+                  letterSpacing: 0.6,
+                  color: SnackifyColors.muted,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 10),
+        Tooltip(
+          message: user.roleNames,
+          child: CircleAvatar(
+            radius: 19,
+            backgroundColor: SnackifyColors.brandBlue,
+            foregroundColor: Colors.white,
+            child: Text(user.initials, style: const TextStyle(fontWeight: FontWeight.w700)),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -186,6 +304,7 @@ class _NavigationList extends StatelessWidget {
     required this.selectedIndex,
     required this.onSelected,
     required this.user,
+    required this.showUser,
     required this.onChangePin,
     required this.onSignOut,
   });
@@ -194,62 +313,148 @@ class _NavigationList extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onSelected;
   final AppUser user;
+
+  /// Phones show who is signed in here; wide screens show it in the header.
+  final bool showUser;
   final VoidCallback onChangePin;
   final VoidCallback onSignOut;
 
   @override
   Widget build(BuildContext context) {
-    final titleStyle = Theme.of(
-      context,
-    ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800, color: SnackifyColors.brandBlue);
-
     return ListView(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.fromLTRB(12, 16, 12, 12),
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(4, 4, 4, 16),
+          padding: const EdgeInsets.fromLTRB(6, 0, 6, 20),
           child: Row(
             children: [
-              const SnackifyLogo(size: 40),
+              Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const SnackifyLogo(size: 32),
+              ),
               const SizedBox(width: 12),
-              Flexible(
-                child: Text('Snackify', style: titleStyle, overflow: TextOverflow.ellipsis),
+              const Flexible(
+                child: Text(
+                  'Snackify',
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.3,
+                  ),
+                ),
               ),
             ],
           ),
         ),
-        for (var i = 0; i < destinations.length; i++)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: ListTile(
-              // Compact, so all twelve sections fit on a laptop screen without scrolling.
-              visualDensity: VisualDensity.compact,
-              leading: Icon(
-                i == selectedIndex ? destinations[i].selectedIcon : destinations[i].icon,
-              ),
-              title: Text(destinations[i].label),
-              selected: i == selectedIndex,
-              onTap: () => onSelected(i),
+        if (showUser)
+          Container(
+            padding: const EdgeInsets.all(12),
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  backgroundColor: Colors.white,
+                  foregroundColor: SnackifyColors.brandBlue,
+                  child: Text(user.initials, style: const TextStyle(fontWeight: FontWeight.w700)),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        user.fullName,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                      ),
+                      Text(
+                        '${user.roleNames}\n${user.organisation.name}',
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
-        const Divider(height: 24),
-        ListTile(
-          leading: CircleAvatar(child: Text(user.initials)),
-          title: Text(user.fullName, overflow: TextOverflow.ellipsis),
-          subtitle: Text('${user.roleNames}\n${user.organisation.name}'),
-          isThreeLine: true,
+        for (var i = 0; i < destinations.length; i++)
+          _NavItem(
+            icon: i == selectedIndex ? destinations[i].selectedIcon : destinations[i].icon,
+            label: destinations[i].label,
+            selected: i == selectedIndex,
+            onTap: () => onSelected(i),
+          ),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Divider(color: Colors.white.withValues(alpha: 0.2)),
         ),
-        ListTile(
-          leading: const Icon(Icons.pin_outlined),
-          title: const Text('Change PIN'),
-          onTap: onChangePin,
-        ),
-        ListTile(
-          leading: const Icon(Icons.logout),
-          title: const Text('Sign out'),
-          onTap: onSignOut,
-        ),
+        _NavItem(icon: Icons.pin_outlined, label: 'Change PIN', onTap: onChangePin),
+        _NavItem(icon: Icons.logout, label: 'Sign out', onTap: onSignOut),
       ],
+    );
+  }
+}
+
+/// One menu entry: white on blue, with a soft highlight for the section that is open.
+class _NavItem extends StatelessWidget {
+  const _NavItem({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.selected = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? Colors.white : Colors.white.withValues(alpha: 0.78);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Material(
+        color: selected ? Colors.white.withValues(alpha: 0.18) : Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Semantics(
+            selected: selected,
+            button: true,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(
+                children: [
+                  Icon(icon, color: color, size: 21),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Text(
+                      label,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: color,
+                        fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -6,7 +6,9 @@ import '../../../core/files/pdf_sharer.dart';
 import '../../../core/formatting/dates.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/scanning/barcode_reader.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../../shared/widgets/message_view.dart';
+import '../../../shared/widgets/ui_kit.dart';
 import '../../auth/domain/app_user.dart';
 import '../../organisations/domain/organisation.dart';
 import '../../products/data/products_repository.dart';
@@ -243,6 +245,9 @@ class _OnHandTabState extends State<_OnHandTab> {
     super.dispose();
   }
 
+  /// Headline figures, from the last list loaded without a search or filter.
+  ({int total, int low, int out})? _summary;
+
   Future<void> _load() async {
     final request = ++_latestRequest;
     setState(() {
@@ -259,6 +264,13 @@ class _OnHandTabState extends State<_OnHandTab> {
       setState(() {
         _balances = balances;
         _loading = false;
+        if (!_lowStockOnly && _search.text.trim().isEmpty) {
+          _summary = (
+            total: balances.length,
+            low: balances.where((b) => b.isLowStock && b.quantityOnHand > 0).length,
+            out: balances.where((b) => b.quantityOnHand <= 0).length,
+          );
+        }
       });
     } on ApiException catch (error) {
       if (!mounted || request != _latestRequest) return;
@@ -269,106 +281,256 @@ class _OnHandTabState extends State<_OnHandTab> {
     }
   }
 
+  void _setLowStockOnly(bool value) {
+    setState(() => _lowStockOnly = value);
+    _load();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          child: Row(
+    final summary = _summary;
+    return CustomScrollView(
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+          sliver: SliverList.list(
             children: [
-              Expanded(
-                child: TextField(
-                  controller: _search,
-                  onChanged: (_) {
-                    _searchDelay?.cancel();
-                    _searchDelay = Timer(const Duration(milliseconds: 300), _load);
-                  },
-                  decoration: const InputDecoration(
-                    hintText: 'Search products',
-                    prefixIcon: Icon(Icons.search),
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
+              if (summary != null) ...[
+                StatCardRow(
+                  children: [
+                    StatCard(
+                      label: 'Products',
+                      value: '${summary.total}',
+                      icon: Icons.inventory_2_outlined,
+                    ),
+                    StatCard(
+                      label: 'Running low',
+                      value: '${summary.low}',
+                      icon: Icons.warning_amber_rounded,
+                      tone: Tone.warn,
+                      selected: _lowStockOnly,
+                      onTap: () => _setLowStockOnly(!_lowStockOnly),
+                    ),
+                    StatCard(
+                      label: 'Out of stock',
+                      value: '${summary.out}',
+                      icon: Icons.highlight_off,
+                      tone: Tone.bad,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+              ],
+              Panel(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _search,
+                        onChanged: (_) {
+                          _searchDelay?.cancel();
+                          _searchDelay = Timer(const Duration(milliseconds: 300), _load);
+                        },
+                        decoration: const InputDecoration(
+                          hintText: 'Search products',
+                          prefixIcon: Icon(Icons.search),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    FilterChip(
+                      label: const Text('Low stock'),
+                      selected: _lowStockOnly,
+                      onSelected: _setLowStockOnly,
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 8),
-              FilterChip(
-                label: const Text('Low stock'),
-                selected: _lowStockOnly,
-                onSelected: (value) {
-                  setState(() => _lowStockOnly = value);
-                  _load();
-                },
-              ),
+              const SizedBox(height: 16),
+              if (_loading && _balances != null) const LinearProgressIndicator(),
             ],
           ),
         ),
-        if (_loading && _balances != null) const LinearProgressIndicator(),
-        Expanded(child: _buildContent()),
+        ..._buildContent(),
       ],
     );
   }
 
-  Widget _buildContent() {
+  List<Widget> _buildContent() {
+    Widget fill(Widget child) => SliverFillRemaining(hasScrollBody: false, child: child);
     if (_error != null) {
-      return MessageView(
-        icon: Icons.cloud_off_outlined,
-        title: 'Could not load stock',
-        message: _error!,
-        action: RetryButton(onPressed: _load),
-      );
+      return [
+        fill(
+          MessageView(
+            icon: Icons.cloud_off_outlined,
+            title: 'Could not load stock',
+            message: _error!,
+            action: RetryButton(onPressed: _load),
+          ),
+        ),
+      ];
     }
     final balances = _balances;
-    if (balances == null) return const Center(child: CircularProgressIndicator());
+    if (balances == null) return [fill(const Center(child: CircularProgressIndicator()))];
     if (balances.isEmpty) {
-      return MessageView(
-        icon: _lowStockOnly ? Icons.check_circle_outline : Icons.inventory_2_outlined,
-        title: _lowStockOnly ? 'Nothing is low on stock' : 'No products found',
-        message: _lowStockOnly
-            ? 'Every product with a reorder level has more stock than that level.'
-            : 'Products appear here once an admin has added them.',
-      );
+      return [
+        fill(
+          MessageView(
+            icon: _lowStockOnly ? Icons.check_circle_outline : Icons.inventory_2_outlined,
+            title: _lowStockOnly ? 'Nothing is low on stock' : 'No products found',
+            message: _lowStockOnly
+                ? 'Every product with a reorder level has more stock than that level.'
+                : 'Products appear here once an admin has added them.',
+          ),
+        ),
+      ];
     }
 
-    final colorScheme = Theme.of(context).colorScheme;
-    return ListView.separated(
-      padding: const EdgeInsets.only(bottom: 88),
-      itemCount: balances.length,
-      separatorBuilder: (_, _) => const Divider(height: 1),
-      itemBuilder: (context, index) {
-        final balance = balances[index];
-        return ListTile(
-          title: Text(balance.product.description),
-          subtitle: Text(
-            [
-              balance.product.sku,
-              if (balance.reorderLevel != null) 'reorder at ${balance.reorderLevel}',
-            ].join(' · '),
+    return [
+      SliverPadding(
+        // Room at the bottom for the Receive stock button.
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
+        sliver: SliverToBoxAdapter(
+          child: LayoutBuilder(
+            builder: (context, constraints) => constraints.maxWidth >= 720
+                ? _StockTable(balances: balances, onOpen: widget.onOpen)
+                : _StockCards(balances: balances, onOpen: widget.onOpen),
           ),
-          trailing: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                '${balance.quantityOnHand}',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: balance.isLowStock ? colorScheme.error : null,
+        ),
+      ),
+    ];
+  }
+}
+
+/// The status pill for a stock row: nothing when there is plenty.
+Widget? _stockPill(StockBalance balance) {
+  if (balance.quantityOnHand <= 0) return const Pill('Out of stock', tone: Tone.bad);
+  if (balance.isLowStock) return const Pill('Low stock', tone: Tone.warn);
+  return null;
+}
+
+/// Phones: one white panel with a row per product.
+class _StockCards extends StatelessWidget {
+  const _StockCards({required this.balances, required this.onOpen});
+
+  final List<StockBalance> balances;
+  final ValueChanged<StockBalance> onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return Panel(
+      padding: EdgeInsets.zero,
+      child: Column(
+        children: [
+          for (final (index, balance) in balances.indexed) ...[
+            if (index > 0) const Divider(height: 1, indent: 16, endIndent: 16),
+            InkWell(
+              onTap: () => onOpen(balance),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            balance.product.description,
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            [
+                              balance.product.sku,
+                              if (balance.reorderLevel != null)
+                                'reorder at ${balance.reorderLevel}',
+                            ].join(' · '),
+                            style: const TextStyle(color: SnackifyColors.muted, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        StockLevel(
+                          quantity: balance.quantityOnHand,
+                          isLow: balance.isLowStock,
+                          large: true,
+                        ),
+                        if (_stockPill(balance) case final pill?) ...[
+                          const SizedBox(height: 4),
+                          pill,
+                        ],
+                      ],
+                    ),
+                  ],
                 ),
               ),
-              if (balance.isLowStock)
-                StatusBadge(
-                  'Low stock',
-                  color: colorScheme.errorContainer,
-                  textColor: colorScheme.onErrorContainer,
-                ),
-            ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Wide screens: a table with the product code, levels and a status.
+class _StockTable extends StatelessWidget {
+  const _StockTable({required this.balances, required this.onOpen});
+
+  final List<StockBalance> balances;
+  final ValueChanged<StockBalance> onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return Panel(
+      padding: EdgeInsets.zero,
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: constraints.maxWidth),
+            child: DataTable(
+              showCheckboxColumn: false,
+              columns: const [
+                DataColumn(label: Text('CODE')),
+                DataColumn(label: Text('PRODUCT')),
+                DataColumn(label: Text('REORDER AT'), numeric: true),
+                DataColumn(label: Text('ON HAND'), numeric: true),
+                DataColumn(label: Text('STATUS')),
+              ],
+              rows: [
+                for (final balance in balances)
+                  DataRow(
+                    onSelectChanged: (_) => onOpen(balance),
+                    cells: [
+                      DataCell(CodeText(balance.product.sku)),
+                      DataCell(
+                        Text(
+                          balance.product.description,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      DataCell(
+                        Text(
+                          balance.reorderLevel == null ? '—' : '${balance.reorderLevel}',
+                          style: const TextStyle(color: SnackifyColors.muted),
+                        ),
+                      ),
+                      DataCell(
+                        StockLevel(quantity: balance.quantityOnHand, isLow: balance.isLowStock),
+                      ),
+                      DataCell(_stockPill(balance) ?? const Pill('In stock', tone: Tone.good)),
+                    ],
+                  ),
+              ],
+            ),
           ),
-          onTap: () => widget.onOpen(balance),
-        );
-      },
+        ),
+      ),
     );
   }
 }

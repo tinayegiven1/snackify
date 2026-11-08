@@ -212,7 +212,6 @@ void main() {
       'Orders',
       'Dispatches',
       'Organisations',
-      'Tendai Moyo',
     ]);
     expect(app.backend.requests.where((r) => r.contains('/forecasts')), isEmpty);
   });

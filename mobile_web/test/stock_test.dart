@@ -229,6 +229,9 @@ void main() {
 
     await tester.tap(find.text('On hand'));
     await tester.pumpAndSettle();
+    // On a small phone the summary cards come first; the list is below them.
+    await tester.ensureVisible(find.text('Potato Crisps — BBQ — Small'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Potato Crisps — BBQ — Small'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Adjust stock'));

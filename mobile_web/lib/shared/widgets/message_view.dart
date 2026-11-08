@@ -61,7 +61,7 @@ class RetryButton extends StatelessWidget {
   }
 }
 
-/// A small grey label, e.g. "Inactive" or "Opening balance".
+/// A small rounded label, e.g. "Inactive" or "Opening balance" (grey unless coloured).
 class StatusBadge extends StatelessWidget {
   const StatusBadge(this.label, {super.key, this.color, this.textColor});
 
@@ -72,14 +72,19 @@ class StatusBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final foreground = textColor ?? theme.colorScheme.onSurfaceVariant;
     return Container(
       margin: const EdgeInsets.only(top: 2),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
       decoration: BoxDecoration(
-        color: color ?? theme.colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(4),
+        color: color ?? theme.colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: foreground.withValues(alpha: 0.18)),
       ),
-      child: Text(label, style: theme.textTheme.labelSmall?.copyWith(color: textColor)),
+      child: Text(
+        label,
+        style: theme.textTheme.labelSmall?.copyWith(color: foreground, fontWeight: FontWeight.w700),
+      ),
     );
   }
 }
