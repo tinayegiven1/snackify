@@ -5,6 +5,7 @@ import '../../auth/domain/app_user.dart';
 import '../../catalogue/data/catalogue_repository.dart';
 import '../../organisations/data/organisations_repository.dart';
 import '../../products/data/products_repository.dart';
+import '../../purchases/data/purchases_repository.dart';
 import '../data/receipts_repository.dart';
 
 /// What the goods-received screens need, passed along together.
@@ -19,6 +20,7 @@ class ReceiptServices {
     required this.takePhoto,
     required this.sharePdf,
     required this.readBarcode,
+    this.purchases,
   });
 
   final ReceiptsRepository receipts;
@@ -38,6 +40,9 @@ class ReceiptServices {
 
   /// Scans a pack's barcode to choose the product.
   final BarcodeReader readBarcode;
+
+  /// Goods bought, shown on Goods Received while they wait to arrive.
+  final PurchasesRepository? purchases;
 
   /// Records deliveries (warehouse staff).
   bool get canReceive => user.can('stock.receive');

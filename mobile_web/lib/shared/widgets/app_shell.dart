@@ -98,6 +98,7 @@ class _AppShellState extends State<AppShell> {
       takePhoto: services.takePhoto,
       sharePdf: services.sharePdf,
       readBarcode: services.readBarcode,
+      purchases: services.purchases,
     );
     return switch (label) {
       'Dashboard' => DashboardScreen(reports: services.reports),

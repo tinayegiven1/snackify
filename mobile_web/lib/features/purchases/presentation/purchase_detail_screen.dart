@@ -8,10 +8,10 @@ import '../../../shared/widgets/ui_kit.dart';
 import '../../receipts/domain/receipt_models.dart';
 import '../../receipts/presentation/document_preview.dart';
 import '../../receipts/presentation/receipt_detail_screen.dart';
-import '../../receipts/presentation/receipt_editor_screen.dart';
 import '../../receipts/presentation/receipts_screen.dart' show ReceiptStatusBadge, receivedMessage;
 import '../domain/purchase_models.dart';
 import 'purchase_editor_screen.dart';
+import 'receive_against.dart';
 import 'purchase_services.dart';
 import 'purchases_screen.dart' show PurchaseStatusPill;
 
@@ -245,34 +245,26 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
       _error = null;
       _note = null;
     });
-    final Purchase purchase;
+    final GoodsReceipt? receipt;
     try {
-      purchase = await _services.purchases.get(shown.id);
+      receipt = await receiveAgainstPurchase(
+        context,
+        purchases: _services.purchases,
+        receiptServices: _services.receiptServices,
+        purchaseId: shown.id,
+      );
     } on ApiException catch (error) {
       if (mounted) setState(() => _error = error.message);
+      await _load();
       return;
     } finally {
       if (mounted) setState(() => _busy = false);
     }
-    if (!mounted) return;
-    setState(() => _purchase = purchase);
-    if (purchase.status != PurchaseStatus.open ||
-        purchase.receivingStatus == ReceivingStatus.received) {
-      setState(() => _error = 'Nothing is left to receive on ${purchase.purchaseNumber}.');
-      return;
-    }
-    final receipt = await Navigator.of(context).push<GoodsReceipt>(
-      MaterialPageRoute(
-        builder: (_) => ReceiptEditorScreen(
-          services: _services.receiptServices,
-          prefill: purchase.toReceiptPrefill(),
-        ),
-      ),
-    );
-    if (receipt == null || !mounted) return;
+    final saved = receipt;
+    if (saved == null || !mounted) return;
     setState(() {
       _error = null;
-      _note = receivedMessage(receipt);
+      _note = receivedMessage(saved);
     });
     await _load();
   }

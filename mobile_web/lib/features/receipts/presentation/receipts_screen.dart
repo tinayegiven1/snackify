@@ -4,6 +4,9 @@ import '../../../core/formatting/dates.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/widgets/message_view.dart';
+import '../../../shared/widgets/ui_kit.dart';
+import '../../purchases/domain/purchase_models.dart';
+import '../../purchases/presentation/receive_against.dart';
 import '../domain/receipt_models.dart';
 import 'receipt_detail_screen.dart';
 import 'receipt_editor_screen.dart';
@@ -23,6 +26,9 @@ class ReceiptsScreen extends StatefulWidget {
 class _ReceiptsScreenState extends State<ReceiptsScreen> {
   ReceiptStatus? _status;
   List<ReceiptSummary>? _receipts;
+
+  /// Goods-bought lists still waiting to arrive, shown first for the warehouse to receive.
+  List<PurchaseSummary> _waiting = const [];
   String? _error;
   bool _loading = false;
 
@@ -43,12 +49,54 @@ class _ReceiptsScreenState extends State<ReceiptsScreen> {
     });
     try {
       final result = await widget.services.receipts.list(status: _status);
-      if (mounted) setState(() => _receipts = result.receipts);
+      final waiting = await _loadWaiting();
+      if (mounted) {
+        setState(() {
+          _receipts = result.receipts;
+          _waiting = waiting;
+        });
+      }
     } on ApiException catch (error) {
       if (mounted) setState(() => _error = error.message);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// Open goods-bought lists with something still to come (warehouse staff, "All" only).
+  Future<List<PurchaseSummary>> _loadWaiting() async {
+    final purchases = widget.services.purchases;
+    if (purchases == null || !widget.services.canReceive || _status != null) return const [];
+    try {
+      final result = await purchases.list();
+      return [
+        for (final purchase in result.purchases)
+          if (purchase.status == PurchaseStatus.open &&
+              purchase.receivingStatus != ReceivingStatus.received)
+            purchase,
+      ];
+    } on ApiException {
+      return const []; // The notes still show; the lists come back on the next load.
+    }
+  }
+
+  /// Receives against a goods-bought list: choose what arrived, then the note.
+  Future<void> _receiveAgainst(PurchaseSummary purchase) async {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    try {
+      final receipt = await receiveAgainstPurchase(
+        context,
+        purchases: widget.services.purchases!,
+        receiptServices: widget.services,
+        purchaseId: purchase.id,
+      );
+      if (receipt == null || !mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(receivedMessage(receipt))));
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+    }
+    _load();
   }
 
   Future<void> _receive() async {
@@ -123,7 +171,7 @@ class _ReceiptsScreenState extends State<ReceiptsScreen> {
     }
     final receipts = _receipts;
     if (receipts == null) return const Center(child: CircularProgressIndicator());
-    if (receipts.isEmpty) {
+    if (receipts.isEmpty && _waiting.isEmpty) {
       return MessageView(
         icon: Icons.move_to_inbox_outlined,
         title: 'No goods received',
@@ -139,6 +187,12 @@ class _ReceiptsScreenState extends State<ReceiptsScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(0, 4, 0, 88),
           children: [
+            if (_waiting.isNotEmpty) ...[
+              _SectionTitle('Waiting to be received'),
+              for (final purchase in _waiting)
+                _WaitingPurchase(purchase: purchase, onReceive: () => _receiveAgainst(purchase)),
+              _SectionTitle(receipts.isEmpty ? 'No goods received yet' : 'Goods received'),
+            ],
             for (final receipt in receipts) ...[
               ListTile(
                 title: Text(
@@ -164,6 +218,71 @@ class _ReceiptsScreenState extends State<ReceiptsScreen> {
               const Divider(height: 1),
             ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+    child: Text(text, style: Theme.of(context).textTheme.titleMedium),
+  );
+}
+
+/// A goods-bought list still to arrive, with its Receive button.
+class _WaitingPurchase extends StatelessWidget {
+  const _WaitingPurchase({required this.purchase, required this.onReceive});
+
+  final PurchaseSummary purchase;
+  final VoidCallback onReceive;
+
+  @override
+  Widget build(BuildContext context) {
+    final partly = purchase.receivingStatus == ReceivingStatus.partlyReceived;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      [purchase.purchaseNumber, ?purchase.supplier?.name].join(' · '),
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${formatApiDate(purchase.purchaseDate)} · ${purchase.owner.name} · '
+                      '${purchase.lineCount} line(s)',
+                      style: const TextStyle(color: SnackifyColors.muted, fontSize: 12),
+                    ),
+                    const SizedBox(height: 6),
+                    Pill(
+                      partly ? 'Partly received' : 'Not received',
+                      tone: partly ? Tone.warn : Tone.info,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              FilledButton.tonalIcon(
+                onPressed: onReceive,
+                icon: const Icon(Icons.move_to_inbox_outlined),
+                label: const Text('Receive'),
+              ),
+            ],
+          ),
         ),
       ),
     );

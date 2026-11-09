@@ -147,7 +147,7 @@ void main() {
     expect(find.text('Edit'), findsNothing);
     expect(find.text('Cancel goods bought'), findsNothing);
 
-    await press(tester, find.text('Receive'));
+    await receiveEverything(tester);
     expect(find.text('Receiving against GB000001'), findsOneWidget);
     expect(find.text('$bbq (PC-BBQ-S)'), findsOneWidget);
     expect(find.text('$cheese (PC-CHS-S)'), findsOneWidget);
@@ -198,7 +198,7 @@ void main() {
     // Receiving again offers only what is still to come.
     await tester.tap(purchaseTile('GB000001'));
     await tester.pumpAndSettle();
-    await press(tester, find.text('Receive'));
+    await receiveEverything(tester);
     expect(find.text('$bbq (PC-BBQ-S)'), findsOneWidget);
     expect(find.text('$cheese (PC-CHS-S)'), findsNothing);
     expect(find.textContaining('Received 4 pack'), findsOneWidget);
@@ -210,7 +210,7 @@ void main() {
     final backend = withPurchase(backendFor('storekeeper'));
     await pumpSnackify(tester, signedIn: true, backend: backend);
     await openPurchase(tester, 'GB000001');
-    await press(tester, find.text('Receive'));
+    await receiveEverything(tester);
     await press(tester, find.text('Submit for verification'));
     expect(find.text('Received'), findsWidgets);
 
@@ -297,7 +297,7 @@ void main() {
     ];
 
     // This screen still shows the old copy, but Receive fetches the list again.
-    await press(tester, find.text('Receive'));
+    await receiveEverything(tester);
     expect(find.text('Receiving against GB000001'), findsOneWidget);
     await press(tester, find.text('Submit for verification'));
 
@@ -306,5 +306,68 @@ void main() {
       [for (final line in backend.grns.single['lines'] as List) (line as Map)['purchaseLineId']],
       ['purchase-1-new-line-1', 'purchase-1-new-line-2'],
     );
+  });
+
+  testWidgets('goods bought wait on Goods Received, where the storekeeper receives part of them', (
+    tester,
+  ) async {
+    final backend = withPurchase(backendFor('storekeeper'));
+    await pumpSnackify(tester, signedIn: true, backend: backend);
+    await openSection(tester, 'Goods Received');
+
+    expect(find.text('Waiting to be received'), findsOneWidget);
+    expect(find.text('GB000001 · Harare Potato Co-op'), findsOneWidget);
+    expect(find.text('Not received'), findsOneWidget);
+    expect(find.text('No goods received yet'), findsOneWidget);
+
+    // What arrived: only 60 BBQ, no Cheese yet.
+    await press(tester, find.text('Receive'));
+    expect(find.text('Receive against GB000001'), findsOneWidget);
+    expect(find.text('Bought 100 pack · Received 0 · Still to come 100'), findsOneWidget);
+    await tester.tap(find.text('$cheese (PC-CHS-S)'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Arrived').first, '60');
+    await press(tester, find.text('Receive 1 product'));
+
+    expect(find.text('Receiving against GB000001'), findsOneWidget);
+    expect(find.text('$bbq (PC-BBQ-S)'), findsOneWidget);
+    expect(find.text('$cheese (PC-CHS-S)'), findsNothing);
+    expect(find.textContaining('Received 60 pack'), findsOneWidget);
+    await press(tester, find.text('Submit for verification'));
+
+    final lines = (backend.grns.single['lines'] as List).cast<Map<String, Object?>>();
+    expect(lines.map((line) => (line['purchaseLineId'], line['quantityReceived'])), [
+      ('purchase-1-line-1', 60),
+    ]);
+    // The rest still waits, now partly received; the note is listed below.
+    expect(find.text('Partly received'), findsOneWidget);
+    expect(find.text('Goods received'), findsOneWidget);
+    expect(find.textContaining('GRN000001'), findsWidgets); // the list and the confirmation
+
+    // Next time only what is still to come is offered.
+    await press(tester, find.text('Receive'));
+    expect(find.text('Bought 100 pack · Received 60 · Still to come 40'), findsOneWidget);
+    expect(find.text('Bought 30 pack · Received 0 · Still to come 30'), findsOneWidget);
+  });
+
+  testWidgets('receiving needs at least one product ticked', (tester) async {
+    final backend = withPurchase(backendFor('storekeeper'));
+    await pumpSnackify(tester, signedIn: true, backend: backend);
+    await openPurchase(tester, 'GB000001');
+    await press(tester, find.text('Receive'));
+    await tester.tap(find.text('$bbq (PC-BBQ-S)'));
+    await tester.tap(find.text('$cheese (PC-CHS-S)'));
+    await tester.pumpAndSettle();
+    await press(tester, find.text('Choose what arrived'));
+    expect(find.text('Tick at least one product that arrived.'), findsOneWidget);
+    expect(find.text('Receiving against GB000001'), findsNothing);
+  });
+
+  testWidgets('finance checks notes on Goods Received but has nothing to receive', (tester) async {
+    final backend = withPurchase(backendFor('accounts'));
+    await pumpSnackify(tester, signedIn: true, backend: backend);
+    await openSection(tester, 'Goods Received');
+    expect(find.text('Waiting to be received'), findsNothing);
+    expect(find.text('Receive'), findsNothing);
   });
 }

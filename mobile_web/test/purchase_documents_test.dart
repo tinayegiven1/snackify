@@ -271,7 +271,7 @@ void main() {
     await closePreview(tester);
 
     // Receiving against the list asks for no document either.
-    await press(tester, find.text('Receive'));
+    await receiveEverything(tester);
     expect(find.text('Attach document'), findsNothing);
     expect(find.text('Take photo'), findsNothing);
   });
@@ -313,7 +313,7 @@ void main() {
     final backend = withPurchase(backendFor('storekeeper'));
     await pumpSnackify(tester, signedIn: true, backend: backend);
     await openPurchase(tester, 'GB000001');
-    await press(tester, find.text('Receive'));
+    await receiveEverything(tester);
     await press(tester, find.text('Submit for verification'));
     expect(backend.grns.single['status'], 'PENDING_VERIFICATION');
     expect(backend.grns.single['documents'], isEmpty);

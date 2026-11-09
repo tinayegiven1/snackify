@@ -292,7 +292,10 @@ class Purchase extends PurchaseSummary {
 
   /// The goods-received note to start from it: one line per bought line still outstanding,
   /// expecting all of it, for the storekeeper to correct to what actually arrived.
-  ReceiptPrefill toReceiptPrefill() => ReceiptPrefill(
+  ///
+  /// With [arriving] (line id → quantity), only those lines, each expecting that quantity: what
+  /// the storekeeper said arrived this time. The rest stays outstanding for a later delivery.
+  ReceiptPrefill toReceiptPrefill({Map<String, int>? arriving}) => ReceiptPrefill(
     purchaseId: id,
     purchaseNumber: purchaseNumber,
     ownerId: owner.id,
@@ -301,14 +304,15 @@ class Purchase extends PurchaseSummary {
     purchaseDate: purchaseDate,
     lines: [
       for (final line in lines)
-        if (line.quantityOutstanding > 0)
+        if ((arriving == null ? line.quantityOutstanding : (arriving[line.id] ?? 0))
+            case final quantity when quantity > 0)
           (
             input: ReceiptLineInput(
               productId: line.productId,
               productLabel: line.productLabel,
               unitId: line.unit.id,
-              quantityPurchased: line.quantityOutstanding,
-              quantityReceived: line.quantityOutstanding,
+              quantityPurchased: quantity,
+              quantityReceived: quantity,
               unitCost: line.unitCost,
               purchaseLineId: line.id,
             ),
