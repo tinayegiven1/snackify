@@ -1,5 +1,6 @@
+import { readdir } from 'node:fs/promises';
 import { afterAll, describe, expect, it } from 'vitest';
-import { runMigrations } from '../../database/migrations.js';
+import { MIGRATIONS_DIR, runMigrations } from '../../database/migrations.js';
 import {
   createTestPools,
   createTestUser,
@@ -9,6 +10,7 @@ import {
 } from './db-test-helpers.js';
 
 const pools = createTestPools();
+const CUSTOMERS_MIGRATION = '20261108090000000_organisations-replace-customers';
 
 async function tableExists(name: string): Promise<boolean> {
   const result = await pools.owner.query<{ exists: boolean }>(
@@ -41,9 +43,13 @@ describe('database migrations', () => {
     await migrateTestDatabase();
     await resetDatabase(pools.owner);
     const user = await createTestUser(pools.app, { username: 'migrator', password: '482915' });
-    // Back to just before customers were replaced by organisations (and the WhatsApp migration
-    // that came after it).
-    await runMigrations(ownerDatabaseUrl, 'down', { count: 2, quiet: true });
+    // Back to just before customers were replaced by organisations, with every later migration.
+    const all = (await readdir(MIGRATIONS_DIR))
+      .filter((name) => name.endsWith('.sql'))
+      .map((name) => name.replace(/[.]sql$/, ''))
+      .sort();
+    const later = all.slice(all.indexOf(CUSTOMERS_MIGRATION));
+    await runMigrations(ownerDatabaseUrl, 'down', { count: later.length, quiet: true });
     const q = (sql: string, params: unknown[] = []) => pools.owner.query(sql, params);
 
     const { rows: subsidiary } = await q(
@@ -81,10 +87,7 @@ describe('database migrations', () => {
     );
     const paymentId = paid[0]?.id as string;
 
-    expect(await migrateTestDatabase()).toEqual([
-      '20261108090000000_organisations-replace-customers',
-      '20261108120000000_grn-whatsapp',
-    ]);
+    expect(await migrateTestDatabase()).toEqual(later);
     expect(await tableExists('customers')).toBe(false);
 
     const { rows: organisations } = await q(

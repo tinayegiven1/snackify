@@ -17,6 +17,8 @@ import '../../features/orders/presentation/orders_screen.dart';
 import '../../features/organisations/presentation/organisations_screen.dart';
 import '../../features/payments/presentation/payments_screen.dart';
 import '../../features/products/presentation/products_screen.dart';
+import '../../features/purchases/presentation/purchase_services.dart';
+import '../../features/purchases/presentation/purchases_screen.dart';
 import '../../features/receipts/presentation/receipt_services.dart';
 import '../../features/receipts/presentation/receipts_screen.dart';
 import '../../features/reports/presentation/reports_screen.dart';
@@ -85,6 +87,9 @@ class _AppShellState extends State<AppShell> {
         readBarcode: services.readBarcode,
         sharePdf: services.sharePdf,
         receiptServices: receiptServices,
+      ),
+      'Goods Bought' => PurchasesScreen(
+        services: PurchaseServices(purchases: services.purchases, receiptServices: receiptServices),
       ),
       'Goods Received' => ReceiptsScreen(services: receiptServices),
       'Orders' => OrdersScreen(

@@ -7,6 +7,7 @@ import '../features/orders/data/orders_repository.dart';
 import '../features/organisations/data/organisations_repository.dart';
 import '../features/payments/data/payments_repository.dart';
 import '../features/products/data/products_repository.dart';
+import '../features/purchases/data/purchases_repository.dart';
 import '../features/receipts/data/receipts_repository.dart';
 import '../features/reports/data/reports_repository.dart';
 import '../features/staff/data/staff_repository.dart';
@@ -30,6 +31,7 @@ class AppServices {
     required this.organisations,
     required this.audit,
     required this.receipts,
+    required this.purchases,
     required this.catalogue,
     required this.orders,
     required this.sharePdf,
@@ -55,6 +57,9 @@ class AppServices {
 
   /// Goods-received notes and their documents (StockFlow Stage 4).
   final ReceiptsRepository receipts;
+
+  /// Goods bought from suppliers, to receive against.
+  final PurchasesRepository purchases;
 
   /// Suppliers, categories, warehouses and units.
   final CatalogueRepository catalogue;

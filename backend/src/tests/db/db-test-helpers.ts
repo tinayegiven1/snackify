@@ -64,7 +64,7 @@ export function createDbTestApp(appPool: pg.Pool): Express {
  */
 export async function resetDatabase(ownerPool: pg.Pool): Promise<void> {
   await ownerPool.query(`
-    TRUNCATE grn_whatsapp_messages, forecasts, forecast_runs, payment_allocations, payments, invoice_items, invoices, stock_balances, stock_movements, stock_batches, stock_receipt_attachments,
+    TRUNCATE grn_whatsapp_messages, purchase_lines, purchases, forecasts, forecast_runs, payment_allocations, payments, invoice_items, invoices, stock_balances, stock_movements, stock_batches, stock_receipt_attachments,
              stock_receipt_lines, stock_receipts, order_item_changes, order_status_history,
              order_items, orders, dispatch_items, dispatches, audit_logs,
              sessions, user_roles, users, unit_conversions, products, product_categories, suppliers`);

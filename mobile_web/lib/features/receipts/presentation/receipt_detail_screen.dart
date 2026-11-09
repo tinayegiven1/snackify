@@ -294,6 +294,7 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
                 _Facts(
                   facts: {
                     'Stock owner': '${receipt.owner.name} (${receipt.owner.code})',
+                    'Goods bought': ?receipt.purchase?.purchaseNumber,
                     'Supplier': ?receipt.supplier?.name,
                     'Supplier invoice': ?receipt.supplierInvoiceNumber,
                     'Received': formatApiDate(receipt.receivedDate),

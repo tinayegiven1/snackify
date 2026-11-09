@@ -20,6 +20,7 @@ import 'features/orders/data/orders_repository.dart';
 import 'features/organisations/data/organisations_repository.dart';
 import 'features/payments/data/payments_repository.dart';
 import 'features/products/data/products_repository.dart';
+import 'features/purchases/data/purchases_repository.dart';
 import 'features/receipts/data/receipts_repository.dart';
 import 'features/reports/data/reports_repository.dart';
 import 'features/staff/data/staff_repository.dart';
@@ -41,6 +42,7 @@ void main() {
     organisations: OrganisationsRepository(api),
     audit: AuditRepository(api),
     receipts: ReceiptsRepository(api),
+    purchases: PurchasesRepository(api),
     catalogue: CatalogueRepository(api),
     orders: OrdersRepository(api),
     sharePdf: sharePdfWithDevice,

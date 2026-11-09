@@ -140,6 +140,7 @@ class ReceiptLine {
     required this.expiryDate,
     required this.discrepancyReason,
     required this.notes,
+    this.purchaseLineId,
   });
 
   factory ReceiptLine.fromJson(Map<String, dynamic> json) {
@@ -160,6 +161,7 @@ class ReceiptLine {
       expiryDate: json['expiryDate'] as String?,
       discrepancyReason: json['discrepancyReason'] as String?,
       notes: json['notes'] as String?,
+      purchaseLineId: json['purchaseLineId'] as String?,
     );
   }
 
@@ -181,6 +183,9 @@ class ReceiptLine {
   final String? discrepancyReason;
   final String? notes;
 
+  /// The goods-bought line this receives against, if any.
+  final String? purchaseLineId;
+
   ReceiptLineInput toInput() => ReceiptLineInput(
     productId: productId,
     productLabel: '$productDescription ($productSku)',
@@ -192,6 +197,7 @@ class ReceiptLine {
     expiryDate: expiryDate,
     discrepancyReason: discrepancyReason,
     notes: notes,
+    purchaseLineId: purchaseLineId,
   );
 }
 
@@ -281,6 +287,7 @@ class GoodsReceipt extends ReceiptSummary {
     required this.lines,
     required this.documents,
     this.whatsappMessages = const [],
+    this.purchase,
   });
 
   factory GoodsReceipt.fromJson(Map<String, dynamic> json) {
@@ -320,6 +327,9 @@ class GoodsReceipt extends ReceiptSummary {
         for (final message in (json['whatsappMessages'] as List?) ?? const [])
           ReceiptWhatsAppMessage.fromJson(message as Map<String, dynamic>),
       ],
+      purchase: json['purchase'] == null
+          ? null
+          : ReceiptPurchaseRef.fromJson(json['purchase'] as Map<String, dynamic>),
     );
   }
 
@@ -336,6 +346,48 @@ class GoodsReceipt extends ReceiptSummary {
 
   /// Every attempt to send the approved note to the subsidiary on WhatsApp, newest first.
   final List<ReceiptWhatsAppMessage> whatsappMessages;
+
+  /// The goods-bought list this note receives against, if any.
+  final ReceiptPurchaseRef? purchase;
+}
+
+/// The goods-bought list a goods-received note receives against.
+class ReceiptPurchaseRef {
+  const ReceiptPurchaseRef({required this.id, required this.purchaseNumber});
+
+  factory ReceiptPurchaseRef.fromJson(Map<String, dynamic> json) => ReceiptPurchaseRef(
+    id: json['id'] as String,
+    purchaseNumber: json['purchaseNumber'] as String,
+  );
+
+  final String id;
+
+  /// e.g. "GB000001".
+  final String purchaseNumber;
+}
+
+/// A new goods-received note started from a goods-bought list: who it is for, the supplier,
+/// and a line for each product still to arrive.
+class ReceiptPrefill {
+  const ReceiptPrefill({
+    required this.purchaseId,
+    required this.purchaseNumber,
+    required this.ownerId,
+    required this.supplierId,
+    required this.supplierInvoiceNumber,
+    required this.purchaseDate,
+    required this.lines,
+  });
+
+  final String purchaseId;
+  final String purchaseNumber;
+  final String ownerId;
+  final String? supplierId;
+  final String? supplierInvoiceNumber;
+  final String? purchaseDate;
+
+  /// Each line with the name of its unit, as shown on the form.
+  final List<({ReceiptLineInput input, String unitLabel})> lines;
 }
 
 /// One attempt to send an approved note on WhatsApp.
@@ -388,6 +440,7 @@ class ReceiptLineInput {
     this.expiryDate,
     this.discrepancyReason,
     this.notes,
+    this.purchaseLineId,
   });
 
   final String productId;
@@ -403,6 +456,9 @@ class ReceiptLineInput {
   final String? discrepancyReason;
   final String? notes;
 
+  /// The goods-bought line this receives against; null for a line added by hand.
+  final String? purchaseLineId;
+
   Map<String, Object?> toJson() => {
     'productId': productId,
     'unitId': unitId,
@@ -413,6 +469,7 @@ class ReceiptLineInput {
     'expiryDate': expiryDate,
     'discrepancyReason': quantityPurchased == quantityReceived ? null : discrepancyReason,
     'notes': notes,
+    'purchaseLineId': ?purchaseLineId,
   };
 }
 
@@ -427,6 +484,7 @@ class ReceiptInput {
     required this.receivedDate,
     required this.notes,
     required this.lines,
+    this.purchaseId,
   });
 
   final String? organisationId;
@@ -438,8 +496,12 @@ class ReceiptInput {
   final String? notes;
   final List<ReceiptLineInput> lines;
 
+  /// The goods-bought list this receives against, if any.
+  final String? purchaseId;
+
   Map<String, Object?> toJson() => {
     'organisationId': ?organisationId,
+    'purchaseId': ?purchaseId,
     'warehouseId': warehouseId,
     'supplierId': supplierId,
     'supplierInvoiceNumber': supplierInvoiceNumber,

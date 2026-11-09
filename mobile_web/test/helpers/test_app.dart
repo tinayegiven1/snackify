@@ -22,6 +22,7 @@ import 'package:snackify/features/orders/data/orders_repository.dart';
 import 'package:snackify/features/organisations/data/organisations_repository.dart';
 import 'package:snackify/features/payments/data/payments_repository.dart';
 import 'package:snackify/features/products/data/products_repository.dart';
+import 'package:snackify/features/purchases/data/purchases_repository.dart';
 import 'package:snackify/features/receipts/data/receipts_repository.dart';
 import 'package:snackify/features/reports/data/reports_repository.dart';
 import 'package:snackify/features/staff/data/staff_repository.dart';
@@ -176,6 +177,7 @@ class FakeBackend {
       'order.view',
       'catalogue.manage',
       'supplier.manage',
+      'purchase.manage',
       'receipt.no_document',
       'receipt.reverse',
       'organisation.manage',
@@ -208,6 +210,7 @@ class FakeBackend {
       'order.price',
       'order.approve',
       'price.exception.approve',
+      'purchase.manage',
       'receipt.verify',
       'stock.view',
       'organisation.edit_credit_limit',
@@ -426,6 +429,7 @@ class FakeBackend {
       return _catalogue(request);
     }
     if (path.startsWith('/api/v1/receipts')) return _receipts(request);
+    if (path.startsWith('/api/v1/purchases')) return _purchases(request);
     if (path.startsWith('/api/v1/orders')) return _orders(request);
     if (request.method == 'GET' && RegExp(r'^/api/v1/products/[^/]+$').hasMatch(path)) {
       final product = products.where((p) => path.endsWith('/${p['id']}')).firstOrNull;
@@ -997,6 +1001,10 @@ class FakeBackend {
         'documentsPending': documents.where((d) => d['verificationStatus'] == 'PENDING').length,
       },
       'receivedBy': grn['receivedBy'] ?? _person,
+      'purchase': switch (purchases.where((p) => p['id'] == grn['purchaseId']).firstOrNull) {
+        final p? => {'id': p['id'], 'purchaseNumber': p['purchaseNumber']},
+        null => null,
+      },
       'whatsappMessages': grn['whatsappMessages'] ?? const [],
       'lines': [
         for (final (index, line) in lines.indexed)
@@ -1035,6 +1043,253 @@ class FakeBackend {
       );
       movements.last['owner'] = grn['ownerId'];
     }
+  }
+
+  // ------------------------------------------------------------------ Goods bought
+
+  /// Goods-bought lists as the server stores them, oldest first. Lines keep productId and
+  /// unitId.
+  final List<Map<String, Object?>> purchases = [];
+
+  /// Goods-received notes whose quantities count as received against a list.
+  static const _countedGrnStatuses = {'PENDING_VERIFICATION', 'VERIFIED', 'POSTED'};
+
+  /// Goods-received notes made from [purchase], oldest first.
+  Iterable<Map<String, Object?>> _grnsFrom(Map<String, Object?> purchase) =>
+      grns.where((g) => g['purchaseId'] == purchase['id']);
+
+  /// A note from the list that still stands (not rejected or reversed).
+  bool _hasStandingGrn(Map<String, Object?> purchase) =>
+      _grnsFrom(purchase).any((g) => g['status'] != 'REJECTED' && g['status'] != 'REVERSED');
+
+  Map<String, Object?> _purchaseJson(Map<String, Object?> purchase) {
+    final counted = _grnsFrom(
+      purchase,
+    ).where((g) => _countedGrnStatuses.contains(g['status'])).toList();
+    final lines = [
+      for (final (index, line) in (purchase['lines'] as List<Map<String, Object?>>).indexed)
+        () {
+          final received = counted
+              .expand((g) => g['lines'] as List<Map<String, Object?>>)
+              .where((l) => l['purchaseLineId'] == line['id'])
+              .fold<int>(0, (sum, l) => sum + (l['quantityReceived'] as int));
+          final quantity = line['quantity'] as int;
+          final p = products.firstWhere((p) => p['id'] == line['productId']);
+          return <String, Object?>{
+            'id': line['id'],
+            'lineNumber': index + 1,
+            'product': {
+              'id': p['id'],
+              'sku': p['sku'],
+              'description': '${p['name']} — ${p['flavour']} — ${p['size']}',
+            },
+            'unit': _ref(catalogue['units']!.firstWhere((u) => u['id'] == line['unitId'])),
+            'quantity': quantity,
+            'unitCost': line['unitCost'],
+            'lineTotal': _lineTotal(quantity, line['unitCost'] as String),
+            'quantityReceived': received,
+            'quantityOutstanding': received >= quantity ? 0 : quantity - received,
+            'notes': line['notes'],
+          };
+        }(),
+    ];
+    final receivedAny = lines.any((l) => (l['quantityReceived'] as int) > 0);
+    final receivedAll = lines.every((l) => l['quantityOutstanding'] == 0);
+    final open = purchase['status'] == 'OPEN';
+    return {
+      'id': purchase['id'],
+      'purchaseNumber': purchase['purchaseNumber'],
+      'status': purchase['status'],
+      'receivingStatus': receivedAll
+          ? 'RECEIVED'
+          : receivedAny
+          ? 'PARTLY_RECEIVED'
+          : 'NOT_RECEIVED',
+      'owner': _ref(organisations.firstWhere((o) => o['id'] == purchase['ownerId'])),
+      'supplier': purchase['supplierId'] == null
+          ? null
+          : _ref(catalogue['suppliers']!.firstWhere((x) => x['id'] == purchase['supplierId'])),
+      'supplierInvoiceNumber': purchase['supplierInvoiceNumber'],
+      'purchaseDate': purchase['purchaseDate'],
+      'currency': 'USD',
+      'total': formatCents(
+        lines.fold<int>(0, (sum, l) => sum + parseCents(l['lineTotal'] as String)!),
+      ),
+      'lineCount': lines.length,
+      'createdBy': purchase['createdBy'],
+      'createdAt': '2026-11-09T08:00:00Z',
+      'notes': purchase['notes'],
+      'cancelledBy': purchase['cancelledBy'],
+      'cancelledAt': purchase['cancelledAt'],
+      'cancelReason': purchase['cancelReason'],
+      'canChange': open && _grnsFrom(purchase).isEmpty,
+      'canCancel': open && !_hasStandingGrn(purchase),
+      'lines': lines,
+      'receipts': [
+        for (final g in _grnsFrom(purchase))
+          {
+            'id': g['id'],
+            'grnNumber': g['grnNumber'],
+            'status': g['status'],
+            'receivedDate': g['receivedDate'],
+          },
+      ],
+    };
+  }
+
+  http.Response _purchases(http.Request request) {
+    final notFound = _error(404, 'PURCHASE_NOT_FOUND', 'No goods-bought list has that id.');
+    if (!can('purchase.manage') && !can('stock.receive') && !can('receipt.verify')) {
+      return _forbidden;
+    }
+    final segments = request.url.pathSegments; // api, v1, purchases, id?, action?
+    final visible = purchases.where(
+      (p) => organisation['type'] == 'HQ' || p['ownerId'] == organisation['id'],
+    );
+    Map<String, Object?>? purchase;
+    if (segments.length > 3) {
+      purchase = visible.where((p) => p['id'] == segments[3]).firstOrNull;
+      if (purchase == null) return notFound;
+    }
+    final action = segments.length > 4 ? segments[4] : null;
+    final route = '${request.method} ${action ?? (purchase == null ? '' : ':id')}';
+
+    switch (route) {
+      case 'GET ':
+        final query = request.url.queryParameters;
+        final status = query['status'];
+        final q = (query['q'] ?? '').toLowerCase();
+        final listed = [
+          for (final p in visible.toList().reversed)
+            if (_purchaseJson(p) case final json
+                when (status == null ||
+                        json['status'] == status ||
+                        (json['status'] == 'OPEN' && json['receivingStatus'] == status)) &&
+                    (q.isEmpty ||
+                        [
+                          json['purchaseNumber'],
+                          json['supplierInvoiceNumber'],
+                          (json['supplier'] as Map?)?['name'],
+                        ].any((text) => (text as String? ?? '').toLowerCase().contains(q))))
+              {
+                for (final MapEntry(:key, :value) in json.entries)
+                  if (!const {
+                    'notes',
+                    'cancelledBy',
+                    'cancelledAt',
+                    'cancelReason',
+                    'canChange',
+                    'canCancel',
+                    'lines',
+                    'receipts',
+                  }.contains(key))
+                    key: value,
+              },
+        ];
+        return _json(200, {'purchases': listed, 'total': listed.length});
+      case 'GET :id':
+        return _json(200, {'purchase': _purchaseJson(purchase!)});
+      case 'GET pdf':
+        return http.Response.bytes(
+          utf8.encode('%PDF-1.4 goods bought ${purchase!['purchaseNumber']}'),
+          200,
+          headers: {'content-type': 'application/pdf'},
+        );
+      case 'POST ' || 'PUT :id':
+        if (!can('purchase.manage')) return _forbidden;
+        if (purchase != null) {
+          if (purchase['status'] == 'CANCELLED') {
+            return _error(409, 'PURCHASE_CANCELLED', 'This goods-bought list was cancelled.');
+          }
+          if (_grnsFrom(purchase).isNotEmpty) {
+            return _error(
+              409,
+              'PURCHASE_HAS_RECEIPTS',
+              'Goods were received against this list, so it cannot be changed.',
+            );
+          }
+        }
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        final purchaseDate = body['purchaseDate'] as String? ?? toApiDate(today());
+        if (DateTime.parse(purchaseDate).isAfter(today())) {
+          return _fieldError('purchaseDate', 'Must not be in the future');
+        }
+        final bodyLines = (body['lines'] as List).cast<Map<String, dynamic>>();
+        if (bodyLines.isEmpty) return _fieldError('lines', 'Add at least one product');
+        final id = purchase?['id'] ?? 'purchase-${purchases.length + 1}';
+        final lines = <Map<String, Object?>>[];
+        for (final (index, line) in bodyLines.indexed) {
+          final product = products.firstWhere((p) => p['id'] == line['productId']);
+          final unitId = line['unitId'] as String;
+          final known =
+              unitId == (product['baseUnit'] as Map)['id'] ||
+              (product['conversions'] as List<Map<String, Object?>>).any(
+                (c) => (c['unit'] as Map)['id'] == unitId,
+              );
+          if (!known) {
+            return _fieldError(
+              'lines.$index.unitId',
+              'This product has no conversion for that unit',
+            );
+          }
+          if ((line['quantity'] as int) < 1) {
+            return _fieldError('lines.$index.quantity', 'Must be at least 1');
+          }
+          lines.add({
+            'id': '$id-line-${index + 1}',
+            'productId': product['id'],
+            'unitId': unitId,
+            'quantity': line['quantity'],
+            'unitCost': line['unitCost'],
+            'notes': line['notes'],
+          });
+        }
+        final fields = <String, Object?>{
+          'ownerId': body['organisationId'] ?? organisation['id'],
+          'supplierId': body['supplierId'],
+          'supplierInvoiceNumber': body['supplierInvoiceNumber'],
+          'purchaseDate': purchaseDate,
+          'notes': body['notes'],
+          'lines': lines,
+        };
+        if (purchase == null) {
+          purchase = {
+            'id': id,
+            'purchaseNumber': 'GB${(purchases.length + 1).toString().padLeft(6, '0')}',
+            'status': 'OPEN',
+            'createdBy': {'id': userId, 'fullName': 'Tendai Moyo'},
+            'cancelledBy': null,
+            'cancelledAt': null,
+            'cancelReason': null,
+            ...fields,
+          };
+          purchases.add(purchase);
+          return _json(201, {'purchase': _purchaseJson(purchase)});
+        }
+        purchase.addAll(fields);
+        return _json(200, {'purchase': _purchaseJson(purchase)});
+      case 'POST cancel':
+        if (!can('purchase.manage')) return _forbidden;
+        if (purchase!['status'] == 'CANCELLED') {
+          return _error(409, 'PURCHASE_CANCELLED', 'This goods-bought list was cancelled.');
+        }
+        if (_hasStandingGrn(purchase)) {
+          return _error(
+            409,
+            'PURCHASE_HAS_RECEIPTS',
+            'Goods were received against this list; reject or reverse them first.',
+          );
+        }
+        final reason = ((jsonDecode(request.body) as Map)['reason'] as String? ?? '').trim();
+        if (reason.length < 3) return _fieldError('reason', 'Explain the reason in a few words');
+        purchase
+          ..['status'] = 'CANCELLED'
+          ..['cancelledBy'] = {'id': userId, 'fullName': 'Tendai Moyo'}
+          ..['cancelledAt'] = '2026-11-09T09:00:00Z'
+          ..['cancelReason'] = reason;
+        return _json(200, {'purchase': _purchaseJson(purchase)});
+    }
+    return _error(404, 'NOT_FOUND', 'Not found');
   }
 
   http.Response _receipts(http.Request request) {
@@ -1111,10 +1366,50 @@ class FakeBackend {
             'expiryDate': line['expiryDate'],
             'discrepancyReason': line['discrepancyReason'],
             'notes': line['notes'],
+            'purchaseLineId': line['purchaseLineId'],
           });
         }
+        final ownerId = body['organisationId'] ?? organisation['id'];
+        final purchaseId = body['purchaseId'] as String?;
+        if (purchaseId != null) {
+          final bought = purchases.where((p) => p['id'] == purchaseId).firstOrNull;
+          if (bought == null) {
+            return _fieldError('purchaseId', 'No goods-bought list has that id');
+          }
+          if (bought['status'] != 'OPEN') {
+            return _fieldError('purchaseId', 'This goods-bought list was cancelled');
+          }
+          if (bought['ownerId'] != ownerId) {
+            return _fieldError(
+              'organisationId',
+              'Must be the stock owner of the goods-bought list',
+            );
+          }
+          for (final (index, line) in lines.indexed) {
+            if (line['purchaseLineId'] == null) continue;
+            final boughtLine = (bought['lines'] as List<Map<String, Object?>>)
+                .where((l) => l['id'] == line['purchaseLineId'])
+                .firstOrNull;
+            if (boughtLine == null) {
+              return _fieldError(
+                'lines.$index.purchaseLineId',
+                'Not a line of this goods-bought list',
+              );
+            }
+            if (boughtLine['productId'] != line['productId'] ||
+                boughtLine['unitId'] != line['unitId']) {
+              return _fieldError(
+                'lines.$index.purchaseLineId',
+                'The product and unit must match the line bought',
+              );
+            }
+          }
+        } else if (lines.any((l) => l['purchaseLineId'] != null)) {
+          return _fieldError('lines.0.purchaseLineId', 'Choose the goods-bought list first');
+        }
         final fields = <String, Object?>{
-          'ownerId': body['organisationId'] ?? organisation['id'],
+          'ownerId': ownerId,
+          'purchaseId': purchaseId,
           'warehouseId': body['warehouseId'] ?? 'warehouse-main',
           'supplierId': body['supplierId'],
           'supplierInvoiceNumber': body['supplierInvoiceNumber'],
@@ -2806,6 +3101,7 @@ Future<TestApp> pumpSnackify(
     organisations: OrganisationsRepository(api),
     audit: AuditRepository(api),
     receipts: ReceiptsRepository(api),
+    purchases: PurchasesRepository(api),
     catalogue: CatalogueRepository(api),
     orders: OrdersRepository(api),
     sharePdf: (bytes, filename) async =>

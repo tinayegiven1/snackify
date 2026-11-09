@@ -129,7 +129,7 @@ describe('backups', () => {
       'table organisations: same number of rows, but the contents differ',
       'table products: 2 rows in the backup, 1 restored',
       'sequence dispatch_number_seq: at 1 in the backup, 1 restored (used/unused state differs)',
-      'triggers: 25 in the backup, 24 restored',
+      'triggers: 26 in the backup, 25 restored',
       'privileges: same number, but the definitions differ',
     ]);
   });

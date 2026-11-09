@@ -35,6 +35,8 @@ export interface ReceiptLineInput {
   expiryDate: string | null;
   discrepancyReason: DiscrepancyReason | null;
   notes: string | null;
+  /** The goods-bought line this receives against (needs the receipt's purchaseId). */
+  purchaseLineId?: string | null;
 }
 
 export interface ReceiptInput {
@@ -46,6 +48,8 @@ export interface ReceiptInput {
   purchaseDate: string | null;
   receivedDate: string;
   notes: string | null;
+  /** The goods-bought list this is received against, if any. */
+  purchaseId?: string | null;
   lines: ReceiptLineInput[];
 }
 
@@ -71,6 +75,8 @@ export interface ReceiptLine {
   discrepancyReason: DiscrepancyReason | null;
   notes: string | null;
   batchId: string | null;
+  /** The goods-bought line it was received against. */
+  purchaseLineId: string | null;
 }
 
 export interface ReceiptAttachment {
@@ -130,6 +136,8 @@ export interface Receipt extends ReceiptSummary {
   attachments: ReceiptAttachment[];
   /** Every attempt to send the approved note to the subsidiary on WhatsApp, newest first. */
   whatsappMessages: ReceiptWhatsAppMessage[];
+  /** The goods-bought list it was received against. */
+  purchase: { id: string; purchaseNumber: string } | null;
 }
 
 export interface ReceiptWhatsAppMessage {
@@ -282,18 +290,23 @@ export async function getReceipt(db: Queryable, scope: AccessScope, id: string):
       reversed_at: Date | null;
       reversal_reason: string | null;
       no_document_reason: string | null;
+      purchase: { id: string; purchaseNumber: string } | null;
     }
   >(
     `SELECT summary.*, r.owner_organisation_id, r.purchase_date, r.notes, r.submitted_at,
             r.verified_at, r.verification_notes, r.rejected_reason, r.reversed_at,
             r.reversal_reason, r.no_document_reason,
+            CASE WHEN pu.id IS NULL THEN NULL
+                 ELSE json_build_object('id', pu.id, 'purchaseNumber', pu.purchase_number)
+            END AS purchase,
             json_build_object('id', rb.id, 'fullName', rb.full_name) AS received_by,
             CASE WHEN vb.id IS NULL THEN NULL
                  ELSE json_build_object('id', vb.id, 'fullName', vb.full_name) END AS verified_by
      FROM (${SUMMARY_SELECT} WHERE r.id = $1) summary
      JOIN stock_receipts r ON r.id = summary.id
      JOIN users rb ON rb.id = r.received_by
-     LEFT JOIN users vb ON vb.id = r.verified_by`,
+     LEFT JOIN users vb ON vb.id = r.verified_by
+     LEFT JOIN purchases pu ON pu.id = r.purchase_id`,
     [id],
   );
   const row = rows[0];
@@ -314,6 +327,7 @@ export async function getReceipt(db: Queryable, scope: AccessScope, id: string):
     discrepancy_reason: DiscrepancyReason | null;
     notes: string | null;
     batch_id: string | null;
+    purchase_line_id: string | null;
   }>(
     `SELECT l.id, l.line_number,
             json_build_object('id', p.id, 'sku', p.sku,
@@ -322,7 +336,7 @@ export async function getReceipt(db: Queryable, scope: AccessScope, id: string):
             json_build_object('id', u.id, 'code', u.code, 'name', u.name) AS unit,
             l.quantity_purchased, l.quantity_received, l.base_quantity_received,
             l.unit_cost::text, l.line_total::text, l.batch_number, l.expiry_date,
-            l.discrepancy_reason, l.notes, l.batch_id
+            l.discrepancy_reason, l.notes, l.batch_id, l.purchase_line_id
      FROM stock_receipt_lines l
      JOIN products p ON p.id = l.product_id
      JOIN units u ON u.id = l.unit_id
@@ -385,6 +399,7 @@ export async function getReceipt(db: Queryable, scope: AccessScope, id: string):
     reversedAt: row.reversed_at,
     reversalReason: row.reversal_reason,
     noDocumentReason: row.no_document_reason,
+    purchase: row.purchase,
     lines: lines.map((line) => ({
       id: line.id,
       lineNumber: line.line_number,
@@ -400,6 +415,7 @@ export async function getReceipt(db: Queryable, scope: AccessScope, id: string):
       discrepancyReason: line.discrepancy_reason,
       notes: line.notes,
       batchId: line.batch_id,
+      purchaseLineId: line.purchase_line_id,
     })),
     attachments: attachments.map((a) => ({
       id: a.id,
@@ -515,8 +531,8 @@ async function writeLines(
       `INSERT INTO stock_receipt_lines
          (receipt_id, line_number, product_id, unit_id, quantity_purchased, quantity_received,
           base_quantity_received, unit_cost, line_total, batch_number, expiry_date,
-          discrepancy_reason, notes)
-       VALUES ($1, $2, $3, $4, $5::int, $6, $7, $8::numeric, round($5::int * $8::numeric, 2), $9, $10, $11, $12)`,
+          discrepancy_reason, notes, purchase_line_id)
+       VALUES ($1, $2, $3, $4, $5::int, $6, $7, $8::numeric, round($5::int * $8::numeric, 2), $9, $10, $11, $12, $13)`,
       [
         receiptId,
         index + 1,
@@ -530,9 +546,53 @@ async function writeLines(
         line.expiryDate,
         line.discrepancyReason,
         line.notes,
+        line.purchaseLineId ?? null,
       ],
     );
   }
+}
+
+/**
+ * A receipt made from a goods-bought list: the list must be open and for the same stock owner,
+ * and each line received against it must be one of its lines, with the same product and unit.
+ */
+async function checkPurchase(client: pg.PoolClient, input: ReceiptInput): Promise<void> {
+  const linked = input.lines.findIndex((line) => line.purchaseLineId);
+  if (!input.purchaseId) {
+    if (linked >= 0) {
+      throw fieldError(`lines.${linked}.purchaseLineId`, 'Choose the goods-bought list first');
+    }
+    return;
+  }
+  const { rows } = await client.query<{ status: string; owner_organisation_id: string }>(
+    'SELECT status, owner_organisation_id FROM purchases WHERE id = $1',
+    [input.purchaseId],
+  );
+  const purchase = rows[0];
+  if (!purchase) throw fieldError('purchaseId', 'No goods-bought list has that id');
+  if (purchase.status !== 'OPEN')
+    throw fieldError('purchaseId', 'This goods-bought list was cancelled');
+  if (purchase.owner_organisation_id !== input.ownerOrganisationId) {
+    throw fieldError('organisationId', 'Must be the same stock owner as the goods-bought list');
+  }
+  const { rows: lines } = await client.query<{ id: string; product_id: string; unit_id: string }>(
+    'SELECT id, product_id, unit_id FROM purchase_lines WHERE purchase_id = $1',
+    [input.purchaseId],
+  );
+  const byId = new Map(lines.map((line) => [line.id, line]));
+  input.lines.forEach((line, index) => {
+    if (!line.purchaseLineId) return;
+    const bought = byId.get(line.purchaseLineId);
+    if (!bought) {
+      throw fieldError(`lines.${index}.purchaseLineId`, 'Not a line of this goods-bought list');
+    }
+    if (bought.product_id !== line.productId || bought.unit_id !== line.unitId) {
+      throw fieldError(
+        `lines.${index}.productId`,
+        'Must be the same product and unit as on the goods-bought list',
+      );
+    }
+  });
 }
 
 /** Starts a goods-received note (a draft: no stock changes yet). */
@@ -544,11 +604,12 @@ export async function createReceipt(
 ): Promise<Receipt> {
   const id = await withTransaction(pool, async (client) => {
     const warehouseId = await checkHeader(client, input);
+    await checkPurchase(client, input);
     const { rows } = await client.query<{ id: string; grn_number: string }>(
       `INSERT INTO stock_receipts
          (owner_organisation_id, warehouse_id, supplier_id, supplier_invoice_number, purchase_date,
-          received_date, currency, notes, received_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          received_date, currency, notes, received_by, purchase_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING id, grn_number`,
       [
         input.ownerOrganisationId,
@@ -560,6 +621,7 @@ export async function createReceipt(
         currency,
         input.notes,
         actor.id,
+        input.purchaseId ?? null,
       ],
     );
     const created = rows[0] as { id: string; grn_number: string };
@@ -589,10 +651,12 @@ export async function updateDraft(
     const current = await lockReceipt(client, scope, id);
     if (current.status !== 'DRAFT') throw wrongStatus(current.status, 'changed');
     const warehouseId = await checkHeader(client, input);
+    await checkPurchase(client, input);
     await client.query(
       `UPDATE stock_receipts
        SET owner_organisation_id = $2, warehouse_id = $3, supplier_id = $4,
-           supplier_invoice_number = $5, purchase_date = $6, received_date = $7, notes = $8
+           supplier_invoice_number = $5, purchase_date = $6, received_date = $7, notes = $8,
+           purchase_id = $9
        WHERE id = $1`,
       [
         id,
@@ -603,6 +667,7 @@ export async function updateDraft(
         input.purchaseDate,
         input.receivedDate,
         input.notes,
+        input.purchaseId ?? null,
       ],
     );
     await client.query('DELETE FROM stock_receipt_lines WHERE receipt_id = $1', [id]);

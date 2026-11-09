@@ -67,6 +67,10 @@ const lineSchema = z
       .nullish()
       .transform((value) => value ?? null),
     notes: optionalText(500),
+    purchaseLineId: z
+      .uuid({ error: 'Must be a goods-bought line id' })
+      .nullish()
+      .transform((value) => value ?? null),
   })
   .refine((line) => line.quantityPurchased > 0 || line.quantityReceived > 0, {
     path: ['quantityReceived'],
@@ -99,6 +103,11 @@ const receiptSchema = z.object({
   purchaseDate: dateSchema.nullish().transform((value) => value ?? null),
   receivedDate: dateSchema.optional(),
   notes: optionalText(1000),
+  /** The goods-bought list this delivery is received against, if any. */
+  purchaseId: z
+    .uuid({ error: 'Must be a goods-bought list id' })
+    .nullish()
+    .transform((value) => value ?? null),
   lines: z
     .array(lineSchema, { error: 'Must be a list of lines' })
     .max(MAX_LINES, `Use at most ${MAX_LINES} lines`),

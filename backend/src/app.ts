@@ -18,6 +18,7 @@ import { organisationsRouter } from './modules/organisations/organisations.route
 import { balancesRouter, paymentsRouter } from './modules/payments/payments.routes.js';
 import { productsRouter } from './modules/products/products.routes.js';
 import { cloudApiSender, type WhatsAppSender } from './modules/whatsapp/whatsapp.js';
+import { purchasesRouter } from './modules/purchases/purchases.routes.js';
 import { receiptsRouter } from './modules/receipts/receipts.routes.js';
 import { reportsRouter } from './modules/reports/reports.routes.js';
 import { rolesRouter } from './modules/roles/roles.routes.js';
@@ -69,6 +70,7 @@ export function createApp(config: AppConfig, deps: AppDependencies): Express {
   const sendWhatsApp =
     deps.sendWhatsApp ?? (config.whatsapp ? cloudApiSender(config.whatsapp) : null);
   app.use('/api/v1/receipts', receiptsRouter(deps.db, config, sendWhatsApp));
+  app.use('/api/v1/purchases', purchasesRouter(deps.db, config));
   app.use('/api/v1/orders', ordersRouter(deps.db, config));
   app.use('/api/v1/dispatches', dispatchesRouter(deps.db, config.businessTimezone));
   app.use('/api/v1/invoices', invoicesRouter(deps.db, config));

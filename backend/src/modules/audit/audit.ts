@@ -51,7 +51,10 @@ export type AuditAction =
   | 'order.prices_set'
   | 'order.approved'
   | 'order.rejected'
-  | 'order.cancelled';
+  | 'order.cancelled'
+  | 'purchase.created'
+  | 'purchase.updated'
+  | 'purchase.cancelled';
 
 export interface AuditEntry {
   /** The signed-in user who acted, or null for setup commands and unknown users. */
@@ -69,7 +72,8 @@ export interface AuditEntry {
     | 'forecast'
     | 'catalogue'
     | 'receipt'
-    | 'order';
+    | 'order'
+    | 'purchase';
   entityId?: string;
   /** Extra facts about the action. Never include passwords, tokens or other secrets. */
   details?: Record<string, unknown>;

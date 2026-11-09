@@ -81,9 +81,9 @@ it. Which role has which permission is data (`GET /api/v1/roles`), changeable wi
 
 | Role (code)                                    | Organisation | Main permissions |
 | ---------------------------------------------- | ------------ | ---------------- |
-| System Administrator (`system_admin`)          | HQ           | `organisation.manage`, `user.manage`, `role.manage`, `audit.view`, `product.manage`, `stock.adjust`, `stock.opening_balance`, `dispatch.reverse`, `payment.void` |
+| System Administrator (`system_admin`)          | HQ           | `organisation.manage`, `purchase.manage`, `user.manage`, `role.manage`, `audit.view`, `product.manage`, `stock.adjust`, `stock.opening_balance`, `dispatch.reverse`, `payment.void` |
 | HQ Warehouse Officer (`hq_warehouse_officer`)  | HQ           | `stock.receive`, `dispatch.draft`, `dispatch.confirm`, `label.print`, `report.stock`, `forecast.use` |
-| HQ Finance Officer (`hq_finance_officer`)      | HQ           | `invoice.manage`, `payment.manage`, `organisation.edit_credit_limit`, `report.financial`, `report.stock`, `forecast.use` |
+| HQ Finance Officer (`hq_finance_officer`)      | HQ           | `invoice.manage`, `payment.manage`, `purchase.manage`, `organisation.edit_credit_limit`, `report.financial`, `report.stock`, `forecast.use` |
 | HQ Sales Officer (`hq_sales_officer`)          | HQ           | `dispatch.draft` |
 | Subsidiary Manager (`subsidiary_manager`)      | Subsidiary   | `stock.view` (own organisation); orders from Stage 5 |
 | Subsidiary Storekeeper (`subsidiary_storekeeper`) | Subsidiary | `stock.view` (own organisation) |
@@ -681,6 +681,31 @@ recorded in the audit log (`catalogue.created`, `catalogue.updated`).
 
 The default warehouse (`HQ-MAIN`) stays active (**409** `DEFAULT_WAREHOUSE_ACTIVE`). A code or
 name already used answers **409** `ALREADY_EXISTS` with the field in `details`.
+
+## Goods bought (`/api/v1/purchases`)
+
+What was bought from a supplier, entered before the goods arrive, so the warehouse can receive
+against it. Finance and administrators (`purchase.manage`) enter, change and cancel lists;
+anyone with `stock.receive` or `receipt.verify` can see them and print them.
+
+| Method and path | Who | What |
+| --------------- | --- | ---- |
+| `GET /` | viewers | `?q=` (number, supplier invoice no. or supplier), `status=` (`OPEN`, `CANCELLED`, or for open lists `NOT_RECEIVED`, `PARTLY_RECEIVED`, `RECEIVED`), `limit`, `offset` → `{ purchases, total }` |
+| `GET /:id` | viewers | `{ purchase }` with `lines` (bought, `quantityReceived`, `quantityOutstanding`) and the goods-received notes made from it (`receipts`) |
+| `GET /:id/pdf` | viewers | The list as an A4 PDF, with columns to tick off on delivery and signature lines |
+| `POST /` | `purchase.manage` | `{ organisationId?, supplierId?, supplierInvoiceNumber?, purchaseDate?, notes?, lines: [{ productId, unitId, quantity, unitCost, notes? }] }` → **201** |
+| `PUT /:id` | `purchase.manage` | Same body; replaces the list. **409** `PURCHASE_HAS_RECEIPTS` once any goods-received note was made from it |
+| `POST /:id/cancel` | `purchase.manage` | `{ reason }`. **409** `PURCHASE_HAS_RECEIPTS` while a note made from it stands (not rejected or reversed) |
+
+Numbers are `GB000001`, `GB000002`, … Line totals and the total are worked out by the database.
+`receivingStatus` is `NOT_RECEIVED`, `PARTLY_RECEIVED` or `RECEIVED`, counting goods-received
+notes waiting for verification, verified or posted (not drafts, rejected or reversed ones). Audit
+actions: `purchase.created`, `purchase.updated`, `purchase.cancelled`.
+
+**Receiving against a list.** A goods-received note may carry `purchaseId`, and each of its lines
+`purchaseLineId`. The list must be open and for the same stock owner, and each line's product and
+unit must match the bought line (**400** otherwise). Receiving without a list is still allowed. The
+note's JSON shows `purchase: { id, purchaseNumber }` and each line's `purchaseLineId`.
 
 ## Goods-received notes (`/api/v1/receipts`)
 

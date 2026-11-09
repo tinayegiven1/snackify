@@ -18,12 +18,15 @@ import 'receipt_services.dart';
 /// bought and what arrived, and the supplier's documents. Saved as a draft or
 /// submitted for verification. Pops with the saved receipt.
 class ReceiptEditorScreen extends StatefulWidget {
-  const ReceiptEditorScreen({super.key, required this.services, this.receipt});
+  const ReceiptEditorScreen({super.key, required this.services, this.receipt, this.prefill});
 
   final ReceiptServices services;
 
   /// A draft to continue; null for a new receipt.
   final GoodsReceipt? receipt;
+
+  /// For a new receipt received against a goods-bought list: what is still to arrive.
+  final ReceiptPrefill? prefill;
 
   @override
   State<ReceiptEditorScreen> createState() => _ReceiptEditorScreenState();
@@ -39,21 +42,42 @@ class _LineEntry {
 
 class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
   final _formKey = GlobalKey<FormState>();
-  late final _invoiceNumber = TextEditingController(text: widget.receipt?.supplierInvoiceNumber);
+  late final _invoiceNumber = TextEditingController(
+    text: widget.receipt?.supplierInvoiceNumber ?? widget.prefill?.supplierInvoiceNumber,
+  );
   late final _notes = TextEditingController(text: widget.receipt?.notes);
 
   late GoodsReceipt? _saved = widget.receipt;
-  late String? _ownerId = widget.receipt?.owner.id ?? widget.services.user.organisation.id;
+  late String? _ownerId =
+      widget.receipt?.owner.id ?? widget.prefill?.ownerId ?? widget.services.user.organisation.id;
   late String? _warehouseId = widget.receipt?.warehouse.id;
+  late final String? _supplierId = widget.receipt == null
+      ? widget.prefill?.supplierId
+      : widget.receipt!.supplier?.id;
+
+  /// The goods-bought list this receives against, if any.
+  late final String? _purchaseId = widget.receipt == null
+      ? widget.prefill?.purchaseId
+      : widget.receipt!.purchase?.id;
+  late final String? _purchaseNumber = widget.receipt == null
+      ? widget.prefill?.purchaseNumber
+      : widget.receipt!.purchase?.purchaseNumber;
   late DateTime _receivedDate = widget.receipt == null
       ? today()
       : DateTime.parse(widget.receipt!.receivedDate);
-  late DateTime? _purchaseDate = widget.receipt?.purchaseDate == null
-      ? null
-      : DateTime.parse(widget.receipt!.purchaseDate!);
+  late DateTime? _purchaseDate = switch (widget.receipt == null
+      ? widget.prefill?.purchaseDate
+      : widget.receipt!.purchaseDate) {
+    final String date => DateTime.parse(date),
+    null => null,
+  };
   late final List<_LineEntry> _lines = [
     for (final line in widget.receipt?.lines ?? const <ReceiptLine>[])
       _LineEntry(line.toInput(), line.unit.name),
+    if (widget.receipt == null)
+      for (final line
+          in widget.prefill?.lines ?? const <({ReceiptLineInput input, String unitLabel})>[])
+        _LineEntry(line.input, line.unitLabel),
   ];
   final List<PickedDocument> _newDocuments = [];
 
@@ -199,7 +223,8 @@ class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
   ReceiptInput _input() => ReceiptInput(
     organisationId: _services.canChooseOwner ? _ownerId : null,
     warehouseId: _warehouseId,
-    supplierId: widget.receipt?.supplier?.id,
+    supplierId: _supplierId,
+    purchaseId: _purchaseId,
     supplierInvoiceNumber: _invoiceNumber.text.trim().isEmpty ? null : _invoiceNumber.text.trim(),
     purchaseDate: _purchaseDate == null ? null : toApiDate(_purchaseDate!),
     receivedDate: toApiDate(_receivedDate),
@@ -318,6 +343,26 @@ class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 if (_error != null) ...[ErrorBanner(message: _error!), const SizedBox(height: 16)],
+                if (_purchaseNumber != null) ...[
+                  Row(
+                    children: [
+                      const Icon(Icons.shopping_bag_outlined, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Receiving against $_purchaseNumber',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Change each line to what actually arrived.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 16),
+                ],
                 if (organisations != null) ...[
                   DropdownButtonFormField<String>(
                     initialValue: _ownerId,
@@ -338,7 +383,10 @@ class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
                           child: Text('${organisation.name} (${organisation.code})'),
                         ),
                     ],
-                    onChanged: _saving ? null : (value) => setState(() => _ownerId = value),
+                    // Stock bought for one organisation is received for that organisation.
+                    onChanged: _saving || _purchaseId != null
+                        ? null
+                        : (value) => setState(() => _ownerId = value),
                   ),
                   const SizedBox(height: 16),
                 ],
@@ -648,6 +696,12 @@ class _LineDialogState extends State<_LineDialog> {
     final unit = product.units.firstWhere((unit) => unit.id == _unitId);
     final purchased = _quantity(_purchased)!;
     final received = _quantity(_received)!;
+    final initial = widget.initial?.input;
+    // A line from a goods-bought list stays linked to it while it is the same product and unit.
+    final purchaseLineId =
+        initial != null && initial.productId == product.id && initial.unitId == unit.id
+        ? initial.purchaseLineId
+        : null;
     Navigator.of(context).pop(
       _LineEntry(
         ReceiptLineInput(
@@ -660,6 +714,8 @@ class _LineDialogState extends State<_LineDialog> {
           batchNumber: _batch.text.trim().isEmpty ? null : _batch.text.trim(),
           expiryDate: _expiry,
           discrepancyReason: purchased == received ? null : _reason,
+          notes: initial?.notes,
+          purchaseLineId: purchaseLineId,
         ),
         unit.name,
       ),
