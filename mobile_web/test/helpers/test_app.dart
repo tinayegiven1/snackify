@@ -1393,7 +1393,7 @@ class FakeBackend {
             if (boughtLine == null) {
               return _fieldError(
                 'lines.$index.purchaseLineId',
-                'Not a line of this goods-bought list',
+                'The goods-bought list was changed after this note was started. Go back to the list and press Receive again.',
               );
             }
             if (boughtLine['productId'] != line['productId'] ||

@@ -584,7 +584,10 @@ async function checkPurchase(client: pg.PoolClient, input: ReceiptInput): Promis
     if (!line.purchaseLineId) return;
     const bought = byId.get(line.purchaseLineId);
     if (!bought) {
-      throw fieldError(`lines.${index}.purchaseLineId`, 'Not a line of this goods-bought list');
+      throw fieldError(
+        `lines.${index}.purchaseLineId`,
+        'The goods-bought list was changed after this note was started. Go back to the list and press Receive again.',
+      );
     }
     if (bought.product_id !== line.productId || bought.unit_id !== line.unitId) {
       throw fieldError(

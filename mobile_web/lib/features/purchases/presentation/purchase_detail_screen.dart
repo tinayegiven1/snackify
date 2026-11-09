@@ -137,8 +137,31 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
     }
   }
 
-  /// Opens the goods-received editor filled in with what is still to arrive.
-  Future<void> _receive(Purchase purchase) async {
+  /// Opens the goods-received editor filled in with what is still to arrive. The list is fetched
+  /// again first: it may have been changed elsewhere (another device or tab) since this screen
+  /// loaded, and a changed list has new lines that the note must point at.
+  Future<void> _receive(Purchase shown) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+      _note = null;
+    });
+    final Purchase purchase;
+    try {
+      purchase = await _services.purchases.get(shown.id);
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+      return;
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+    if (!mounted) return;
+    setState(() => _purchase = purchase);
+    if (purchase.status != PurchaseStatus.open ||
+        purchase.receivingStatus == ReceivingStatus.received) {
+      setState(() => _error = 'Nothing is left to receive on ${purchase.purchaseNumber}.');
+      return;
+    }
     final receipt = await Navigator.of(context).push<GoodsReceipt>(
       MaterialPageRoute(
         builder: (_) => ReceiptEditorScreen(

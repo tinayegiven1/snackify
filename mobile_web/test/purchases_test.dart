@@ -285,4 +285,32 @@ void main() {
     })();
     expect(sections.indexOf('Goods Bought'), sections.indexOf('Goods Received') - 1);
   });
+
+  testWidgets('Receive uses the list as it is now, even if it was changed elsewhere', (
+    tester,
+  ) async {
+    final backend = withPurchase(backendFor('storekeeper'));
+    final app = await pumpSnackify(tester, signedIn: true, backend: backend);
+    await openPurchase(tester, 'GB000001');
+
+    // Meanwhile finance changes the list on another device: its lines are replaced.
+    final purchase = backend.purchases.single;
+    purchase['lines'] = [
+      for (final (index, line) in (purchase['lines'] as List).cast<Map<String, Object?>>().indexed)
+        {...line, 'id': 'purchase-1-new-line-${index + 1}'},
+    ];
+
+    // This screen still shows the old copy, but Receive fetches the list again.
+    await press(tester, find.text('Receive'));
+    expect(find.text('Receiving against GB000001'), findsOneWidget);
+    app.documents.willPick([pdfDocument()]);
+    await press(tester, find.text('Attach document'));
+    await press(tester, find.text('Submit for verification'));
+
+    expect(find.textContaining('changed after this note was started'), findsNothing);
+    expect(
+      [for (final line in backend.grns.single['lines'] as List) (line as Map)['purchaseLineId']],
+      ['purchase-1-new-line-1', 'purchase-1-new-line-2'],
+    );
+  });
 }

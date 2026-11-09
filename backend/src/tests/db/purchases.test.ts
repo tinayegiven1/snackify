@@ -288,6 +288,31 @@ describe('goods bought', () => {
     expect(changed.status).toBe(200);
     expect(changed.body.purchase).toMatchObject({ total: '15.00', lineCount: 1 });
 
+    // A note started from the list as it was before the change points at lines that are gone:
+    // refused, saying what to do.
+    const stale = await as('storekeeper').post('/api/v1/receipts', {
+      purchaseId: purchase.id,
+      lines: [
+        {
+          productId: bbq,
+          unitId: pack,
+          quantityPurchased: 100,
+          quantityReceived: 100,
+          unitCost: '0.4250',
+          purchaseLineId: purchase.lines[0].id,
+        },
+      ],
+    });
+    expect(stale.status).toBe(400);
+    expect(stale.body.error.details).toEqual([
+      {
+        field: 'lines.0.purchaseLineId',
+        message:
+          'The goods-bought list was changed after this note was started. Go back to the list ' +
+          'and press Receive again.',
+      },
+    ]);
+
     const noReason = await as('accounts').post(`/api/v1/purchases/${purchase.id}/cancel`, {});
     expect(noReason.status).toBe(400);
     const cancelled = await as('accounts').post(`/api/v1/purchases/${purchase.id}/cancel`, {
