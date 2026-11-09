@@ -13,6 +13,8 @@ import '../features/reports/data/reports_repository.dart';
 import '../features/staff/data/staff_repository.dart';
 import '../features/stock/data/stock_repository.dart';
 import 'files/document_picker.dart';
+import 'network/response_cache.dart';
+import 'network/sync_service.dart';
 import 'files/pdf_sharer.dart';
 import 'scanning/barcode_reader.dart';
 
@@ -38,6 +40,8 @@ class AppServices {
     required this.readBarcode,
     required this.pickDocuments,
     required this.takePhoto,
+    required this.connection,
+    required this.sync,
   });
 
   /// Returns true when the Snackify API is reachable.
@@ -78,4 +82,10 @@ class AppServices {
 
   /// Takes a photo of a supplier document with the camera.
   final PhotoTaker takePhoto;
+
+  /// Online or offline, and when the information on screen was last brought up to date.
+  final ConnectionStatus connection;
+
+  /// Saves the main lists for offline use and refreshes them when the connection comes back.
+  final SyncService sync;
 }

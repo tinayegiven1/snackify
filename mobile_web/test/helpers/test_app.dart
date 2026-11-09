@@ -10,6 +10,9 @@ import 'package:snackify/core/files/document_picker.dart';
 import 'package:snackify/core/formatting/dates.dart';
 import 'package:snackify/core/formatting/money.dart';
 import 'package:snackify/core/network/api_client.dart';
+import 'package:snackify/core/network/backend_health_service.dart';
+import 'package:snackify/core/network/response_cache.dart';
+import 'package:snackify/core/network/sync_service.dart';
 import 'package:snackify/features/auth/data/auth_repository.dart';
 import 'package:snackify/features/auth/data/token_store.dart';
 import 'package:snackify/features/auth/presentation/auth_controller.dart';
@@ -390,7 +393,11 @@ class FakeBackend {
   /// connection that drops just after the server has acted.
   bool loseNextResponse = false;
 
+  /// While set, nothing reaches this server, as when the phone has no connection.
+  bool offline = false;
+
   Future<http.Response> _handle(http.Request request) async {
+    if (offline) throw http.ClientException('Network is unreachable');
     final response = await _route(request);
     if (loseNextResponse) {
       loseNextResponse = false;
@@ -3082,7 +3089,11 @@ Future<TestApp> pumpSnackify(
   addTearDown(tester.view.reset);
 
   final server = backend ?? FakeBackend();
-  final api = ApiClient(baseUrl: 'http://api.test', httpClient: server.client);
+  final api = ApiClient(
+    baseUrl: 'http://api.test',
+    httpClient: server.client,
+    cache: MemoryResponseCache(),
+  );
   final store = tokenStore ?? MemoryTokenStore(signedIn ? server.issueToken() : savedToken);
   final auth = AuthController(AuthRepository(api: api, tokenStore: store));
   final sharedPdfs = <(String, String)>[];
@@ -3109,7 +3120,20 @@ Future<TestApp> pumpSnackify(
     readBarcode: scanner.read,
     pickDocuments: documents.pick,
     takePhoto: documents.takePhoto,
+    connection: api.connection,
+    sync: SyncService(
+      api: api,
+      checkHealth: BackendHealthService(api).isHealthy,
+      // Widget tests check by pressing "Try now"; a timer would outlive the test.
+      retryEvery: null,
+      refreshers: [
+        () => ProductsRepository(api).list(),
+        () => StockRepository(api).balances(),
+        () => OrganisationsRepository(api).list(),
+      ],
+    ),
   );
+  addTearDown(services.sync.dispose);
 
   await tester.pumpWidget(SnackifyApp(auth: auth, services: services));
   auth.restore();

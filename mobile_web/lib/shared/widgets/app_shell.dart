@@ -24,6 +24,7 @@ import '../../features/receipts/presentation/receipts_screen.dart';
 import '../../features/reports/presentation/reports_screen.dart';
 import '../../features/staff/presentation/staff_screen.dart';
 import '../../features/stock/presentation/stock_screen.dart';
+import 'offline_banner.dart';
 import 'ui_kit.dart';
 import 'snackify_logo.dart';
 
@@ -52,6 +53,32 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   int _selectedIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Save the main lists on the device while online, so they can be seen offline later.
+    widget.services.sync.warmUp();
+  }
+
+  /// The section, under the offline banner while the server cannot be reached. When the
+  /// connection comes back and the information is refreshed, the section loads again.
+  Widget _withConnection(String label, Widget page) {
+    final connection = widget.services.connection;
+    return ListenableBuilder(
+      listenable: connection,
+      builder: (context, _) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (connection.offline)
+            OfflineBanner(connection: connection, onTryNow: widget.services.sync.syncNow),
+          Expanded(
+            child: KeyedSubtree(key: ValueKey('$label-${connection.refreshes}'), child: page),
+          ),
+        ],
+      ),
+    );
+  }
 
   void _onDestinationSelected(int index) {
     setState(() => _selectedIndex = index);
@@ -172,7 +199,7 @@ class _AppShellState extends State<AppShell> {
           ),
           child: _SidebarBackground(child: SafeArea(child: navigation)),
         ),
-        body: page,
+        body: _withConnection(destination.label, page),
       );
     }
 
@@ -215,7 +242,7 @@ class _AppShellState extends State<AppShell> {
                       ],
                     ),
                   ),
-                  Expanded(child: page),
+                  Expanded(child: _withConnection(destination.label, page)),
                 ],
               ),
             ),

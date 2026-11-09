@@ -18,6 +18,8 @@ class AuthRepository {
 
   Future<AppUser> signIn(String username, String pin) async {
     final body = await _api.postJson('/api/v1/auth/login', {'username': username, 'pin': pin});
+    // A new sign-in starts with nothing saved from whoever used this device before.
+    await _api.cache?.clear();
     final token = body['token'] as String;
     await _tokenStore.write(token);
     _api.authToken = token;
@@ -67,5 +69,7 @@ class AuthRepository {
   Future<void> forgetSession() async {
     _api.authToken = null;
     await _tokenStore.delete();
+    // Information saved for offline use goes with the session.
+    await _api.cache?.clear();
   }
 }

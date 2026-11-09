@@ -8,6 +8,9 @@ import 'core/files/pdf_sharer.dart';
 import 'core/network/api_client.dart';
 import 'core/scanning/barcode_reader.dart';
 import 'core/network/backend_health_service.dart';
+import 'core/network/response_cache.dart';
+import 'core/network/sync_service.dart';
+import 'features/catalogue/domain/catalogue_models.dart';
 import 'features/auth/data/auth_repository.dart';
 import 'features/auth/data/token_store.dart';
 import 'features/auth/presentation/auth_controller.dart';
@@ -27,28 +30,54 @@ import 'features/staff/data/staff_repository.dart';
 import 'features/stock/data/stock_repository.dart';
 
 void main() {
-  final api = ApiClient(baseUrl: AppConfig.apiBaseUrl);
+  final api = ApiClient(baseUrl: AppConfig.apiBaseUrl, cache: ResponseCache.forDevice());
   final auth = AuthController(AuthRepository(api: api, tokenStore: deviceTokenStore()))..restore();
+  final health = BackendHealthService(api).isHealthy;
+  final products = ProductsRepository(api);
+  final stock = StockRepository(api);
+  final organisations = OrganisationsRepository(api);
+  final receipts = ReceiptsRepository(api);
+  final purchases = PurchasesRepository(api);
+  final catalogue = CatalogueRepository(api);
+  final reports = ReportsRepository(api);
   final services = AppServices(
-    checkBackendHealth: BackendHealthService(api).isHealthy,
-    products: ProductsRepository(api),
-    stock: StockRepository(api),
+    checkBackendHealth: health,
+    products: products,
+    stock: stock,
     dispatches: DispatchesRepository(api),
     invoices: InvoicesRepository(api),
     payments: PaymentsRepository(api),
-    reports: ReportsRepository(api),
+    reports: reports,
     forecasts: ForecastsRepository(api),
     staff: StaffRepository(api),
-    organisations: OrganisationsRepository(api),
+    organisations: organisations,
     audit: AuditRepository(api),
-    receipts: ReceiptsRepository(api),
-    purchases: PurchasesRepository(api),
-    catalogue: CatalogueRepository(api),
+    receipts: receipts,
+    purchases: purchases,
+    catalogue: catalogue,
     orders: OrdersRepository(api),
     sharePdf: sharePdfWithDevice,
     readBarcode: readBarcodeWithDevice,
     pickDocuments: pickDocumentsWithDevice,
     takePhoto: takePhotoWithDevice,
+    connection: api.connection,
+    sync: SyncService(
+      api: api,
+      checkHealth: health,
+      // What the main screens show first, fetched the same way so the saved copies match.
+      refreshers: [
+        () => api.getJson('/api/v1/auth/me'),
+        reports.dashboard,
+        products.list,
+        stock.balances,
+        organisations.list,
+        purchases.list,
+        receipts.list,
+        () => catalogue.list(CatalogueKind.warehouses),
+        () => catalogue.list(CatalogueKind.suppliers),
+        () => catalogue.list(CatalogueKind.units),
+      ],
+    ),
   );
   runApp(SnackifyApp(auth: auth, services: services));
 }

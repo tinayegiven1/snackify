@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+
+import 'response_cache.dart';
 
 /// Thrown when the API cannot be reached or returns an error response.
 class ApiException implements Exception {
@@ -28,12 +31,21 @@ class ApiException implements Exception {
 /// Thin wrapper around HTTP calls to the Snackify backend.
 /// UI widgets should not call this directly; use a feature repository or service instead.
 class ApiClient {
-  ApiClient({required String baseUrl, http.Client? httpClient})
+  ApiClient({required String baseUrl, http.Client? httpClient, this.cache})
     : _baseUrl = baseUrl,
       _http = httpClient ?? http.Client();
 
   final String _baseUrl;
   final http.Client _http;
+
+  /// Copies of what the server sent, shown when it cannot be reached; null keeps nothing.
+  final ResponseCache? cache;
+
+  /// Online or offline, as the last request found.
+  final ConnectionStatus connection = ConnectionStatus();
+
+  /// Answers that must always come from the server: whether it is up is never a saved copy.
+  static const _neverSaved = {'/api/v1/health'};
 
   static const _timeout = Duration(seconds: 10);
 
@@ -44,7 +56,29 @@ class ApiClient {
   /// elsewhere, or account deactivated).
   VoidCallback? onSessionExpired;
 
-  Future<Map<String, dynamic>> getJson(String path) => _send('GET', path);
+  /// Reads from the server and keeps a copy on the device. When the server cannot be reached,
+  /// answers with the last copy instead (and marks the app offline); without one, throws the
+  /// network error, saying the information has not been saved on this device yet.
+  Future<Map<String, dynamic>> getJson(String path) async {
+    final saved = cache != null && !_neverSaved.contains(path);
+    try {
+      final body = await _send('GET', path);
+      if (saved) unawaited(cache!.write(path, jsonEncode(body)));
+      return body;
+    } on ApiException catch (error) {
+      if (!error.isNetworkError || !saved) rethrow;
+      final copy = await cache!.read(path);
+      if (copy == null) {
+        throw ApiException(
+          'You are offline, and this has not been saved on this device yet. It will show once '
+          'you are back online.',
+          code: ApiException.networkErrorCode,
+        );
+      }
+      connection.showedCopyFrom(copy.savedAt);
+      return jsonDecode(copy.body) as Map<String, dynamic>;
+    }
+  }
 
   Future<Map<String, dynamic>> postJson(String path, [Map<String, Object?>? body]) =>
       _send('POST', path, body);
@@ -121,11 +155,13 @@ class ApiClient {
     try {
       response = await _http.send(request).then(http.Response.fromStream).timeout(timeout);
     } on Exception {
+      connection.markOffline();
       throw ApiException(
         'Cannot reach the Snackify server. Check your connection and try again.',
         code: ApiException.networkErrorCode,
       );
     }
+    connection.markOnline();
 
     if (response.statusCode == 401 && token != null) {
       onSessionExpired?.call();

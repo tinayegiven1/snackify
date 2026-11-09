@@ -61,17 +61,32 @@ void main() {
     expect(find.text('Add your first product with the Add product button.'), findsOneWidget);
   });
 
-  testWidgets('explains when products cannot be loaded, and can try again', (tester) async {
+  testWidgets('offline, shows the products saved on the device and says so', (tester) async {
     final app = await pumpSnackify(tester, signedIn: true, backend: backendWithProducts());
     app.backend.reachable = false;
     await openSection(tester, 'Products');
 
+    // Saved when the app opened online.
+    expect(find.text('Potato Crisps — BBQ'), findsOneWidget);
+    expect(find.textContaining('Offline. Showing information from'), findsOneWidget);
+  });
+
+  testWidgets('explains when products cannot be loaded, and can try again', (tester) async {
+    final app = await pumpSnackify(tester, signedIn: true, backend: backendWithProducts());
+    await openSection(tester, 'Products');
+    // A search never made online has no saved copy.
+    app.backend.reachable = false;
+    await tester.enterText(find.byType(TextField).first, 'cheese');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+
     expect(find.text('Could not load products'), findsOneWidget);
+    expect(find.textContaining('has not been saved on this device yet'), findsOneWidget);
     app.backend.reachable = true;
     await tester.tap(find.text('Try again'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Potato Crisps — BBQ'), findsOneWidget);
+    expect(find.text('Maize Puffs — Cheese'), findsOneWidget);
   });
 
   testWidgets('searches as you type, and says when nothing matches', (tester) async {
