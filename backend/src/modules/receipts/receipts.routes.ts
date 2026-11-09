@@ -1,4 +1,4 @@
-import express, { Router, type Response } from 'express';
+import { Router, type Response } from 'express';
 import type pg from 'pg';
 import { z } from 'zod';
 import type { AppConfig } from '../../config/env.js';
@@ -121,11 +121,6 @@ const reasonSchema = z.object({
     .max(500, 'Use at most 500 characters'),
 });
 
-const submitSchema = z.object({
-  noDocumentReason: optionalText(500).refine((value) => value === null || value.length >= 3, {
-    message: 'Explain the reason in a few words',
-  }),
-});
 const verifySchema = z.object({ notes: optionalText(500) });
 const reviewSchema = z
   .object({
@@ -252,12 +247,11 @@ export function receiptsRouter(
   });
 
   router.post('/:id/submit', requirePermission('stock.receive'), async (req, res) => {
-    const { noDocumentReason } = parseBody(submitSchema, req.body ?? {});
+    // Older apps may still send a reason for having no document; it is no longer needed.
     const receipt = await submitReceipt(
       db,
       scope(res),
       receiptId(req.params.id),
-      { noDocumentReason },
       getAuth(res).user,
       config.receipts,
     );
@@ -331,30 +325,10 @@ export function receiptsRouter(
     res.json({ receipt });
   });
 
-  // The file is the raw request body (any content type); its name comes in ?filename=.
-  // The content, not the name or the declared type, decides whether it is accepted.
-  router.post(
-    '/:id/attachments',
-    requirePermission('stock.receive'),
-    express.raw({ type: () => true, limit: config.attachments.maxBytes }),
-    async (req, res) => {
-      const id = receiptId(req.params.id);
-      const { filename } = parseBody(
-        z.object({ filename: z.string({ error: 'Required' }).min(1, 'Required') }),
-        req.query,
-      );
-      const content = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-      const receipt = await uploadAttachment(
-        db,
-        scope(res),
-        id,
-        { filename, content },
-        getAuth(res).user,
-        config.attachments,
-      );
-      res.status(201).json({ receipt });
-    },
-  );
+  // Supplier documents are attached to goods bought now (owner's change, 2026-11-09).
+  router.post('/:id/attachments', requirePermission('stock.receive'), async (req, res) => {
+    await uploadAttachment(db, scope(res), receiptId(req.params.id));
+  });
 
   router.post(
     '/:id/attachments/:attachmentId/review',

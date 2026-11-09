@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import '../../../core/network/api_client.dart';
+import '../../receipts/domain/receipt_models.dart' show DocumentStatus;
 import '../domain/purchase_models.dart';
 
 /// Goods bought from suppliers (lists to receive against), through the backend.
@@ -45,6 +46,33 @@ class PurchasesRepository {
 
   Future<Purchase> cancel(String id, String reason) =>
       _purchase(_api.postJson('$_base/$id/cancel', {'reason': reason}));
+
+  /// Uploads a supplier document (PDF, JPEG or PNG; checked by the server from its content).
+  /// Finance and administrators only.
+  Future<Purchase> addDocument(String id, String filename, Uint8List bytes) => _purchase(
+    _api.postBytes(
+      '$_base/$id/attachments?${Uri(queryParameters: {'filename': filename}).query}',
+      bytes,
+    ),
+  );
+
+  /// Verifies or rejects a document (finance and administrators only). Rejecting needs [notes].
+  Future<Purchase> reviewDocument(
+    String id,
+    String documentId, {
+    required DocumentStatus status,
+    String? notes,
+    String? documentTotal,
+  }) => _purchase(
+    _api.postJson('$_base/$id/attachments/$documentId/review', {
+      'status': status.code,
+      'notes': ?notes,
+      'documentTotal': ?documentTotal,
+    }),
+  );
+
+  Future<Uint8List> document(String id, String documentId) =>
+      _api.getBytes('$_base/$id/attachments/$documentId');
 
   Future<Uint8List> pdf(String id) => _api.getBytes('$_base/$id/pdf', accept: 'application/pdf');
 

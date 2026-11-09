@@ -58,6 +58,8 @@ class PurchaseSummary {
     required this.total,
     required this.lineCount,
     required this.createdBy,
+    this.documentCount = 0,
+    this.documentsPending = 0,
   });
 
   factory PurchaseSummary.fromJson(Map<String, dynamic> json) => PurchaseSummary(
@@ -75,6 +77,8 @@ class PurchaseSummary {
     total: json['total'] as String,
     lineCount: json['lineCount'] as int,
     createdBy: PersonRef.fromJson(json['createdBy'] as Map<String, dynamic>),
+    documentCount: (json['documentCount'] as int?) ?? 0,
+    documentsPending: (json['documentsPending'] as int?) ?? 0,
   );
 
   final String id;
@@ -95,6 +99,12 @@ class PurchaseSummary {
   final String total;
   final int lineCount;
   final PersonRef createdBy;
+
+  /// Supplier documents (invoices, delivery notes) attached to the list.
+  final int documentCount;
+
+  /// Documents finance has not verified or rejected yet.
+  final int documentsPending;
 
   bool get isCancelled => status == PurchaseStatus.cancelled;
 
@@ -202,6 +212,8 @@ class Purchase extends PurchaseSummary {
     required super.total,
     required super.lineCount,
     required super.createdBy,
+    super.documentCount,
+    super.documentsPending,
     required this.notes,
     required this.cancelledBy,
     required this.cancelReason,
@@ -209,6 +221,7 @@ class Purchase extends PurchaseSummary {
     required this.canCancel,
     required this.lines,
     required this.receipts,
+    this.documents = const [],
   });
 
   factory Purchase.fromJson(Map<String, dynamic> json) {
@@ -226,6 +239,8 @@ class Purchase extends PurchaseSummary {
       total: summary.total,
       lineCount: summary.lineCount,
       createdBy: summary.createdBy,
+      documentCount: summary.documentCount,
+      documentsPending: summary.documentsPending,
       notes: json['notes'] as String?,
       cancelledBy: PersonRef.maybe(json['cancelledBy']),
       cancelReason: json['cancelReason'] as String?,
@@ -238,6 +253,10 @@ class Purchase extends PurchaseSummary {
       receipts: [
         for (final receipt in (json['receipts'] as List?) ?? const [])
           PurchaseReceipt.fromJson(receipt as Map<String, dynamic>),
+      ],
+      documents: [
+        for (final document in (json['attachments'] as List?) ?? const [])
+          ReceiptDocument.fromJson(document as Map<String, dynamic>),
       ],
     );
   }
@@ -253,6 +272,20 @@ class Purchase extends PurchaseSummary {
 
   /// Goods-received notes made from it, oldest first.
   final List<PurchaseReceipt> receipts;
+
+  /// Supplier documents (invoices, delivery notes, photos), oldest first.
+  final List<ReceiptDocument> documents;
+
+  /// A verified document whose total differs from the list's total (compared in cents).
+  bool get documentTotalMismatch {
+    final listCents = decimalCents(total);
+    return documents.any(
+      (document) =>
+          document.status == DocumentStatus.verified &&
+          document.documentTotal != null &&
+          decimalCents(document.documentTotal!) != listCents,
+    );
+  }
 
   /// Open, with something still to arrive.
   bool get canReceive => !isCancelled && receivingStatus != ReceivingStatus.received;
@@ -320,6 +353,9 @@ class PurchaseLineInput {
     'notes': notes,
   };
 }
+
+/// An amount such as "57.5" or "57.50" in whole cents (rounded half up past 2 decimals).
+int decimalCents(String amount) => lineTotalCents(1, amount);
 
 /// [quantity] × [unitCost] (up to 4 decimals) in whole cents, rounded half up.
 int lineTotalCents(int quantity, String unitCost) {

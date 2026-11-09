@@ -246,7 +246,6 @@ npm start
 | `WEB_APP_DIR`                 | (none)                  | Folder with the built web app (`flutter build web`) to serve on the API's address; used in production |
 | `TRUST_PROXY_HOPS`            | `0`                     | Proxies in front of the API (1 on Cloud Run), so sign-in limits apply per client |
 | `RECEIPT_STOCK_AVAILABLE_BEFORE_VERIFICATION` | `true`            | A goods-received note's stock is usable once submitted (taken back if rejected); `false` waits for verification |
-| `RECEIPT_DOCUMENT_REQUIRED`   | `true`                  | Submitting a goods-received note needs a supplier document (authorised users may give a reason instead) |
 | `ATTACHMENT_MAX_BYTES`        | `10485760` (10 MB)      | Largest supplier document accepted                      |
 | `ATTACHMENT_STORAGE_DIR`      | `storage/attachments`   | Where supplier documents are kept (outside `WEB_APP_DIR`; back it up with the database) |
 | `ORDERS_ALLOW_BACKORDERS`     | `true`                  | Orders may be approved when the Head Office has less stock (the rest is a backorder); `false` needs enough stock |

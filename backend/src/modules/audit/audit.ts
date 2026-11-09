@@ -54,7 +54,9 @@ export type AuditAction =
   | 'order.cancelled'
   | 'purchase.created'
   | 'purchase.updated'
-  | 'purchase.cancelled';
+  | 'purchase.cancelled'
+  | 'purchase.document_added'
+  | 'purchase.document_reviewed';
 
 export interface AuditEntry {
   /** The signed-in user who acted, or null for setup commands and unknown users. */

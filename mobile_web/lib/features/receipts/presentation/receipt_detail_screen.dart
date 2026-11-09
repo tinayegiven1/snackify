@@ -11,8 +11,9 @@ import 'receipt_editor_screen.dart';
 import 'receipt_services.dart';
 import 'receipts_screen.dart' show ReceiptStatusBadge, receivedMessage;
 
-/// One goods-received note: its lines and documents, and what may be done next. Reviewers
-/// check each document, then verify or reject the receipt; administrators reverse a posted one.
+/// One goods-received note: its lines, and what may be done next. Finance checks the goods,
+/// then verifies or rejects the receipt; administrators reverse a posted one. Supplier
+/// documents are on the goods-bought list; notes from before that still show theirs.
 class ReceiptDetailScreen extends StatefulWidget {
   const ReceiptDetailScreen({super.key, required this.services, required this.receiptId});
 
@@ -123,26 +124,6 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
     }
   }
 
-  Future<void> _addDocuments(GoodsReceipt receipt) async {
-    final picked = await _services.pickDocuments();
-    for (final document in picked) {
-      await _run(
-        () => _services.receipts.addDocument(receipt.id, document.name, document.bytes),
-        'Attached ${document.name}.',
-      );
-      if (_error != null) return;
-    }
-  }
-
-  Future<void> _takePhoto(GoodsReceipt receipt) async {
-    final photo = await _services.takePhoto();
-    if (photo == null || !mounted) return;
-    await _run(
-      () => _services.receipts.addDocument(receipt.id, photo.name, photo.bytes),
-      'Attached ${photo.name}.',
-    );
-  }
-
   Future<void> _preview(ReceiptDocument document) async {
     try {
       final bytes =
@@ -167,7 +148,7 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
     final notes = await _askText(
       'Verify receipt',
       'Notes (optional)',
-      message: 'The documents, quantities and costs match what arrived.',
+      message: 'The quantities and costs match what arrived.',
       minLength: 0,
     );
     if (notes == null) return;
@@ -257,9 +238,6 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
     if (receipt == null) return const Center(child: CircularProgressIndicator());
     final theme = Theme.of(context);
     final status = receipt.status;
-    final canAddDocuments =
-        _services.canReceive &&
-        (status == ReceiptStatus.draft || status == ReceiptStatus.pendingVerification);
     // One person enters a note and another decides on it (the server insists too).
     final enteredByMe = receipt.receivedBy.id == _services.user.id;
     final approved = status == ReceiptStatus.verified || status == ReceiptStatus.posted;
@@ -347,13 +325,10 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
                       textAlign: TextAlign.right,
                     ),
                   ),
-                const SizedBox(height: 16),
-                Text('Supplier documents', style: theme.textTheme.titleMedium),
-                if (receipt.documents.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 8),
-                    child: Text('No documents attached.'),
-                  ),
+                if (receipt.documents.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Text('Supplier documents', style: theme.textTheme.titleMedium),
+                ],
                 for (final document in receipt.documents)
                   ListTile(
                     contentPadding: EdgeInsets.zero,
@@ -377,22 +352,6 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
                       ].join('\n'),
                     ),
                     isThreeLine: document.reviewNotes != null || document.documentTotal != null,
-                  ),
-                if (canAddDocuments)
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      TextButton.icon(
-                        onPressed: _busy ? null : () => _addDocuments(receipt),
-                        icon: const Icon(Icons.attach_file),
-                        label: const Text('Attach document'),
-                      ),
-                      TextButton.icon(
-                        onPressed: _busy ? null : () => _takePhoto(receipt),
-                        icon: const Icon(Icons.photo_camera_outlined),
-                        label: const Text('Take photo'),
-                      ),
-                    ],
                   ),
                 if (receipt.whatsappMessages.isNotEmpty) ...[
                   const SizedBox(height: 16),

@@ -139,7 +139,7 @@ void main() {
 
   testWidgets('a storekeeper receives against the list, correcting what arrived', (tester) async {
     final backend = withPurchase(backendFor('storekeeper'));
-    final app = await pumpSnackify(tester, signedIn: true, backend: backend);
+    await pumpSnackify(tester, signedIn: true, backend: backend);
     await openSection(tester, 'Goods Bought');
     expect(find.text('Record goods bought'), findsNothing);
     await tester.tap(purchaseTile('GB000001'));
@@ -164,8 +164,6 @@ void main() {
     await chooseOption(tester, 'Why the quantities differ', 'Shortage');
     await press(tester, find.text('Done'));
     expect(find.textContaining('Received 96 pack of 100 bought'), findsOneWidget);
-    app.documents.willPick([pdfDocument()]);
-    await press(tester, find.text('Attach document'));
     await press(tester, find.text('Submit for verification'));
 
     final grn = backend.grns.single;
@@ -210,11 +208,9 @@ void main() {
     tester,
   ) async {
     final backend = withPurchase(backendFor('storekeeper'));
-    final app = await pumpSnackify(tester, signedIn: true, backend: backend);
+    await pumpSnackify(tester, signedIn: true, backend: backend);
     await openPurchase(tester, 'GB000001');
     await press(tester, find.text('Receive'));
-    app.documents.willPick([pdfDocument()]);
-    await press(tester, find.text('Attach document'));
     await press(tester, find.text('Submit for verification'));
     expect(find.text('Received'), findsWidgets);
 
@@ -290,7 +286,7 @@ void main() {
     tester,
   ) async {
     final backend = withPurchase(backendFor('storekeeper'));
-    final app = await pumpSnackify(tester, signedIn: true, backend: backend);
+    await pumpSnackify(tester, signedIn: true, backend: backend);
     await openPurchase(tester, 'GB000001');
 
     // Meanwhile finance changes the list on another device: its lines are replaced.
@@ -303,8 +299,6 @@ void main() {
     // This screen still shows the old copy, but Receive fetches the list again.
     await press(tester, find.text('Receive'));
     expect(find.text('Receiving against GB000001'), findsOneWidget);
-    app.documents.willPick([pdfDocument()]);
-    await press(tester, find.text('Attach document'));
     await press(tester, find.text('Submit for verification'));
 
     expect(find.textContaining('changed after this note was started'), findsNothing);

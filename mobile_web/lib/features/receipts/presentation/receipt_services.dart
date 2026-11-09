@@ -26,6 +26,8 @@ class ReceiptServices {
   final OrganisationsRepository organisations;
   final ProductsRepository products;
   final AppUser user;
+
+  /// Chooses supplier documents (used on goods-bought lists).
   final DocumentPicker pickDocuments;
 
   /// Takes a photo of a supplier document with the camera.
@@ -40,14 +42,11 @@ class ReceiptServices {
   /// Records deliveries (warehouse staff).
   bool get canReceive => user.can('stock.receive');
 
-  /// Checks documents and accepts or rejects receipts (finance).
+  /// Checks the goods and accepts or rejects receipts (finance).
   bool get canVerify => user.can('receipt.verify');
 
   /// Cancels a posted receipt, taking its stock back out (administrators).
   bool get canReverse => user.can('receipt.reverse');
-
-  /// May submit without a supplier document, giving a reason (administrators).
-  bool get canSkipDocument => user.can('receipt.no_document');
 
   /// Head Office staff may record deliveries for a subsidiary.
   bool get canChooseOwner => user.seesAllOrganisations;

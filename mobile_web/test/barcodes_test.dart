@@ -175,8 +175,6 @@ void main() {
     expect(find.text('Maize Puffs — Cheese — Small'), findsOneWidget);
 
     await fillLine(tester, bought: 24);
-    app.documents.willPick([pdfDocument()]);
-    await tapButton(tester, find.text('Attach document'));
     await tapButton(tester, find.text('Submit for verification'));
     expect(app.backend.onHand('product-2'), 74);
   });

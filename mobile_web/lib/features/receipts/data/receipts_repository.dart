@@ -3,7 +3,8 @@ import 'dart:typed_data';
 import '../../../core/network/api_client.dart';
 import '../domain/receipt_models.dart';
 
-/// Goods-received notes and their documents, through the backend.
+/// Goods-received notes, through the backend. Supplier documents are attached to goods-bought
+/// lists; older notes' documents can still be downloaded.
 class ReceiptsRepository {
   ReceiptsRepository(this._api);
 
@@ -34,9 +35,8 @@ class ReceiptsRepository {
   Future<GoodsReceipt> update(String id, ReceiptInput input) =>
       _receipt(_api.putJson('$_base/$id', input.toJson()));
 
-  /// Submits for verification. [noDocumentReason] is only for authorised users.
-  Future<GoodsReceipt> submit(String id, {String? noDocumentReason}) =>
-      _receipt(_api.postJson('$_base/$id/submit', {'noDocumentReason': ?noDocumentReason}));
+  /// Submits for verification.
+  Future<GoodsReceipt> submit(String id) => _receipt(_api.postJson('$_base/$id/submit'));
 
   Future<GoodsReceipt> verify(String id, {String? notes}) =>
       _receipt(_api.postJson('$_base/$id/verify', {'notes': ?notes}));
@@ -52,28 +52,7 @@ class ReceiptsRepository {
   Future<GoodsReceipt> reverse(String id, String reason) =>
       _receipt(_api.postJson('$_base/$id/reverse', {'reason': reason}));
 
-  /// Uploads a supplier document (PDF, JPEG or PNG; checked by the server from its content).
-  Future<GoodsReceipt> addDocument(String id, String filename, Uint8List bytes) => _receipt(
-    _api.postBytes(
-      '$_base/$id/attachments?${Uri(queryParameters: {'filename': filename}).query}',
-      bytes,
-    ),
-  );
-
-  Future<GoodsReceipt> reviewDocument(
-    String id,
-    String documentId, {
-    required DocumentStatus status,
-    String? notes,
-    String? documentTotal,
-  }) => _receipt(
-    _api.postJson('$_base/$id/attachments/$documentId/review', {
-      'status': status.code,
-      'notes': notes,
-      'documentTotal': documentTotal,
-    }),
-  );
-
+  /// A document attached before documents moved to the goods-bought list.
   Future<Uint8List> document(String id, String documentId) =>
       _api.getBytes('$_base/$id/attachments/$documentId');
 

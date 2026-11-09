@@ -53,9 +53,6 @@ void main() {
 
     await openReceiveForm(tester);
     await addLine(tester, product: 'Maize Puffs — Cheese — Small', bought: 48, batch: 'L2026-10A');
-    app.documents.willPick([pdfDocument()]);
-    await press(tester, find.text('Attach document'));
-    expect(find.text('invoice.pdf'), findsOneWidget);
     await press(tester, find.text('Submit for verification'));
 
     expect(
@@ -66,7 +63,7 @@ void main() {
     final grn = app.backend.grns.single;
     expect(grn, containsPair('receivedDate', toApiDate(today())));
     expect((grn['lines'] as List).single, containsPair('batchNumber', 'L2026-10A'));
-    expect((grn['documents'] as List).single, containsPair('filename', 'invoice.pdf'));
+    expect(grn['documents'] as List, isEmpty); // supplier documents go on goods bought
   });
 
   testWidgets('the receive form checks fields before sending anything', (tester) async {
@@ -92,14 +89,12 @@ void main() {
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
 
-    // A storekeeper cannot submit without a supplier document.
+    expect(app.backend.requests.where((r) => r.startsWith('POST /api/v1/receipts')), isEmpty);
+
+    // No supplier document is needed: those go on the goods-bought list.
     await addLine(tester, product: 'Potato Crisps — BBQ — Small', bought: 24);
     await press(tester, find.text('Submit for verification'));
-    expect(
-      find.text('Attach the supplier invoice or delivery note before submitting.'),
-      findsOneWidget,
-    );
-    expect(app.backend.requests.where((r) => r.startsWith('POST /api/v1/receipts')), isEmpty);
+    expect(app.backend.grns.single['status'], 'PENDING_VERIFICATION');
   });
 
   testWidgets("an admin records an opening balance, and sees the server's reason when refused", (

@@ -17,7 +17,7 @@ export const testConfig: AppConfig = {
   business: { name: 'Snackify Test Foods', contact: '12 Example Road, Harare' },
   webAppDir: null,
   trustProxyHops: 0,
-  receipts: { stockAvailableBeforeVerification: true, documentRequired: true },
+  receipts: { stockAvailableBeforeVerification: true },
   orders: { allowBackorders: true },
   // Tests that send on WhatsApp pass a fake sender to createApp instead.
   whatsapp: null,

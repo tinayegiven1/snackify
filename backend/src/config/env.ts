@@ -32,8 +32,6 @@ export interface AppConfig {
   receipts: {
     /** True: stock is added when a receipt is submitted, before verification (decision D3). */
     stockAvailableBeforeVerification: boolean;
-    /** True: a receipt needs at least one document, unless an authorised user gives a reason. */
-    documentRequired: boolean;
   };
   /** Receipt documents: where they are kept (outside the web app) and how large they may be. */
   attachments: { storageDir: string; maxBytes: number };
@@ -161,7 +159,6 @@ const envSchema = z.object({
     .max(5, 'Must be at most 5')
     .default(0),
   RECEIPT_STOCK_AVAILABLE_BEFORE_VERIFICATION: booleanSetting(true),
-  RECEIPT_DOCUMENT_REQUIRED: booleanSetting(true),
   ATTACHMENT_MAX_BYTES: z.coerce
     .number({ error: 'Must be a whole number of bytes' })
     .int('Must be a whole number of bytes')
@@ -244,7 +241,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     trustProxyHops: result.data.TRUST_PROXY_HOPS,
     receipts: {
       stockAvailableBeforeVerification: result.data.RECEIPT_STOCK_AVAILABLE_BEFORE_VERIFICATION,
-      documentRequired: result.data.RECEIPT_DOCUMENT_REQUIRED,
     },
     attachments: {
       storageDir: attachmentDir(result.data.ATTACHMENT_STORAGE_DIR, result.data.WEB_APP_DIR),

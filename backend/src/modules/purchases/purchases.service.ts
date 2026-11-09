@@ -1,3 +1,5 @@
+import { unlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import type pg from 'pg';
 import { escapeLike } from '../../database/sql.js';
 import { withTransaction, type Queryable } from '../../database/transaction.js';
@@ -6,6 +8,12 @@ import { recordAudit } from '../audit/audit.js';
 import type { PublicUser } from '../auth/roles.js';
 import { canAccessOrganisation, type AccessScope } from '../organisations/access.js';
 import { toBaseQuantity } from '../products/products.service.js';
+import {
+  cleanFilename,
+  detectDocumentType,
+  readDocument,
+  storeDocument,
+} from '../receipts/attachment-files.js';
 
 /**
  * Goods bought: what finance bought from a supplier, before it arrives. The warehouse receives
@@ -39,8 +47,27 @@ export interface PurchaseSummary {
   currency: string;
   total: string;
   lineCount: number;
+  /** Supplier documents attached, and how many still wait for finance to review. */
+  documentCount: number;
+  documentsPending: number;
   createdBy: Person;
   createdAt: Date;
+}
+
+/** A supplier document (invoice or delivery note) attached to the list. */
+export interface PurchaseAttachment {
+  id: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedBy: Person;
+  uploadedAt: Date;
+  verificationStatus: 'PENDING' | 'VERIFIED' | 'REJECTED';
+  reviewedBy: Person | null;
+  reviewedAt: Date | null;
+  reviewNotes: string | null;
+  /** The total printed on the document, as the reviewer read it. */
+  documentTotal: string | null;
 }
 
 export interface PurchaseLine {
@@ -70,6 +97,8 @@ export interface Purchase extends PurchaseSummary {
   lines: PurchaseLine[];
   /** Goods-received notes made from the list, oldest first. */
   receipts: { id: string; grnNumber: string; status: string; receivedDate: string }[];
+  /** Supplier documents, oldest first. */
+  attachments: PurchaseAttachment[];
 }
 
 export interface PurchaseLineInput {
@@ -117,6 +146,10 @@ const SUMMARY_SELECT = `
          (SELECT COALESCE(sum(l.line_total), 0)::numeric(14, 2)::text
           FROM purchase_lines l WHERE l.purchase_id = p.id) AS total,
          (SELECT count(*)::int FROM purchase_lines l WHERE l.purchase_id = p.id) AS line_count,
+         (SELECT count(*)::int FROM purchase_attachments a WHERE a.purchase_id = p.id)
+           AS document_count,
+         (SELECT count(*)::int FROM purchase_attachments a
+          WHERE a.purchase_id = p.id AND a.verification_status = 'PENDING') AS documents_pending,
          (SELECT CASE
                    WHEN bool_and(received >= quantity) THEN 'RECEIVED'
                    WHEN bool_or(received > 0) THEN 'PARTLY_RECEIVED'
@@ -155,6 +188,8 @@ interface SummaryRow {
   cancelled_by: Person | null;
   total: string;
   line_count: number;
+  document_count: number;
+  documents_pending: number;
   receiving_status: ReceivingStatus;
   can_change: boolean;
   can_cancel: boolean;
@@ -172,6 +207,8 @@ const toSummary = (row: SummaryRow): PurchaseSummary => ({
   currency: row.currency,
   total: row.total,
   lineCount: row.line_count,
+  documentCount: row.document_count,
+  documentsPending: row.documents_pending,
   createdBy: row.created_by,
   createdAt: row.created_at,
 });
@@ -267,6 +304,31 @@ export async function getPurchase(
      WHERE purchase_id = $1 ORDER BY created_at, grn_number`,
     [id],
   );
+  const { rows: attachments } = await db.query<{
+    id: string;
+    original_filename: string;
+    mime_type: string;
+    size_bytes: number;
+    uploaded_by: Person;
+    uploaded_at: Date;
+    verification_status: PurchaseAttachment['verificationStatus'];
+    reviewed_by: Person | null;
+    reviewed_at: Date | null;
+    review_notes: string | null;
+    document_total: string | null;
+  }>(
+    `SELECT a.id, a.original_filename, a.mime_type, a.size_bytes, a.uploaded_at,
+            a.verification_status, a.reviewed_at, a.review_notes, a.document_total::text,
+            json_build_object('id', ub.id, 'fullName', ub.full_name) AS uploaded_by,
+            CASE WHEN rv.id IS NULL THEN NULL
+                 ELSE json_build_object('id', rv.id, 'fullName', rv.full_name) END AS reviewed_by
+     FROM purchase_attachments a
+     JOIN users ub ON ub.id = a.uploaded_by
+     LEFT JOIN users rv ON rv.id = a.reviewed_by
+     WHERE a.purchase_id = $1
+     ORDER BY a.uploaded_at, a.id`,
+    [id],
+  );
 
   return {
     ...toSummary(row),
@@ -293,6 +355,19 @@ export async function getPurchase(
       grnNumber: r.grn_number,
       status: r.status,
       receivedDate: r.received_date,
+    })),
+    attachments: attachments.map((a) => ({
+      id: a.id,
+      filename: a.original_filename,
+      mimeType: a.mime_type,
+      sizeBytes: a.size_bytes,
+      uploadedBy: a.uploaded_by,
+      uploadedAt: a.uploaded_at,
+      verificationStatus: a.verification_status,
+      reviewedBy: a.reviewed_by,
+      reviewedAt: a.reviewed_at,
+      reviewNotes: a.review_notes,
+      documentTotal: a.document_total,
     })),
   };
 }
@@ -491,4 +566,154 @@ export async function cancelPurchase(
     });
   });
   return getPurchase(pool, scope, id);
+}
+
+// ------------------------------------------------------------------ Supplier documents
+
+/** Locks the list and checks it is open (documents are not added to a cancelled list). */
+async function lockOpen(client: pg.PoolClient, scope: AccessScope, id: string, action: string) {
+  const { rows } = await client.query<{
+    status: PurchaseStatus;
+    purchase_number: string;
+    owner_organisation_id: string;
+  }>(
+    'SELECT status, purchase_number, owner_organisation_id FROM purchases WHERE id = $1 FOR UPDATE',
+    [id],
+  );
+  const row = rows[0];
+  if (!row || !canAccessOrganisation(scope, row.owner_organisation_id)) throw purchaseNotFound();
+  if (row.status !== 'OPEN') {
+    throw new AppError(
+      409,
+      'PURCHASE_CANCELLED',
+      `This goods-bought list was cancelled, so its documents can no longer be ${action}.`,
+    );
+  }
+  return row;
+}
+
+/**
+ * Attaches a supplier document (PDF, JPEG or PNG, checked from its content) to an open list. It
+ * waits for finance or an administrator to verify or reject it.
+ */
+export async function uploadPurchaseDocument(
+  pool: pg.Pool,
+  scope: AccessScope,
+  id: string,
+  file: { filename: string; content: Buffer },
+  actor: PublicUser,
+  settings: { storageDir: string; maxBytes: number },
+): Promise<Purchase> {
+  const filename = cleanFilename(file.filename);
+  if (file.content.length === 0) throw fieldError('file', 'The file is empty');
+  if (file.content.length > settings.maxBytes) {
+    throw new AppError(413, 'PAYLOAD_TOO_LARGE', 'The file is too large.');
+  }
+  const mimeType = detectDocumentType(file.content, filename);
+
+  let storedKey: string | null = null;
+  try {
+    await withTransaction(pool, async (client) => {
+      const current = await lockOpen(client, scope, id, 'added');
+      const stored = await storeDocument(settings.storageDir, file.content);
+      storedKey = stored.storageKey;
+      await client.query(
+        `INSERT INTO purchase_attachments
+           (purchase_id, original_filename, storage_key, mime_type, size_bytes, sha256, uploaded_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [id, filename, stored.storageKey, mimeType, file.content.length, stored.sha256, actor.id],
+      );
+      await recordAudit(client, {
+        actorUserId: actor.id,
+        action: 'purchase.document_added',
+        entityType: 'purchase',
+        entityId: id,
+        organisationId: current.owner_organisation_id,
+        details: {
+          purchaseNumber: current.purchase_number,
+          filename,
+          mimeType,
+          sizeBytes: file.content.length,
+        },
+      });
+    });
+  } catch (error) {
+    // Nothing was recorded, so the stored copy is not needed.
+    if (storedKey) await unlink(join(settings.storageDir, storedKey)).catch(() => {});
+    throw error;
+  }
+  return getPurchase(pool, scope, id);
+}
+
+/** Finance or an administrator verifies or rejects a document (a rejection needs a reason). */
+export async function reviewPurchaseDocument(
+  pool: pg.Pool,
+  scope: AccessScope,
+  id: string,
+  attachmentId: string,
+  review: { status: 'VERIFIED' | 'REJECTED'; notes: string | null; documentTotal: string | null },
+  actor: PublicUser,
+): Promise<Purchase> {
+  await withTransaction(pool, async (client) => {
+    const current = await lockOpen(client, scope, id, 'reviewed');
+    if (review.status === 'REJECTED' && !review.notes) {
+      throw fieldError('notes', 'Say why the document is rejected');
+    }
+    const { rowCount } = await client.query(
+      `UPDATE purchase_attachments
+       SET verification_status = $3, review_notes = $4, document_total = $5::numeric,
+           reviewed_by = $6, reviewed_at = now()
+       WHERE id = $2 AND purchase_id = $1 AND verification_status = 'PENDING'`,
+      [id, attachmentId, review.status, review.notes, review.documentTotal, actor.id],
+    );
+    if (!rowCount) {
+      throw new AppError(
+        409,
+        'DOCUMENT_ALREADY_REVIEWED',
+        'This document has already been reviewed, or does not belong to this list.',
+      );
+    }
+    await recordAudit(client, {
+      actorUserId: actor.id,
+      action: 'purchase.document_reviewed',
+      entityType: 'purchase',
+      entityId: id,
+      organisationId: current.owner_organisation_id,
+      details: {
+        purchaseNumber: current.purchase_number,
+        attachmentId,
+        status: review.status,
+        notes: review.notes,
+        documentTotal: review.documentTotal,
+      },
+    });
+  });
+  return getPurchase(pool, scope, id);
+}
+
+/** A document's content, for someone allowed to see its list. */
+export async function readPurchaseDocument(
+  db: Queryable,
+  scope: AccessScope,
+  id: string,
+  attachmentId: string,
+  storageDir: string,
+): Promise<{ filename: string; mimeType: string; content: Buffer }> {
+  await getPurchase(db, scope, id);
+  const { rows } = await db.query<{
+    original_filename: string;
+    mime_type: string;
+    storage_key: string;
+  }>(
+    `SELECT original_filename, mime_type, storage_key FROM purchase_attachments
+     WHERE id = $1 AND purchase_id = $2`,
+    [attachmentId, id],
+  );
+  const row = rows[0];
+  if (!row) throw new AppError(404, 'DOCUMENT_NOT_FOUND', 'No document has that id.');
+  return {
+    filename: row.original_filename,
+    mimeType: row.mime_type,
+    content: await readDocument(storageDir, row.storage_key),
+  };
 }

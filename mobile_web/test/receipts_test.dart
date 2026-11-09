@@ -5,7 +5,8 @@ import 'package:snackify/core/files/pdf_sharer.dart';
 import 'helpers/receipt_steps.dart';
 import 'helpers/test_app.dart';
 
-// StockFlow Stage 4: goods-received notes, their documents, the catalogue and product units.
+// StockFlow Stage 4: goods-received notes, the catalogue and product units. Supplier documents
+// are attached to goods bought (purchase_documents_test.dart); older notes still show theirs.
 
 const bbq = 'Potato Crisps — BBQ — Small';
 
@@ -39,14 +40,12 @@ Future<FakeBackend> switchPerson(WidgetTester tester, FakeBackend backend, Strin
   return other;
 }
 
-/// A submitted receipt for 100 BBQ at 0.4250, with one PDF, added straight to the backend
-/// through the storekeeper's screens.
-Future<void> submitThroughScreens(WidgetTester tester, TestApp app, {String? owner}) async {
+/// A submitted receipt for 100 BBQ at 0.4250, added straight to the backend through the
+/// storekeeper's screens.
+Future<void> submitThroughScreens(WidgetTester tester, {String? owner}) async {
   await startReceipt(tester);
   if (owner != null) await chooseOption(tester, 'Whose stock is this?', owner);
   await addLine(tester, product: bbq, bought: 100, cost: '0.4250');
-  app.documents.willPick([pdfDocument()]);
-  await press(tester, find.text('Attach document'));
   await press(tester, find.text('Submit for verification'));
 }
 
@@ -65,9 +64,7 @@ Future<void> openGrn(WidgetTester tester, String number) async {
 }
 
 void main() {
-  testWidgets('a storekeeper saves a draft, then submits it with the supplier invoice', (
-    tester,
-  ) async {
+  testWidgets('a storekeeper saves a draft, then submits it', (tester) async {
     final app = await pumpSnackify(tester, signedIn: true, backend: backendFor('storekeeper'));
     await startReceipt(tester);
     await tester.enterText(
@@ -92,8 +89,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('1 line(s) received differ from what was bought.'), findsOneWidget);
     await press(tester, find.text('Continue draft'));
-    app.documents.willPick([pdfDocument('delivery-note.pdf')]);
-    await press(tester, find.text('Attach document'));
     await press(tester, find.text('Submit for verification'));
 
     expect(find.text('Waiting for verification'), findsWidgets);
@@ -103,32 +98,48 @@ void main() {
     expect(find.text('USD 42.50'), findsOneWidget);
   });
 
-  testWidgets('a document the server refuses is reported, and the draft is kept', (tester) async {
+  testWidgets('the receipt form has no documents: it submits without one', (tester) async {
     final app = await pumpSnackify(tester, signedIn: true, backend: backendFor('storekeeper'));
     await startReceipt(tester);
     await addLine(tester, product: bbq, bought: 5);
-    app.documents.willPick([fakePdf()]);
-    await press(tester, find.text('Attach document'));
+    expect(find.text('Attach document'), findsNothing);
+    expect(find.text('Take photo'), findsNothing);
+    expect(find.text('Supplier documents'), findsNothing);
     await press(tester, find.text('Submit for verification'));
 
-    expect(
-      find.text('Only PDF, JPEG and PNG documents are accepted (this file is something else).'),
-      findsOneWidget,
-    );
-    expect(app.backend.grns.single['status'], 'DRAFT');
-    expect(app.backend.onHand('product-1'), 10);
+    expect(find.text('Submit without a document?'), findsNothing);
+    expect(app.backend.grns.single['status'], 'PENDING_VERIFICATION');
+    expect(app.backend.grns.single['documents'], isEmpty);
+    expect(app.backend.requests.where((r) => r.contains('/attachments')), isEmpty);
 
-    // Saving again changes the same draft rather than adding another.
-    await press(tester, find.text('Save draft'));
-    expect(app.backend.grns, hasLength(1));
+    // Its page has no documents section either.
+    await tester.tap(grnTile('GRN000001'));
+    await tester.pumpAndSettle();
+    expect(find.text('Supplier documents'), findsNothing);
+    expect(find.text('Attach document'), findsNothing);
   });
 
-  testWidgets('finance opens the document and verifies the receipt with its documents', (
+  testWidgets('an older note still shows its document; finance opens it and verifies the note', (
     tester,
   ) async {
     final backend = backendFor('storekeeper');
-    final storekeeper = await pumpSnackify(tester, signedIn: true, backend: backend);
-    await submitThroughScreens(tester, storekeeper);
+    await pumpSnackify(tester, signedIn: true, backend: backend);
+    await submitThroughScreens(tester);
+    // Attached before documents moved to goods bought.
+    (backend.grns.single['documents'] as List<Map<String, Object?>>).add({
+      'id': 'grn-1-doc-1',
+      'filename': 'invoice.pdf',
+      'mimeType': 'application/pdf',
+      'sizeBytes': pdfDocument().bytes.length,
+      'uploadedBy': {'id': 'user-1', 'fullName': 'Tendai Moyo'},
+      'uploadedAt': '2026-10-20T08:00:00Z',
+      'verificationStatus': 'PENDING',
+      'reviewedBy': null,
+      'reviewedAt': null,
+      'reviewNotes': null,
+      'documentTotal': null,
+      'bytes': pdfDocument().bytes,
+    });
 
     final finance = FakeBackend(role: 'accounts')
       ..products.addAll(backend.products)
@@ -141,7 +152,10 @@ void main() {
     await tester.tap(grnTile('GRN000001'));
     await tester.pumpAndSettle();
 
-    // No download or review buttons on a document: tapping a PDF opens it.
+    // Read-only: no adding, download or review buttons; tapping a PDF opens it.
+    expect(find.text('Supplier documents'), findsOneWidget);
+    expect(find.text('Attach document'), findsNothing);
+    expect(find.text('Take photo'), findsNothing);
     expect(find.byTooltip('Download invoice.pdf'), findsNothing);
     expect(find.byTooltip('Review invoice.pdf'), findsNothing);
     await press(tester, find.text('invoice.pdf'));
@@ -164,8 +178,8 @@ void main() {
   ) async {
     // An administrator could otherwise both enter and approve.
     final backend = backendFor('admin');
-    final app = await pumpSnackify(tester, signedIn: true, backend: backend);
-    await submitThroughScreens(tester, app);
+    await pumpSnackify(tester, signedIn: true, backend: backend);
+    await submitThroughScreens(tester);
     expect(backend.onHand('product-1'), 110);
 
     await tester.tap(grnTile('GRN000001'));
@@ -192,8 +206,8 @@ void main() {
     tester,
   ) async {
     final backend = backendFor('storekeeper');
-    final app = await pumpSnackify(tester, signedIn: true, backend: backend);
-    await submitThroughScreens(tester, app, owner: 'Mbare Branch (SUB-01)');
+    await pumpSnackify(tester, signedIn: true, backend: backend);
+    await submitThroughScreens(tester, owner: 'Mbare Branch (SUB-01)');
 
     expect(
       find.text(
@@ -245,7 +259,7 @@ void main() {
     expect(await menuSections(tester), isNot(contains('Catalogue')));
   });
 
-  testWidgets('an administrator submits without a document, giving a reason, and reverses it', (
+  testWidgets('an administrator submits without being asked for a document, and reverses it', (
     tester,
   ) async {
     final backend = backendFor('admin');
@@ -253,11 +267,9 @@ void main() {
     await startReceipt(tester);
     await addLine(tester, product: bbq, bought: 30);
     await press(tester, find.text('Submit for verification'));
-    expect(find.text('Submit without a document?'), findsOneWidget);
-    await tester.enterText(find.widgetWithText(TextField, 'Reason'), 'Supplier will email it');
-    await tester.tap(find.text('Submit').last);
-    await tester.pumpAndSettle();
-    expect(backend.grns.single['noDocumentReason'], 'Supplier will email it');
+    expect(find.text('Submit without a document?'), findsNothing);
+    expect(backend.grns.single['status'], 'PENDING_VERIFICATION');
+    expect(backend.grns.single['noDocumentReason'], isNull);
 
     // Finance verifies it; the administrator then reverses it.
     final finance = await switchPerson(tester, backend, 'accounts');
@@ -279,12 +291,10 @@ void main() {
 
   testWidgets('a delivery in cartons is added to stock in packs', (tester) async {
     final backend = backendFor('storekeeper')..addConversion('PC-BBQ-S', 'carton', 24);
-    final app = await pumpSnackify(tester, signedIn: true, backend: backend);
+    await pumpSnackify(tester, signedIn: true, backend: backend);
     await startReceipt(tester);
     await addLine(tester, product: bbq, bought: 3, cost: '10.20', unit: 'Carton (24 packs)');
     expect(find.textContaining('Received 3 carton'), findsOneWidget);
-    app.documents.willPick([pdfDocument()]);
-    await press(tester, find.text('Attach document'));
     await press(tester, find.text('Submit for verification'));
 
     expect(backend.onHand('product-1'), 82);
@@ -344,8 +354,8 @@ void main() {
 
   testWidgets("an approved subsidiary note is sent to the subsidiary's WhatsApp", (tester) async {
     final backend = backendFor('storekeeper');
-    final storekeeper = await pumpSnackify(tester, signedIn: true, backend: backend);
-    await submitThroughScreens(tester, storekeeper, owner: 'Mbare Branch (SUB-01)');
+    await pumpSnackify(tester, signedIn: true, backend: backend);
+    await submitThroughScreens(tester, owner: 'Mbare Branch (SUB-01)');
 
     final finance = sameDataAs(backend, 'accounts');
     finance.organisations.firstWhere((o) => o['code'] == 'SUB-01')['whatsappNumber'] =

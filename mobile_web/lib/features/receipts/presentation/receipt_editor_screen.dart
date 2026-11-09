@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../../core/files/document_picker.dart';
 import '../../../core/formatting/dates.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/widgets/message_view.dart';
@@ -15,8 +14,8 @@ import 'document_preview.dart';
 import 'receipt_services.dart';
 
 /// Records a delivery as a goods-received note: whose stock it is, each product with what was
-/// bought and what arrived, and the supplier's documents. Saved as a draft or
-/// submitted for verification. Pops with the saved receipt.
+/// bought and what arrived. Saved as a draft or submitted for verification; supplier
+/// documents go on the goods-bought list. Pops with the saved receipt.
 class ReceiptEditorScreen extends StatefulWidget {
   const ReceiptEditorScreen({super.key, required this.services, this.receipt, this.prefill});
 
@@ -79,7 +78,6 @@ class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
           in widget.prefill?.lines ?? const <({ReceiptLineInput input, String unitLabel})>[])
         _LineEntry(line.input, line.unitLabel),
   ];
-  final List<PickedDocument> _newDocuments = [];
 
   /// Pictures of documents saved earlier, downloaded for their thumbnails.
   late final _pictures = DocumentPictureCache(
@@ -166,58 +164,11 @@ class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
     });
   }
 
-  Future<void> _addDocuments() async {
-    final picked = await _services.pickDocuments();
-    if (picked.isNotEmpty && mounted) setState(() => _newDocuments.addAll(picked));
-  }
-
-  Future<void> _takePhoto() async {
-    final photo = await _services.takePhoto();
-    if (photo != null && mounted) setState(() => _newDocuments.add(photo));
-  }
-
   Future<void> _previewSaved(ReceiptDocument document) async {
     final bytes =
         _pictures.bytesOf(document.id) ??
         await _services.receipts.document(_saved!.id, document.id);
     if (mounted) await showDocumentPreview(context, document.filename, bytes);
-  }
-
-  /// Asks an authorised user why there is no supplier document; null when they cancel.
-  Future<String?> _askNoDocumentReason() {
-    final reason = TextEditingController();
-    return showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Submit without a document?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text(
-              'Receipts normally need the supplier invoice or delivery note. '
-              'Say why there is none; this is recorded in the audit log.',
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: reason,
-              autofocus: true,
-              maxLength: 500,
-              decoration: const InputDecoration(labelText: 'Reason', border: OutlineInputBorder()),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () {
-              if (reason.text.trim().length >= 3) Navigator.pop(context, reason.text.trim());
-            },
-            child: const Text('Submit'),
-          ),
-        ],
-      ),
-    );
   }
 
   ReceiptInput _input() => ReceiptInput(
@@ -242,19 +193,6 @@ class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
       setState(() => _error = 'Add at least one product.');
       return;
     }
-    final keptDocuments = (_saved?.documents ?? const <ReceiptDocument>[])
-        .where((document) => document.status != DocumentStatus.rejected)
-        .length;
-    String? noDocumentReason;
-    if (submit && keptDocuments + _newDocuments.length == 0) {
-      if (!_services.canSkipDocument) {
-        setState(() => _error = 'Attach the supplier invoice or delivery note before submitting.');
-        return;
-      }
-      noDocumentReason = await _askNoDocumentReason();
-      if (noDocumentReason == null) return;
-    }
-
     setState(() => _saving = true);
     try {
       final id = _saved?.id;
@@ -263,15 +201,7 @@ class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
           : await _services.receipts.update(id, _input());
       // Saved: a retry after a later failure changes this draft instead of adding another.
       _saved = receipt;
-      while (_newDocuments.isNotEmpty) {
-        final document = _newDocuments.first;
-        receipt = await _services.receipts.addDocument(receipt.id, document.name, document.bytes);
-        _saved = receipt;
-        setState(() => _newDocuments.removeAt(0));
-      }
-      if (submit) {
-        receipt = await _services.receipts.submit(receipt.id, noDocumentReason: noDocumentReason);
-      }
+      if (submit) receipt = await _services.receipts.submit(receipt.id);
       if (mounted) Navigator.of(context).pop(receipt);
     } on ApiException catch (error) {
       if (!mounted) return;
@@ -458,57 +388,24 @@ class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
                   icon: const Icon(Icons.add),
                   label: const Text('Add product'),
                 ),
-                const SizedBox(height: 24),
-                Text('Supplier documents', style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 4),
-                Text(
-                  'The invoice or delivery note: PDF or a photo (JPEG, PNG). '
-                  'One document can cover every line.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                for (final document in previousDocuments)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: _savedThumbnail(document),
-                    title: Text(document.filename),
-                    subtitle: Text('${document.sizeLabel} · ${document.status.label}'),
-                    onTap: document.isPdf ? null : () => _previewSaved(document),
+                if (previousDocuments.isNotEmpty) ...[
+                  const SizedBox(height: 24),
+                  Text('Supplier documents', style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Attached before documents moved to the goods-bought list. '
+                    'New documents are added on the goods-bought list.',
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
-                for (final (index, document) in _newDocuments.indexed)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: DocumentThumbnail(
-                      isPdf: !isPicture(document.bytes),
-                      bytes: document.bytes,
+                  for (final document in previousDocuments)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: _savedThumbnail(document),
+                      title: Text(document.filename),
+                      subtitle: Text('${document.sizeLabel} · ${document.status.label}'),
+                      onTap: document.isPdf ? null : () => _previewSaved(document),
                     ),
-                    title: Text(document.name),
-                    subtitle: const Text('Uploaded when you save'),
-                    onTap: isPicture(document.bytes)
-                        ? () => showDocumentPreview(context, document.name, document.bytes)
-                        : null,
-                    trailing: IconButton(
-                      tooltip: 'Remove ${document.name}',
-                      icon: const Icon(Icons.close),
-                      onPressed: _saving
-                          ? null
-                          : () => setState(() => _newDocuments.removeAt(index)),
-                    ),
-                  ),
-                Wrap(
-                  spacing: 8,
-                  children: [
-                    TextButton.icon(
-                      onPressed: _saving ? null : _addDocuments,
-                      icon: const Icon(Icons.attach_file),
-                      label: const Text('Attach document'),
-                    ),
-                    TextButton.icon(
-                      onPressed: _saving ? null : _takePhoto,
-                      icon: const Icon(Icons.photo_camera_outlined),
-                      label: const Text('Take photo'),
-                    ),
-                  ],
-                ),
+                ],
                 const SizedBox(height: 16),
                 TextFormField(
                   controller: _notes,

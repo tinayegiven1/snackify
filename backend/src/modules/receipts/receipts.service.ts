@@ -1,20 +1,12 @@
-import { unlink } from 'node:fs/promises';
-import { join } from 'node:path';
 import type pg from 'pg';
 import { withTransaction, type Queryable } from '../../database/transaction.js';
-import { can } from '../../middleware/authenticate.js';
 import { AppError } from '../../utils/app-error.js';
 import { recordAudit } from '../audit/audit.js';
 import type { PublicUser } from '../auth/roles.js';
 import { canAccessOrganisation, type AccessScope } from '../organisations/access.js';
 import { toBaseQuantity } from '../products/products.service.js';
 import { insertMovement } from '../stock/ledger.js';
-import {
-  cleanFilename,
-  detectDocumentType,
-  readDocument,
-  storeDocument,
-} from './attachment-files.js';
+import { readDocument } from './attachment-files.js';
 
 // StockFlow Stage 4.4 and 4.5: goods-received notes (GRNs). See the migration
 // 20261021110000000_goods-received-notes.sql for the statuses.
@@ -845,60 +837,28 @@ export async function submitReceipt(
   pool: pg.Pool,
   scope: AccessScope,
   id: string,
-  options: { noDocumentReason: string | null },
   actor: PublicUser,
-  settings: { stockAvailableBeforeVerification: boolean; documentRequired: boolean },
+  settings: { stockAvailableBeforeVerification: boolean },
 ): Promise<Receipt> {
   await withTransaction(pool, async (client) => {
     const current = await lockReceipt(client, scope, id);
     if (current.status !== 'DRAFT') throw wrongStatus(current.status, 'submitted');
-    const { rows } = await client.query<{ lines: number; documents: number }>(
-      `SELECT (SELECT count(*)::int FROM stock_receipt_lines l WHERE l.receipt_id = r.id) AS lines,
-              (SELECT count(*)::int FROM stock_receipt_attachments a
-               WHERE a.receipt_id = r.id AND a.verification_status <> 'REJECTED') AS documents
-       FROM stock_receipts r WHERE r.id = $1`,
+    const { rows } = await client.query<{ lines: number }>(
+      'SELECT count(*)::int AS lines FROM stock_receipt_lines WHERE receipt_id = $1',
       [id],
     );
-    // No supplier is needed (the owner's choice, 2026-10-21); the documents show who sold it.
-    const facts = rows[0] as { lines: number; documents: number };
-    if (facts.lines === 0) throw fieldError('lines', 'Add at least one product');
-
-    let noDocumentReason: string | null = null;
-    if (settings.documentRequired && facts.documents === 0) {
-      if (!options.noDocumentReason) {
-        throw new AppError(
-          409,
-          'DOCUMENT_REQUIRED',
-          'Attach the supplier invoice or delivery note before submitting.',
-        );
-      }
-      if (!can(actor, 'receipt.no_document')) {
-        throw new AppError(
-          403,
-          'FORBIDDEN',
-          'Only an authorised user can submit a receipt without a document.',
-        );
-      }
-      noDocumentReason = options.noDocumentReason;
+    // Supplier documents belong to goods bought (owner's change, 2026-11-09): the warehouse only
+    // records what arrived, so no document is needed here.
+    if ((rows[0] as { lines: number }).lines === 0) {
+      throw fieldError('lines', 'Add at least one product');
     }
 
     await client.query(
       `UPDATE stock_receipts
-       SET status = 'PENDING_VERIFICATION', submitted_by = $2, submitted_at = now(),
-           no_document_reason = $3
+       SET status = 'PENDING_VERIFICATION', submitted_by = $2, submitted_at = now()
        WHERE id = $1`,
-      [id, actor.id, noDocumentReason],
+      [id, actor.id],
     );
-    if (noDocumentReason) {
-      await recordAudit(client, {
-        actorUserId: actor.id,
-        action: 'receipt.no_document',
-        entityType: 'receipt',
-        entityId: id,
-        organisationId: current.owner_organisation_id,
-        details: { grnNumber: current.grn_number, reason: noDocumentReason },
-      });
-    }
     if (settings.stockAvailableBeforeVerification) {
       await postStock(client, id, current, actor);
     }
@@ -933,26 +893,14 @@ export async function verifyReceipt(
     const current = await lockReceipt(client, scope, id);
     if (current.status !== 'PENDING_VERIFICATION') throw wrongStatus(current.status, 'verified');
     checkDifferentPerson(current, actor, 'approve');
-    // Verifying the receipt also verifies any document not yet reviewed on its own.
+    // Notes from before documents moved to goods bought may still have some: verifying the note
+    // verifies any not yet reviewed.
     await client.query(
       `UPDATE stock_receipt_attachments
        SET verification_status = 'VERIFIED', reviewed_by = $2, reviewed_at = now()
        WHERE receipt_id = $1 AND verification_status = 'PENDING'`,
       [id, actor.id],
     );
-    const { rows } = await client.query<{ verified: number }>(
-      `SELECT count(*) FILTER (WHERE verification_status = 'VERIFIED')::int AS verified
-       FROM stock_receipt_attachments WHERE receipt_id = $1`,
-      [id],
-    );
-    const documents = rows[0] as { verified: number };
-    if (documents.verified === 0 && !current.no_document_reason) {
-      throw new AppError(
-        409,
-        'NO_VERIFIED_DOCUMENT',
-        'No document has been verified. Ask for a replacement document, or reject the receipt.',
-      );
-    }
     const next: ReceiptStatus = current.posted_at ? 'POSTED' : 'VERIFIED';
     await client.query(
       `UPDATE stock_receipts
@@ -1068,63 +1016,22 @@ export async function reverseReceipt(
 // ---------------------------------------------------------------- Documents
 
 /**
- * Adds a document to a draft or a receipt waiting for verification (for example a replacement
- * for a rejected one). The content decides the type, not the name. Uploading a document does
- * not confirm that the goods arrived.
+ * Refuses: supplier documents are attached to goods bought now (owner's change, 2026-11-09).
+ * Documents already on older notes stay, and can still be seen and reviewed.
  */
 export async function uploadAttachment(
   pool: pg.Pool,
   scope: AccessScope,
   id: string,
-  file: { filename: string; content: Buffer },
-  actor: PublicUser,
-  settings: { storageDir: string; maxBytes: number },
-): Promise<Receipt> {
-  const filename = cleanFilename(file.filename);
-  if (file.content.length === 0) throw fieldError('file', 'The file is empty');
-  if (file.content.length > settings.maxBytes) {
-    throw new AppError(413, 'PAYLOAD_TOO_LARGE', 'The file is too large.');
-  }
-  const mimeType = detectDocumentType(file.content, filename);
-
-  let storedKey: string | null = null;
-  try {
-    await withTransaction(pool, async (client) => {
-      const current = await lockReceipt(client, scope, id);
-      if (current.status !== 'DRAFT' && current.status !== 'PENDING_VERIFICATION') {
-        throw wrongStatus(current.status, 'given more documents');
-      }
-      const stored = await storeDocument(settings.storageDir, file.content);
-      storedKey = stored.storageKey;
-      await client.query(
-        `INSERT INTO stock_receipt_attachments
-           (receipt_id, original_filename, storage_key, mime_type, size_bytes, sha256, uploaded_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [id, filename, stored.storageKey, mimeType, file.content.length, stored.sha256, actor.id],
-      );
-      await recordAudit(client, {
-        actorUserId: actor.id,
-        action: 'receipt.document_added',
-        entityType: 'receipt',
-        entityId: id,
-        organisationId: current.owner_organisation_id,
-        details: {
-          grnNumber: current.grn_number,
-          filename,
-          mimeType,
-          sizeBytes: file.content.length,
-        },
-      });
-    });
-  } catch (error) {
-    // Nothing was recorded, so the stored copy is not needed.
-    if (storedKey) await unlink(join(settings.storageDir, storedKey)).catch(() => {});
-    throw error;
-  }
-  return getReceipt(pool, scope, id);
+): Promise<never> {
+  await getReceipt(pool, scope, id);
+  throw new AppError(
+    409,
+    'DOCUMENTS_ON_GOODS_BOUGHT',
+    'Supplier documents are attached to the goods-bought list now, not to the goods-received note.',
+  );
 }
 
-/** The reviewer verifies or rejects one document (rejection needs a reason). */
 export async function reviewAttachment(
   pool: pg.Pool,
   scope: AccessScope,

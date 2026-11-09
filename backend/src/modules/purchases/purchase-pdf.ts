@@ -1,5 +1,6 @@
 import PDFDocument from 'pdfkit';
 import { displayDate } from '../invoices/invoice-pdf.js';
+import type { DocumentPicture } from '../receipts/grn-pdf.js';
 import type { Purchase } from './purchases.service.js';
 
 // A4 is 595 x 842 points; 50-point margins leave 495 points for the table.
@@ -31,6 +32,7 @@ const RECEIVING: Record<Purchase['receivingStatus'], string> = {
 export function renderPurchasePdf(
   purchase: Purchase,
   business: { name: string; contact: string | null },
+  pictures: DocumentPicture[] = [],
 ): Promise<Buffer> {
   const doc = new PDFDocument({
     size: 'A4',
@@ -186,6 +188,38 @@ export function renderPurchasePdf(
     .text(`All amounts in ${purchase.currency}. Quantities in the unit shown.`, LEFT, y + 30, {
       width: TABLE_WIDTH,
     });
+
+  // Photographed supplier documents follow, one to a page.
+  for (const [index, picture] of pictures.entries()) {
+    doc.addPage();
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(11)
+      .text(
+        `${purchase.purchaseNumber}: supplier document ${index + 1} of ${pictures.length}`,
+        LEFT,
+        50,
+        { width: TABLE_WIDTH },
+      );
+    doc
+      .font('Helvetica')
+      .fontSize(9)
+      .text(`${picture.filename} (${picture.verificationStatus.toLowerCase()})`, {
+        width: TABLE_WIDTH,
+      });
+    const pictureTop = doc.y + 10;
+    try {
+      doc.image(picture.content, LEFT, pictureTop, {
+        fit: [TABLE_WIDTH, PAGE_BOTTOM - pictureTop],
+        align: 'center',
+      });
+    } catch {
+      // A damaged picture should not stop the list itself from printing.
+      doc.text('This picture could not be shown; download it from the app.', LEFT, pictureTop, {
+        width: TABLE_WIDTH,
+      });
+    }
+  }
 
   doc.end();
   return finished;

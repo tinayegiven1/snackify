@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../core/files/document_picker.dart';
 import '../../../core/formatting/dates.dart';
 import '../../../core/formatting/money.dart';
 import '../../../core/network/api_client.dart';
@@ -10,11 +11,14 @@ import '../../organisations/domain/organisation.dart';
 import '../../products/domain/product.dart';
 import '../../products/presentation/product_picker.dart';
 import '../../products/presentation/scan_product.dart';
+import '../../receipts/domain/receipt_models.dart' show ReceiptDocument;
+import '../../receipts/presentation/document_preview.dart';
 import '../domain/purchase_models.dart';
 import 'purchase_services.dart';
 
 /// Records goods bought from a supplier: whose stock it is for, the supplier, the date and
-/// each product with its quantity and cost. Pops with the saved list.
+/// each product with its quantity and cost, and the supplier's documents (uploaded once the
+/// list is saved). Pops with the saved list.
 class PurchaseEditorScreen extends StatefulWidget {
   const PurchaseEditorScreen({super.key, required this.services, this.purchase});
 
@@ -38,6 +42,19 @@ class _PurchaseEditorScreenState extends State<PurchaseEditorScreen> {
   late DateTime _purchaseDate = widget.purchase == null
       ? today()
       : DateTime.parse(widget.purchase!.purchaseDate);
+
+  /// The list as last saved: after a failed upload, saving again changes it instead of
+  /// recording another.
+  late Purchase? _saved = widget.purchase;
+
+  /// Documents chosen here, uploaded when the list is saved.
+  final List<PickedDocument> _newDocuments = [];
+
+  /// Pictures of documents saved earlier, downloaded for their thumbnails.
+  late final _pictures = DocumentPictureCache(
+    (documentId) => _services.purchases.document(_saved!.id, documentId),
+  );
+
   late final List<PurchaseLineInput> _lines = [
     for (final line in widget.purchase?.lines ?? const <PurchaseLine>[]) line.toInput(),
   ];
@@ -125,6 +142,36 @@ class _PurchaseEditorScreenState extends State<PurchaseEditorScreen> {
     });
   }
 
+  Future<void> _addDocuments() async {
+    final picked = await _services.receiptServices.pickDocuments();
+    if (picked.isNotEmpty && mounted) setState(() => _newDocuments.addAll(picked));
+  }
+
+  Future<void> _takePhoto() async {
+    final photo = await _services.receiptServices.takePhoto();
+    if (photo != null && mounted) setState(() => _newDocuments.add(photo));
+  }
+
+  Future<void> _previewSaved(ReceiptDocument document) async {
+    try {
+      final bytes =
+          _pictures.bytesOf(document.id) ??
+          await _services.purchases.document(_saved!.id, document.id);
+      if (mounted) await showDocumentPreview(context, document.filename, bytes);
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    }
+  }
+
+  Widget _savedThumbnail(ReceiptDocument document) {
+    if (!document.isPdf) _pictures.ensure(document.id, () => mounted ? setState(() {}) : null);
+    return DocumentThumbnail(
+      isPdf: document.isPdf,
+      bytes: _pictures.bytesOf(document.id),
+      loading: _pictures.isLoading(document.id),
+    );
+  }
+
   PurchaseInput _input() => PurchaseInput(
     organisationId: _services.canChooseOwner ? _ownerId : null,
     supplierId: _supplierId,
@@ -146,10 +193,17 @@ class _PurchaseEditorScreenState extends State<PurchaseEditorScreen> {
     }
     setState(() => _saving = true);
     try {
-      final existing = widget.purchase;
-      final saved = existing == null
+      final existing = _saved;
+      var saved = existing == null
           ? await _services.purchases.create(_input())
           : await _services.purchases.update(existing.id, _input());
+      _saved = saved;
+      while (_newDocuments.isNotEmpty) {
+        final document = _newDocuments.first;
+        saved = await _services.purchases.addDocument(saved.id, document.name, document.bytes);
+        _saved = saved;
+        if (mounted) setState(() => _newDocuments.removeAt(0));
+      }
       if (mounted) Navigator.of(context).pop(saved);
     } on ApiException catch (error) {
       if (!mounted) return;
@@ -201,6 +255,7 @@ class _PurchaseEditorScreenState extends State<PurchaseEditorScreen> {
     final organisations = _organisations;
     final theme = Theme.of(context);
     final totalCents = _lines.fold<int>(0, (sum, line) => sum + line.totalCents);
+    final previousDocuments = _saved?.documents ?? const <ReceiptDocument>[];
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -312,6 +367,57 @@ class _PurchaseEditorScreenState extends State<PurchaseEditorScreen> {
                     'Total ${withCurrency(formatCents(totalCents))}',
                     style: theme.textTheme.titleMedium,
                   ),
+                ),
+                const SizedBox(height: 24),
+                Text('Supplier documents', style: theme.textTheme.titleMedium),
+                const SizedBox(height: 4),
+                Text(
+                  'The supplier invoice or delivery note: PDF or a photo (JPEG, PNG). '
+                  'Finance or an administrator checks each one.',
+                  style: theme.textTheme.bodySmall,
+                ),
+                for (final document in previousDocuments)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: _savedThumbnail(document),
+                    title: Text(document.filename),
+                    subtitle: Text('${document.sizeLabel} · ${document.status.label}'),
+                    onTap: document.isPdf ? null : () => _previewSaved(document),
+                  ),
+                for (final (index, document) in _newDocuments.indexed)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: DocumentThumbnail(
+                      isPdf: !isPicture(document.bytes),
+                      bytes: document.bytes,
+                    ),
+                    title: Text(document.name),
+                    subtitle: const Text('Uploaded when you save'),
+                    onTap: isPicture(document.bytes)
+                        ? () => showDocumentPreview(context, document.name, document.bytes)
+                        : null,
+                    trailing: IconButton(
+                      tooltip: 'Remove ${document.name}',
+                      icon: const Icon(Icons.close),
+                      onPressed: _saving
+                          ? null
+                          : () => setState(() => _newDocuments.removeAt(index)),
+                    ),
+                  ),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    TextButton.icon(
+                      onPressed: _saving ? null : _addDocuments,
+                      icon: const Icon(Icons.attach_file),
+                      label: const Text('Attach document'),
+                    ),
+                    TextButton.icon(
+                      onPressed: _saving ? null : _takePhoto,
+                      icon: const Icon(Icons.photo_camera_outlined),
+                      label: const Text('Take photo'),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 16),
                 TextFormField(

@@ -697,6 +697,19 @@ anyone with `stock.receive` or `receipt.verify` can see them and print them.
 | `PUT /:id` | `purchase.manage` | Same body; replaces the list. **409** `PURCHASE_HAS_RECEIPTS` once any goods-received note was made from it |
 | `POST /:id/cancel` | `purchase.manage` | `{ reason }`. **409** `PURCHASE_HAS_RECEIPTS` while a note made from it stands (not rejected or reversed) |
 
+**Supplier documents** (the supplier's invoice or delivery note) are attached to the list:
+
+| Method and path | Who | What |
+| --------------- | --- | ---- |
+| `POST /:id/attachments?filename=invoice.pdf` | `purchase.manage` | The request **body is the file** (any `Content-Type`). Only PDF, JPEG and PNG, decided from its first bytes, with a matching extension (**415** `UNSUPPORTED_DOCUMENT` otherwise); larger than `ATTACHMENT_MAX_BYTES` **413**; a cancelled list **409**. Stored outside the web app under random names, with a SHA-256 checksum, never deleted |
+| `GET /:id/attachments/:attachmentId` | viewers | Downloads it (always as an attachment) |
+| `POST /:id/attachments/:attachmentId/review` | `purchase.manage` | **Only finance and administrators** verify or reject: `{ "status": "VERIFIED", "documentTotal": "57.50" }` or `{ "status": "REJECTED", "notes": "Blurry" }` (a reason is required). Once each (**409** `DOCUMENT_ALREADY_REVIEWED`) |
+
+The list's JSON has `attachments` (oldest first, with `verificationStatus`, reviewer, notes and
+`documentTotal`), and every summary `documentCount` and `documentsPending`. Goods can be received
+before the documents are checked. The PDF prints photographed documents after the list, one to a
+page. Audit actions: `purchase.document_added`, `purchase.document_reviewed`.
+
 Numbers are `GB000001`, `GB000002`, … Line totals and the total are worked out by the database.
 `receivingStatus` is `NOT_RECEIVED`, `PARTLY_RECEIVED` or `RECEIVED`, counting goods-received
 notes waiting for verification, verified or posted (not drafts, rejected or reversed ones). Audit
@@ -782,14 +795,13 @@ rejected or reversed it and why.
 List query: optional `status`, `organisationId`, `from`, `to`, `limit` (1–200, default 50),
 `offset`. **200** with `{ "receipts": [ … ], "total": 12 }`, newest first.
 
-### `POST /api/v1/receipts/:id/attachments?filename=invoice.pdf`
+### Supplier documents
 
-The request **body is the file itself** (any `Content-Type`). The server decides its type from
-its first bytes: only PDF, JPEG and PNG are accepted, and the name's extension must match
-(a program renamed `invoice.pdf` answers **415** `UNSUPPORTED_DOCUMENT`). Larger than
-`ATTACHMENT_MAX_BYTES` answers **413**. Allowed while the receipt is a draft or waiting for
-verification (e.g. a replacement for a rejected document). Files are stored outside the web app
-under random names, with a SHA-256 checksum, and are never deleted.
+Since 2026-11-09 supplier documents belong to **goods bought** (see
+`/api/v1/purchases/:id/attachments`), not to goods-received notes: the warehouse only records what
+arrived. `POST /api/v1/receipts/:id/attachments` answers **409** `DOCUMENTS_ON_GOODS_BOUGHT`.
+Documents already on older notes stay listed in `attachments` and can still be downloaded and
+reviewed:
 
 ### `GET /api/v1/receipts/:id/attachments/:attachmentId`
 
@@ -804,16 +816,13 @@ reviewed once (**409** `DOCUMENT_ALREADY_REVIEWED`).
 
 ### `POST /api/v1/receipts/:id/submit` (`stock.receive`)
 
-`{ "noDocumentReason": null }`. Needs a supplier, at least one line and, when
-`RECEIPT_DOCUMENT_REQUIRED` is on, at least one document that is not rejected (**409**
-`DOCUMENT_REQUIRED`). A user with `receipt.no_document` may submit without one by giving a
-reason (3–500 characters; audit action `receipt.no_document`).
+Needs at least one line. No document is needed (documents are on goods bought); an older app's
+`noDocumentReason` is ignored.
 
 ### `POST /api/v1/receipts/:id/verify` (`receipt.verify`)
 
-`{ "notes": "Matches the invoice" }`. Documents not yet reviewed are verified with the receipt.
-At least one document must end up verified, unless the receipt was submitted without one
-(**409** `NO_VERIFIED_DOCUMENT`).
+`{ "notes": "Matches the invoice" }`. No document is needed. Documents an older note still has
+and that were not reviewed are verified with it.
 
 **One person enters, another decides:** whoever received or submitted the note gets **409**
 `SAME_PERSON` from verify and reject, whatever their roles.

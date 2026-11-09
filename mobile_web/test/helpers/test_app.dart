@@ -1100,6 +1100,7 @@ class FakeBackend {
           };
         }(),
     ];
+    final documents = (purchase['documents'] as List<Map<String, Object?>>?) ?? const [];
     final receivedAny = lines.any((l) => (l['quantityReceived'] as int) > 0);
     final receivedAll = lines.every((l) => l['quantityOutstanding'] == 0);
     final open = purchase['status'] == 'OPEN';
@@ -1123,6 +1124,8 @@ class FakeBackend {
         lines.fold<int>(0, (sum, l) => sum + parseCents(l['lineTotal'] as String)!),
       ),
       'lineCount': lines.length,
+      'documentCount': documents.length,
+      'documentsPending': documents.where((d) => d['verificationStatus'] == 'PENDING').length,
       'createdBy': purchase['createdBy'],
       'createdAt': '2026-11-09T08:00:00Z',
       'notes': purchase['notes'],
@@ -1141,8 +1144,22 @@ class FakeBackend {
             'receivedDate': g['receivedDate'],
           },
       ],
+      'attachments': [
+        for (final d in documents) {...d}..remove('bytes'),
+      ],
     };
   }
+
+  /// The type of an uploaded document from its first bytes (as the server checks), or null
+  /// when it is not a PDF, JPEG or PNG.
+  static String? _documentType(List<int> bytes) =>
+      bytes.length >= 5 && utf8.decode(bytes.sublist(0, 5), allowMalformed: true) == '%PDF-'
+      ? 'application/pdf'
+      : bytes.length >= 3 && bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff
+      ? 'image/jpeg'
+      : bytes.length >= 4 && bytes[0] == 0x89 && bytes[1] == 0x50
+      ? 'image/png'
+      : null;
 
   http.Response _purchases(http.Request request) {
     final notFound = _error(404, 'PURCHASE_NOT_FOUND', 'No goods-bought list has that id.');
@@ -1189,6 +1206,7 @@ class FakeBackend {
                     'canCancel',
                     'lines',
                     'receipts',
+                    'attachments',
                   }.contains(key))
                     key: value,
               },
@@ -1202,6 +1220,72 @@ class FakeBackend {
           200,
           headers: {'content-type': 'application/pdf'},
         );
+      case 'GET attachments':
+        final document = ((purchase!['documents'] as List<Map<String, Object?>>?) ?? const [])
+            .where((d) => d['id'] == segments[5])
+            .firstOrNull;
+        if (document == null) {
+          return _error(404, 'DOCUMENT_NOT_FOUND', 'No document has that id.');
+        }
+        return http.Response.bytes(document['bytes'] as List<int>, 200);
+      case 'POST attachments' when segments.length == 5:
+        if (!can('purchase.manage')) return _forbidden;
+        if (purchase!['status'] == 'CANCELLED') {
+          return _error(409, 'PURCHASE_CANCELLED', 'This goods-bought list was cancelled.');
+        }
+        final bytes = request.bodyBytes;
+        final type = _documentType(bytes);
+        if (type == null) {
+          return _error(
+            415,
+            'UNSUPPORTED_DOCUMENT',
+            'Only PDF, JPEG and PNG documents are accepted (this file is something else).',
+          );
+        }
+        final documents =
+            (purchase['documents'] ??= <Map<String, Object?>>[]) as List<Map<String, Object?>>;
+        documents.add({
+          'id': '${purchase['id']}-doc-${documents.length + 1}',
+          'filename': request.url.queryParameters['filename']!,
+          'mimeType': type,
+          'sizeBytes': bytes.length,
+          'uploadedBy': {'id': userId, 'fullName': 'Tendai Moyo'},
+          'uploadedAt': '2026-11-09T08:30:00Z',
+          'verificationStatus': 'PENDING',
+          'reviewedBy': null,
+          'reviewedAt': null,
+          'reviewNotes': null,
+          'documentTotal': null,
+          'bytes': bytes,
+        });
+        return _json(201, {'purchase': _purchaseJson(purchase)});
+      case 'POST attachments':
+        if (!can('purchase.manage')) return _forbidden;
+        final document = ((purchase!['documents'] as List<Map<String, Object?>>?) ?? const [])
+            .where((d) => d['id'] == segments[5])
+            .firstOrNull;
+        if (document == null) {
+          return _error(404, 'DOCUMENT_NOT_FOUND', 'No document has that id.');
+        }
+        if (document['verificationStatus'] != 'PENDING') {
+          return _error(
+            409,
+            'DOCUMENT_ALREADY_REVIEWED',
+            'This document has already been reviewed.',
+          );
+        }
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        final notes = (body['notes'] as String?)?.trim();
+        if (body['status'] == 'REJECTED' && (notes ?? '').length < 3) {
+          return _fieldError('notes', 'Say why the document is rejected');
+        }
+        document
+          ..['verificationStatus'] = body['status']
+          ..['reviewNotes'] = notes == null || notes.isEmpty ? null : notes
+          ..['documentTotal'] = body['documentTotal']
+          ..['reviewedBy'] = {'id': userId, 'fullName': 'Tendai Moyo'}
+          ..['reviewedAt'] = '2026-11-09T09:00:00Z';
+        return _json(200, {'purchase': _purchaseJson(purchase)});
       case 'POST ' || 'PUT :id':
         if (!can('purchase.manage')) return _forbidden;
         if (purchase != null) {
@@ -1447,43 +1531,12 @@ class FakeBackend {
         grn.addAll(fields);
         return _json(200, {'receipt': _grnJson(grn)});
       case 'POST attachments' when segments.length == 5:
-        if (!can('stock.receive')) return forbidden;
-        if (grn!['status'] != 'DRAFT' && grn['status'] != 'PENDING_VERIFICATION') {
-          return _error(409, 'RECEIPT_WRONG_STATUS', wrongStatus('given more documents'));
-        }
-        final bytes = request.bodyBytes;
-        final filename = request.url.queryParameters['filename']!;
-        final String? type =
-            bytes.length >= 5 && utf8.decode(bytes.sublist(0, 5), allowMalformed: true) == '%PDF-'
-            ? 'application/pdf'
-            : bytes.length >= 3 && bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff
-            ? 'image/jpeg'
-            : bytes.length >= 4 && bytes[0] == 0x89 && bytes[1] == 0x50
-            ? 'image/png'
-            : null;
-        if (type == null) {
-          return _error(
-            415,
-            'UNSUPPORTED_DOCUMENT',
-            'Only PDF, JPEG and PNG documents are accepted (this file is something else).',
-          );
-        }
-        final documents = grn['documents'] as List<Map<String, Object?>>;
-        documents.add({
-          'id': '${grn['id']}-doc-${documents.length + 1}',
-          'filename': filename,
-          'mimeType': type,
-          'sizeBytes': bytes.length,
-          'uploadedBy': _person,
-          'uploadedAt': '2026-10-20T08:00:00Z',
-          'verificationStatus': 'PENDING',
-          'reviewedBy': null,
-          'reviewedAt': null,
-          'reviewNotes': null,
-          'documentTotal': null,
-          'bytes': bytes,
-        });
-        return _json(201, {'receipt': _grnJson(grn)});
+        return _error(
+          409,
+          'DOCUMENTS_ON_GOODS_BOUGHT',
+          'Supplier documents are attached to the goods-bought list now, not to the '
+              'goods-received note.',
+        );
       case 'POST attachments':
         if (!can('receipt.verify')) return forbidden;
         final body = jsonDecode(request.body) as Map<String, dynamic>;
@@ -1508,21 +1561,6 @@ class FakeBackend {
         if (grn!['status'] != 'DRAFT') {
           return _error(409, 'RECEIPT_WRONG_STATUS', wrongStatus('submitted'));
         }
-        final body = jsonDecode(request.body) as Map<String, dynamic>;
-        final documents = (grn['documents'] as List<Map<String, Object?>>).where(
-          (d) => d['verificationStatus'] != 'REJECTED',
-        );
-        if (documents.isEmpty) {
-          if (body['noDocumentReason'] == null) {
-            return _error(
-              409,
-              'DOCUMENT_REQUIRED',
-              'Attach the supplier invoice or delivery note before submitting.',
-            );
-          }
-          if (!can('receipt.no_document')) return forbidden;
-          grn['noDocumentReason'] = body['noDocumentReason'];
-        }
         grn['status'] = 'PENDING_VERIFICATION';
         if (stockBeforeVerification) {
           _moveGrnStock(grn, 1, 'receipt');
@@ -1536,15 +1574,11 @@ class FakeBackend {
         }
         if (_enteredBySignedInUser(grn)) return _samePerson('approve');
         final documents = grn['documents'] as List<Map<String, Object?>>;
-        // Verifying the receipt also verifies documents not yet reviewed.
+        // Older notes may still have documents: verifying the note verifies any not reviewed.
         for (final d in documents.where((d) => d['verificationStatus'] == 'PENDING')) {
           d
             ..['verificationStatus'] = 'VERIFIED'
             ..['reviewedBy'] = _person;
-        }
-        if (!documents.any((d) => d['verificationStatus'] == 'VERIFIED') &&
-            grn['noDocumentReason'] == null) {
-          return _error(409, 'NO_VERIFIED_DOCUMENT', 'No document has been verified.');
         }
         final body = jsonDecode(request.body) as Map<String, dynamic>;
         grn
