@@ -51,14 +51,20 @@ class FileResponseCache implements ResponseCache {
     return folder;
   }
 
-  /// A file name from the key (FNV-1a, 64 bits): short and safe whatever the address holds.
+  /// A file name from the key: two 32-bit FNV-1a hashes with different starting values, so
+  /// short and safe whatever the address holds. (32-bit numbers only: the web build cannot
+  /// even compile 64-bit literals, although this class is never used there.)
   static String _fileName(String key) {
-    var hash = 0xcbf29ce484222325;
-    for (final unit in utf8.encode(key)) {
-      hash ^= unit;
-      hash = (hash * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF;
+    final bytes = utf8.encode(key);
+    String fnv32(int start) {
+      var hash = start;
+      for (final unit in bytes) {
+        hash = ((hash ^ unit) * 0x01000193) & 0xFFFFFFFF;
+      }
+      return hash.toRadixString(16).padLeft(8, '0');
     }
-    return '${hash.toUnsigned(64).toRadixString(16).padLeft(16, '0')}.json';
+
+    return '${fnv32(0x811c9dc5)}${fnv32(0x050c5d1f)}.json';
   }
 
   @override
