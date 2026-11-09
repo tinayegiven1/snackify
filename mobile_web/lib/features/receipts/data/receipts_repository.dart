@@ -46,6 +46,9 @@ class ReceiptsRepository {
 
   Future<GoodsReceipt> post(String id) => _receipt(_api.postJson('$_base/$id/post'));
 
+  /// Sends an approved note to its subsidiary on WhatsApp again.
+  Future<GoodsReceipt> sendWhatsApp(String id) => _receipt(_api.postJson('$_base/$id/whatsapp'));
+
   Future<GoodsReceipt> reverse(String id, String reason) =>
       _receipt(_api.postJson('$_base/$id/reverse', {'reason': reason}));
 

@@ -41,8 +41,9 @@ describe('database migrations', () => {
     await migrateTestDatabase();
     await resetDatabase(pools.owner);
     const user = await createTestUser(pools.app, { username: 'migrator', password: '482915' });
-    // Back to just before customers were replaced by organisations.
-    await runMigrations(ownerDatabaseUrl, 'down', { count: 1, quiet: true });
+    // Back to just before customers were replaced by organisations (and the WhatsApp migration
+    // that came after it).
+    await runMigrations(ownerDatabaseUrl, 'down', { count: 2, quiet: true });
     const q = (sql: string, params: unknown[] = []) => pools.owner.query(sql, params);
 
     const { rows: subsidiary } = await q(
@@ -82,6 +83,7 @@ describe('database migrations', () => {
 
     expect(await migrateTestDatabase()).toEqual([
       '20261108090000000_organisations-replace-customers',
+      '20261108120000000_grn-whatsapp',
     ]);
     expect(await tableExists('customers')).toBe(false);
 

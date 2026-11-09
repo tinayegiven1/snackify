@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/files/pdf_sharer.dart';
 import '../../../core/formatting/dates.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../../shared/widgets/message_view.dart';
 import '../domain/receipt_models.dart';
 import 'document_preview.dart';
@@ -206,6 +207,10 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
     );
   }
 
+  /// e.g. "14:05".
+  static String _time(DateTime at) =>
+      '${at.hour.toString().padLeft(2, '0')}:${at.minute.toString().padLeft(2, '0')}';
+
   Future<void> _download(Future<void> Function() action) async {
     setState(() => _error = null);
     try {
@@ -255,6 +260,9 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
     final canAddDocuments =
         _services.canReceive &&
         (status == ReceiptStatus.draft || status == ReceiptStatus.pendingVerification);
+    // One person enters a note and another decides on it (the server insists too).
+    final enteredByMe = receipt.receivedBy.id == _services.user.id;
+    final approved = status == ReceiptStatus.verified || status == ReceiptStatus.posted;
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -385,6 +393,51 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
                       ),
                     ],
                   ),
+                if (receipt.whatsappMessages.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Text('WhatsApp', style: theme.textTheme.titleMedium),
+                  for (final message in receipt.whatsappMessages)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        message.sent ? Icons.mark_chat_read_outlined : Icons.error_outline,
+                        color: message.sent ? SnackifyColors.good : SnackifyColors.warn,
+                      ),
+                      title: Text(message.headline),
+                      subtitle: Text(
+                        [
+                          ?message.detail,
+                          '${message.sentBy.fullName} · ${formatApiDate(toApiDate(message.createdAt))} '
+                              '${_time(message.createdAt)}',
+                        ].join('\n'),
+                      ),
+                      isThreeLine: message.detail != null,
+                    ),
+                  if (approved && _services.canVerify)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: _busy
+                            ? null
+                            : () => _run(
+                                () => _services.receipts.sendWhatsApp(receipt.id),
+                                'Sent ${receipt.grnNumber} on WhatsApp again.',
+                              ),
+                        icon: const Icon(Icons.send_outlined),
+                        label: const Text('Send on WhatsApp again'),
+                      ),
+                    ),
+                ],
+                if (status == ReceiptStatus.pendingVerification &&
+                    _services.canVerify &&
+                    enteredByMe) ...[
+                  const SizedBox(height: 16),
+                  const Text(
+                    'You entered this goods-received note, so someone else must verify or '
+                    'reject it.',
+                    style: TextStyle(color: SnackifyColors.muted),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 Wrap(
                   alignment: WrapAlignment.end,
@@ -397,7 +450,9 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
                         icon: const Icon(Icons.edit_outlined),
                         label: const Text('Continue draft'),
                       ),
-                    if (status == ReceiptStatus.pendingVerification && _services.canVerify) ...[
+                    if (status == ReceiptStatus.pendingVerification &&
+                        _services.canVerify &&
+                        !enteredByMe) ...[
                       OutlinedButton(
                         onPressed: _busy ? null : () => _reject(receipt),
                         child: const Text('Reject receipt'),

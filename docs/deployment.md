@@ -44,6 +44,44 @@ The server runs with these settings (set by the script):
 | `CORS_ORIGINS`     | the service's own address   |                                                          |
 | max instances      | `1`                         | The sign-in attempt counter is kept in memory            |
 
+## WhatsApp: sending approved goods-received notes
+
+Approved goods-received notes for a subsidiary's stock are sent as a PDF to the subsidiary's
+WhatsApp number (Organisations → the subsidiary → WhatsApp number, with the country code). The
+server sends them through **Meta's WhatsApp Cloud API**. Until it is set up, nothing is sent and
+each approved note says "WhatsApp sending is not set up on the server yet".
+
+One-time setup in Meta (the business owner's account):
+
+1. In [Meta Business Suite](https://business.facebook.com), create or use the business account,
+   then at [developers.facebook.com](https://developers.facebook.com) create an app of type
+   **Business** and add the **WhatsApp** product.
+2. Add the business phone number WhatsApp messages will come from, and verify it. Note its
+   **Phone number ID** (WhatsApp → API Setup).
+3. Create a **permanent access token**: Business Settings → Users → System users → add a system
+   user (Admin), assign the app and the WhatsApp account with full control, then Generate token
+   with the `whatsapp_business_messaging` and `whatsapp_business_management` permissions.
+4. In WhatsApp Manager → Message templates, create a template named `goods_received_note`,
+   category **Utility**, language **English**, with:
+   - Header: **Document**
+   - Body, e.g.: `Goods received note {{1}} for {{2}}, received on {{3}}, has been approved. The
+     note is attached.` ({{1}} GRN number, {{2}} subsidiary name, {{3}} date received)
+
+   Wait for Meta to approve it (usually minutes to a day).
+5. On the server, add to `/etc/snackify/snackify.env` (root only; never commit these):
+
+   ```
+   WHATSAPP_ACCESS_TOKEN=<the permanent token>
+   WHATSAPP_PHONE_NUMBER_ID=<the phone number ID>
+   ```
+
+   Optional: `WHATSAPP_TEMPLATE_NAME` (default `goods_received_note`) and
+   `WHATSAPP_TEMPLATE_LANGUAGE` (default `en`; use the code Meta shows, e.g. `en_US`).
+   Then run the update script (or `docker compose ... up -d`) so the app restarts with them.
+
+If a message fails, the note shows WhatsApp's reason (for example a template name or language
+that does not match) and finance can press **Send on WhatsApp again**.
+
 ## Android signing key
 
 Every APK is signed with Snackify's own key. Phones only install an update signed with the same

@@ -45,12 +45,31 @@ export interface AppConfig {
      */
     allowBackorders: boolean;
   };
+  /**
+   * Meta's WhatsApp Cloud API, used to send approved goods-received notes to the subsidiaries;
+   * null when not set up (nothing is sent, and each note says so).
+   */
+  whatsapp: WhatsAppConfig | null;
+}
+
+export interface WhatsAppConfig {
+  accessToken: string;
+  /** The id of the business's WhatsApp phone number in Meta's dashboard (not the number). */
+  phoneNumberId: string;
+  /** An approved template with a DOCUMENT header and three body values (see the docs). */
+  templateName: string;
+  templateLanguage: string;
+  /** Graph API version, e.g. v23.0. */
+  apiVersion: string;
 }
 
 /** Private documents live here by default: inside the project, never inside the web app. */
 export const DEFAULT_ATTACHMENT_DIR = fileURLToPath(
   new URL('../../../storage/attachments', import.meta.url),
 );
+
+const emptyAsUnset = (value: unknown) =>
+  typeof value === 'string' && value.trim() === '' ? undefined : value;
 
 const booleanSetting = (fallback: boolean) =>
   z
@@ -151,6 +170,34 @@ const envSchema = z.object({
     .default(10 * 1024 * 1024),
   ATTACHMENT_STORAGE_DIR: z.string().trim().min(1).optional(),
   ORDERS_ALLOW_BACKORDERS: booleanSetting(true),
+  // Empty counts as not set (Docker passes unset variables through as "").
+  WHATSAPP_ACCESS_TOKEN: z.preprocess(
+    emptyAsUnset,
+    z.string().trim().min(20, 'Too short to be an access token').optional(),
+  ),
+  WHATSAPP_PHONE_NUMBER_ID: z.preprocess(
+    emptyAsUnset,
+    z
+      .string()
+      .trim()
+      .regex(/^[0-9]{5,25}$/, "Must be the phone number's id from Meta (digits only)")
+      .optional(),
+  ),
+  WHATSAPP_TEMPLATE_NAME: z
+    .string()
+    .trim()
+    .regex(/^[a-z0-9_]{1,512}$/, 'Use the template name exactly as in Meta: a-z, 0-9 and _')
+    .default('goods_received_note'),
+  WHATSAPP_TEMPLATE_LANGUAGE: z
+    .string()
+    .trim()
+    .regex(/^[a-z]{2,3}(_[A-Z]{2})?$/, 'Must be a language code such as en or en_US')
+    .default('en'),
+  WHATSAPP_API_VERSION: z
+    .string()
+    .trim()
+    .regex(/^v[0-9]+[.][0-9]+$/, 'Must look like v23.0')
+    .default('v23.0'),
 });
 
 const WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
@@ -171,6 +218,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const result = envSchema.safeParse(env);
   if (!result.success) {
     throw invalidConfig(result.error);
+  }
+  const { WHATSAPP_ACCESS_TOKEN: token, WHATSAPP_PHONE_NUMBER_ID: phoneNumberId } = result.data;
+  if (Boolean(token) !== Boolean(phoneNumberId)) {
+    throw new Error(
+      [
+        'Invalid environment configuration:',
+        '  - WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID: set both to send on WhatsApp, ' +
+          'or neither',
+      ].join('\n'),
+    );
   }
 
   return {
@@ -194,6 +251,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       maxBytes: result.data.ATTACHMENT_MAX_BYTES,
     },
     orders: { allowBackorders: result.data.ORDERS_ALLOW_BACKORDERS },
+    whatsapp:
+      token && phoneNumberId
+        ? {
+            accessToken: token,
+            phoneNumberId,
+            templateName: result.data.WHATSAPP_TEMPLATE_NAME,
+            templateLanguage: result.data.WHATSAPP_TEMPLATE_LANGUAGE,
+            apiVersion: result.data.WHATSAPP_API_VERSION,
+          }
+        : null,
   };
 }
 

@@ -17,6 +17,7 @@ import { ordersRouter } from './modules/orders/orders.routes.js';
 import { organisationsRouter } from './modules/organisations/organisations.routes.js';
 import { balancesRouter, paymentsRouter } from './modules/payments/payments.routes.js';
 import { productsRouter } from './modules/products/products.routes.js';
+import { cloudApiSender, type WhatsAppSender } from './modules/whatsapp/whatsapp.js';
 import { receiptsRouter } from './modules/receipts/receipts.routes.js';
 import { reportsRouter } from './modules/reports/reports.routes.js';
 import { rolesRouter } from './modules/roles/roles.routes.js';
@@ -28,6 +29,8 @@ import { webAppRouter } from './web/web-app.js';
 /** Things the app needs from outside, passed in so tests can replace them. */
 export interface AppDependencies {
   db: pg.Pool;
+  /** Sends on WhatsApp; tests pass a fake. Left out: Meta's API when configured, else nothing. */
+  sendWhatsApp?: WhatsAppSender;
   checkDatabase: DatabaseCheck;
 }
 
@@ -63,7 +66,9 @@ export function createApp(config: AppConfig, deps: AppDependencies): Express {
     app.use(`/api/v1/${path}`, router);
   }
   app.use('/api/v1/stock', stockRouter(deps.db, config.businessTimezone));
-  app.use('/api/v1/receipts', receiptsRouter(deps.db, config));
+  const sendWhatsApp =
+    deps.sendWhatsApp ?? (config.whatsapp ? cloudApiSender(config.whatsapp) : null);
+  app.use('/api/v1/receipts', receiptsRouter(deps.db, config, sendWhatsApp));
   app.use('/api/v1/orders', ordersRouter(deps.db, config));
   app.use('/api/v1/dispatches', dispatchesRouter(deps.db, config.businessTimezone));
   app.use('/api/v1/invoices', invoicesRouter(deps.db, config));

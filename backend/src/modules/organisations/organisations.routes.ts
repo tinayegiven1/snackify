@@ -43,6 +43,7 @@ const details = {
   billingName: optionalText(120),
   billingAddress: optionalText(300),
   taxNumber: optionalText(40),
+  whatsappNumber: phoneSchema,
 };
 
 /** Most a subsidiary may owe at once, in the base currency; null for "no limit". */
@@ -67,6 +68,7 @@ const updateSchema = z
       billingName: details.billingName.optional(),
       billingAddress: details.billingAddress.optional(),
       taxNumber: details.taxNumber.optional(),
+      whatsappNumber: details.whatsappNumber.optional(),
       creditLimit: creditLimitSchema.optional(),
       isActive: z.boolean({ error: 'Must be true or false' }).optional(),
     },

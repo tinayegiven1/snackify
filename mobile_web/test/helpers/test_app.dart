@@ -269,8 +269,15 @@ class FakeBackend {
     for (final code in [...codes]..sort()) {'code': code, 'name': roleNames[code]},
   ];
 
+  /// Each role's test user has an id of their own (the administrator's ends in 1), so a note
+  /// entered under one role can be approved under another, as two different people.
+  String get userId {
+    final number = role == 'admin' ? 1 : 2 + role.codeUnits.fold(0, (sum, unit) => sum + unit);
+    return '7f9c2b1e-0000-4000-8000-${number.toString().padLeft(12, '0')}';
+  }
+
   Map<String, Object?> get user => {
-    'id': '7f9c2b1e-0000-4000-8000-000000000001',
+    'id': userId,
     'username': testUsername,
     'fullName': 'Tendai Moyo',
     'organisation': organisation,
@@ -931,6 +938,35 @@ class FakeBackend {
     return formatCents(cents);
   }
 
+  bool _enteredBySignedInUser(Map<String, Object?> grn) =>
+      (grn['receivedBy'] as Map?)?['id'] == userId;
+
+  http.Response _samePerson(String action) => _error(
+    409,
+    'SAME_PERSON',
+    'You entered this goods-received note, so someone else must $action it.',
+  );
+
+  /// Messages "sent" for approved notes. A subsidiary with a WhatsApp number gets it; one
+  /// without is skipped with the reason; the Head Office's own notes go nowhere.
+  final List<Map<String, Object?>> whatsappSent = [];
+
+  void _sendGrnOnWhatsApp(Map<String, Object?> grn) {
+    final owner = organisations.firstWhere((o) => o['id'] == grn['ownerId']);
+    if (owner['type'] != 'SUBSIDIARY') return;
+    final number = owner['whatsappNumber'] as String?;
+    if (number != null) whatsappSent.add({'to': number, 'grnNumber': grn['grnNumber']});
+    (grn['whatsappMessages'] as List<Map<String, Object?>>).insert(0, {
+      'status': number == null ? 'SKIPPED' : 'SENT',
+      'toNumber': number,
+      'detail': number == null
+          ? '${owner['name']} has no WhatsApp number. Add one under Organisations, then send again.'
+          : null,
+      'sentBy': {'id': userId, 'fullName': 'Tendai Moyo'},
+      'createdAt': '2026-10-20T10:30:00Z',
+    });
+  }
+
   Map<String, Object?> _grnJson(Map<String, Object?> grn) {
     final lines = grn['lines'] as List<Map<String, Object?>>;
     final documents = grn['documents'] as List<Map<String, Object?>>;
@@ -960,7 +996,8 @@ class FakeBackend {
         ),
         'documentsPending': documents.where((d) => d['verificationStatus'] == 'PENDING').length,
       },
-      'receivedBy': _person,
+      'receivedBy': grn['receivedBy'] ?? _person,
+      'whatsappMessages': grn['whatsappMessages'] ?? const [],
       'lines': [
         for (final (index, line) in lines.indexed)
           {
@@ -1098,6 +1135,8 @@ class FakeBackend {
             'rejectedReason': null,
             'reversalReason': null,
             'noDocumentReason': null,
+            'receivedBy': {'id': userId, 'fullName': 'Tendai Moyo'},
+            'whatsappMessages': <Map<String, Object?>>[],
             ...fields,
           };
           grns.add(grn);
@@ -1193,6 +1232,7 @@ class FakeBackend {
         if (grn!['status'] != 'PENDING_VERIFICATION') {
           return _error(409, 'RECEIPT_WRONG_STATUS', wrongStatus('verified'));
         }
+        if (_enteredBySignedInUser(grn)) return _samePerson('approve');
         final documents = grn['documents'] as List<Map<String, Object?>>;
         // Verifying the receipt also verifies documents not yet reviewed.
         for (final d in documents.where((d) => d['verificationStatus'] == 'PENDING')) {
@@ -1209,6 +1249,18 @@ class FakeBackend {
           ..['status'] = grn['postedAt'] == null ? 'VERIFIED' : 'POSTED'
           ..['verifiedBy'] = _person
           ..['verificationNotes'] = body['notes'];
+        _sendGrnOnWhatsApp(grn);
+        return _json(200, {'receipt': _grnJson(grn)});
+      case 'POST whatsapp':
+        if (!can('receipt.verify')) return forbidden;
+        if (grn!['status'] != 'VERIFIED' && grn['status'] != 'POSTED') {
+          return _error(
+            409,
+            'RECEIPT_NOT_APPROVED',
+            'Only an approved goods-received note is sent on WhatsApp.',
+          );
+        }
+        _sendGrnOnWhatsApp(grn);
         return _json(200, {'receipt': _grnJson(grn)});
       case 'POST post':
         if (!can('stock.receive')) return forbidden;
@@ -1225,6 +1277,7 @@ class FakeBackend {
         if (grn!['status'] != 'PENDING_VERIFICATION') {
           return _error(409, 'RECEIPT_WRONG_STATUS', wrongStatus('rejected'));
         }
+        if (_enteredBySignedInUser(grn)) return _samePerson('reject');
         if (grn['postedAt'] != null) _moveGrnStock(grn, -1, 'reversal');
         grn
           ..['status'] = 'REJECTED'

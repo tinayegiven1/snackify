@@ -16,6 +16,7 @@ class Organisation {
     this.billingName,
     this.billingAddress,
     this.taxNumber,
+    this.whatsappNumber,
     this.creditLimit,
   });
 
@@ -32,6 +33,7 @@ class Organisation {
     billingName: json['billingName'] as String?,
     billingAddress: json['billingAddress'] as String?,
     taxNumber: json['taxNumber'] as String?,
+    whatsappNumber: json['whatsappNumber'] as String?,
     creditLimit: json['creditLimit'] as String?,
   );
 
@@ -47,6 +49,9 @@ class Organisation {
   final String? billingName;
   final String? billingAddress;
   final String? taxNumber;
+
+  /// Where approved goods-received notes are sent on WhatsApp.
+  final String? whatsappNumber;
 
   /// Most it may owe at once, as exact decimal text in the base currency; null means no limit.
   final String? creditLimit;

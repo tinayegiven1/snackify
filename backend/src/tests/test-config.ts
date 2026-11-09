@@ -19,6 +19,8 @@ export const testConfig: AppConfig = {
   trustProxyHops: 0,
   receipts: { stockAvailableBeforeVerification: true, documentRequired: true },
   orders: { allowBackorders: true },
+  // Tests that send on WhatsApp pass a fake sender to createApp instead.
+  whatsapp: null,
   attachments: {
     storageDir: join(tmpdir(), 'snackify-test-attachments'),
     maxBytes: 64 * 1024,

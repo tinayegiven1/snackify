@@ -19,11 +19,44 @@ describe('loadConfig', () => {
       trustProxyHops: 0,
       receipts: { stockAvailableBeforeVerification: true, documentRequired: true },
       orders: { allowBackorders: true },
+      whatsapp: null,
       attachments: {
         storageDir: expect.stringMatching(/storage[\\/]attachments$/),
         maxBytes: 10485760,
       },
     });
+  });
+
+  it('sets up WhatsApp only when both the access token and the phone number id are given', () => {
+    const token = 'EAAG-test-access-token-0123456789';
+    expect(
+      loadConfig({
+        DATABASE_URL,
+        WHATSAPP_ACCESS_TOKEN: token,
+        WHATSAPP_PHONE_NUMBER_ID: '1098765432',
+      }).whatsapp,
+    ).toEqual({
+      accessToken: token,
+      phoneNumberId: '1098765432',
+      templateName: 'goods_received_note',
+      templateLanguage: 'en',
+      apiVersion: 'v23.0',
+    });
+    // Docker passes unset variables as empty text: that is "not set up", not an error.
+    expect(
+      loadConfig({ DATABASE_URL, WHATSAPP_ACCESS_TOKEN: '', WHATSAPP_PHONE_NUMBER_ID: '' })
+        .whatsapp,
+    ).toBeNull();
+    expect(() => loadConfig({ DATABASE_URL, WHATSAPP_ACCESS_TOKEN: token })).toThrow(
+      /set both to send on WhatsApp/,
+    );
+    // The token is never echoed in an error.
+    expect(() =>
+      loadConfig({ DATABASE_URL, WHATSAPP_ACCESS_TOKEN: token, WHATSAPP_PHONE_NUMBER_ID: 'abc' }),
+    ).toThrow(/WHATSAPP_PHONE_NUMBER_ID/);
+    expect(() =>
+      loadConfig({ DATABASE_URL, WHATSAPP_ACCESS_TOKEN: token, WHATSAPP_PHONE_NUMBER_ID: 'abc' }),
+    ).not.toThrow(token);
   });
 
   it('reads PORT, NODE_ENV and a comma-separated list of CORS origins', () => {

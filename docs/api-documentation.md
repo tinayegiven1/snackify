@@ -790,6 +790,21 @@ reason (3–500 characters; audit action `receipt.no_document`).
 At least one document must end up verified, unless the receipt was submitted without one
 (**409** `NO_VERIFIED_DOCUMENT`).
 
+**One person enters, another decides:** whoever received or submitted the note gets **409**
+`SAME_PERSON` from verify and reject, whatever their roles.
+
+**WhatsApp:** when a note for a subsidiary's stock is approved, its PDF is sent to the
+subsidiary's `whatsappNumber` (set under Organisations) through Meta's WhatsApp Cloud API. The
+approval stands whatever happens to the message. Every attempt is listed, newest first, in the
+receipt's `whatsappMessages`: `{ status: SENT | FAILED | SKIPPED, toNumber, detail, sentBy,
+createdAt }` (`detail` says why it failed or was skipped: no number, or WhatsApp not set up on
+the server). Notes for the Head Office's own stock are not sent.
+
+### `POST /api/v1/receipts/:id/whatsapp` (`receipt.verify`)
+
+Sends an approved (verified or posted) note on WhatsApp again, e.g. after a failure or once a
+number was added. **200 OK** with the receipt; **409** `RECEIPT_NOT_APPROVED` otherwise.
+
 ### `POST /api/v1/receipts/:id/reject` (`receipt.verify`)
 
 `{ "reason": "Not our order" }`. If its stock was already added, it is taken back out.

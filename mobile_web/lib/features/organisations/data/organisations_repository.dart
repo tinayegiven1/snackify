@@ -28,7 +28,7 @@ class OrganisationsRepository {
   }
 
   /// [fields] uses the API's names: code, name, contactName, contactPhone, contactEmail,
-  /// address, billingName, billingAddress, taxNumber, creditLimit.
+  /// address, billingName, billingAddress, taxNumber, whatsappNumber, creditLimit.
   Future<Organisation> create(Map<String, Object?> fields) async {
     final body = await _api.postJson('/api/v1/organisations', fields);
     return Organisation.fromJson(body['organisation'] as Map<String, dynamic>);

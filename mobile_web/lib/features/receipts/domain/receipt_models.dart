@@ -280,6 +280,7 @@ class GoodsReceipt extends ReceiptSummary {
     required this.noDocumentReason,
     required this.lines,
     required this.documents,
+    this.whatsappMessages = const [],
   });
 
   factory GoodsReceipt.fromJson(Map<String, dynamic> json) {
@@ -315,6 +316,10 @@ class GoodsReceipt extends ReceiptSummary {
         for (final document in json['attachments'] as List)
           ReceiptDocument.fromJson(document as Map<String, dynamic>),
       ],
+      whatsappMessages: [
+        for (final message in (json['whatsappMessages'] as List?) ?? const [])
+          ReceiptWhatsAppMessage.fromJson(message as Map<String, dynamic>),
+      ],
     );
   }
 
@@ -328,6 +333,46 @@ class GoodsReceipt extends ReceiptSummary {
   final String? noDocumentReason;
   final List<ReceiptLine> lines;
   final List<ReceiptDocument> documents;
+
+  /// Every attempt to send the approved note to the subsidiary on WhatsApp, newest first.
+  final List<ReceiptWhatsAppMessage> whatsappMessages;
+}
+
+/// One attempt to send an approved note on WhatsApp.
+class ReceiptWhatsAppMessage {
+  const ReceiptWhatsAppMessage({
+    required this.status,
+    required this.toNumber,
+    required this.detail,
+    required this.sentBy,
+    required this.createdAt,
+  });
+
+  factory ReceiptWhatsAppMessage.fromJson(Map<String, dynamic> json) => ReceiptWhatsAppMessage(
+    status: json['status'] as String,
+    toNumber: json['toNumber'] as String?,
+    detail: json['detail'] as String?,
+    sentBy: PersonRef.fromJson(json['sentBy'] as Map<String, dynamic>),
+    createdAt: DateTime.parse(json['createdAt'] as String).toLocal(),
+  );
+
+  /// SENT, FAILED or SKIPPED.
+  final String status;
+  final String? toNumber;
+
+  /// Why it failed or was skipped.
+  final String? detail;
+  final PersonRef sentBy;
+  final DateTime createdAt;
+
+  bool get sent => status == 'SENT';
+
+  /// e.g. "Sent to +263 77 123 4567" or "Not sent".
+  String get headline => switch (status) {
+    'SENT' => 'Sent to ${toNumber ?? 'WhatsApp'}',
+    'FAILED' => 'Sending failed',
+    _ => 'Not sent',
+  };
 }
 
 /// One line as entered on the form.

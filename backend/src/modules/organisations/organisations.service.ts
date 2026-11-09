@@ -20,6 +20,8 @@ export interface Organisation {
   billingName: string | null;
   billingAddress: string | null;
   taxNumber: string | null;
+  /** Where approved goods-received notes are sent on WhatsApp. */
+  whatsappNumber: string | null;
   /** Most a subsidiary may owe the Head Office at once (null: no limit). */
   creditLimit: string | null;
   createdAt: Date;
@@ -39,6 +41,7 @@ interface OrganisationRow {
   billing_name: string | null;
   billing_address: string | null;
   tax_number: string | null;
+  whatsapp_number: string | null;
   credit_limit: string | null;
   created_at: Date;
   updated_at: Date;
@@ -47,7 +50,7 @@ interface OrganisationRow {
 const ORGANISATION_SELECT = `
   SELECT o.id, o.code, o.name, o.organisation_type, o.is_active, o.contact_name, o.contact_phone,
          o.contact_email, o.address, o.billing_name, o.billing_address, o.tax_number,
-         o.credit_limit, o.created_at, o.updated_at
+         o.whatsapp_number, o.credit_limit, o.created_at, o.updated_at
   FROM organisations o`;
 
 const toOrganisation = (row: OrganisationRow): Organisation => ({
@@ -63,6 +66,7 @@ const toOrganisation = (row: OrganisationRow): Organisation => ({
   billingName: row.billing_name,
   billingAddress: row.billing_address,
   taxNumber: row.tax_number,
+  whatsappNumber: row.whatsapp_number,
   creditLimit: row.credit_limit,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
@@ -78,6 +82,7 @@ export interface OrganisationDetails {
   billingName: string | null;
   billingAddress: string | null;
   taxNumber: string | null;
+  whatsappNumber: string | null;
   creditLimit: string | null;
 }
 
@@ -90,6 +95,7 @@ const DETAIL_COLUMNS: Record<keyof OrganisationDetails, string> = {
   billingName: 'billing_name',
   billingAddress: 'billing_address',
   taxNumber: 'tax_number',
+  whatsappNumber: 'whatsapp_number',
   creditLimit: 'credit_limit',
 };
 
@@ -157,8 +163,8 @@ export async function createSubsidiary(
       const { rows } = await client.query<{ id: string }>(
         `INSERT INTO organisations (code, name, organisation_type, contact_name, contact_phone,
                                     contact_email, address, billing_name, billing_address,
-                                    tax_number, credit_limit)
-         VALUES ($1, $2, 'SUBSIDIARY', $3, $4, $5, $6, $7, $8, $9, $10)
+                                    tax_number, credit_limit, whatsapp_number)
+         VALUES ($1, $2, 'SUBSIDIARY', $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING id`,
         [
           input.code,
@@ -171,6 +177,7 @@ export async function createSubsidiary(
           input.billingAddress,
           input.taxNumber,
           input.creditLimit,
+          input.whatsappNumber,
         ],
       );
       const organisationId = (rows[0] as { id: string }).id;

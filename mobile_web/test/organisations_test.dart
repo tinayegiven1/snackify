@@ -10,6 +10,9 @@ Future<void> tapButton(WidgetTester tester, String label) async {
     of: find.text(label),
     matching: find.byWidgetPredicate((widget) => widget is ButtonStyleButton),
   );
+  // Close the keyboard first, or the page scrolls back to the field being typed in.
+  FocusManager.instance.primaryFocus?.unfocus();
+  await tester.pumpAndSettle();
   await tester.ensureVisible(button);
   await tester.pumpAndSettle();
   await tester.tap(button);

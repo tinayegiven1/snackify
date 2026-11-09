@@ -8,7 +8,8 @@ import { businessToday } from '../../utils/dates.js';
 import { optionalText, parseIdParam } from '../../utils/schemas.js';
 import { parseBody } from '../../utils/validation.js';
 import { organisationFor, scopeOf } from '../organisations/access.js';
-import { renderGrnPdf } from './grn-pdf.js';
+import type { WhatsAppSender } from '../whatsapp/whatsapp.js';
+import { buildGrnPdf, sendGrnOnWhatsApp } from './grn-whatsapp.js';
 import {
   createReceipt,
   getReceipt,
@@ -153,7 +154,15 @@ function fieldError(field: string, message: string): AppError {
  * Goods-received notes (StockFlow Stage 4.4 and 4.5). A receipt belongs to the organisation
  * whose stock arrived; users see only receipts within their access (others answer 404).
  */
-export function receiptsRouter(db: pg.Pool, config: AppConfig): Router {
+/**
+ * [sendWhatsApp] sends approved notes to the subsidiaries (null: WhatsApp is not set up, and
+ * each approved note records that it was not sent).
+ */
+export function receiptsRouter(
+  db: pg.Pool,
+  config: AppConfig,
+  sendWhatsApp: WhatsAppSender | null = null,
+): Router {
   const router = Router();
   router.use(requireAuth(db), requirePermission('stock.view'));
   const today = () => businessToday(config.businessTimezone);
@@ -193,23 +202,7 @@ export function receiptsRouter(db: pg.Pool, config: AppConfig): Router {
   router.get('/:id/pdf', async (req, res) => {
     const receipt = await getReceipt(db, scope(res), receiptId(req.params.id));
     // Photographed documents (not PDFs) are printed after the note.
-    const pictures = [];
-    for (const attachment of receipt.attachments) {
-      if (attachment.mimeType !== 'image/jpeg' && attachment.mimeType !== 'image/png') continue;
-      const document = await readAttachment(
-        db,
-        scope(res),
-        receipt.id,
-        attachment.id,
-        config.attachments.storageDir,
-      );
-      pictures.push({
-        filename: attachment.filename,
-        verificationStatus: attachment.verificationStatus,
-        content: document.content,
-      });
-    }
-    const pdf = await renderGrnPdf(receipt, config.business, pictures);
+    const pdf = await buildGrnPdf(db, scope(res), receipt, config);
     res
       .type('application/pdf')
       .set('Content-Disposition', `inline; filename="${receipt.grnNumber}.pdf"`)
@@ -269,14 +262,38 @@ export function receiptsRouter(db: pg.Pool, config: AppConfig): Router {
 
   router.post('/:id/verify', requirePermission('receipt.verify'), async (req, res) => {
     const { notes } = parseBody(verifySchema, req.body ?? {});
-    const receipt = await verifyReceipt(
+    const { user } = getAuth(res);
+    const approved = await verifyReceipt(db, scope(res), receiptId(req.params.id), notes, user);
+    // The approved note goes to the subsidiary on WhatsApp; the outcome is on the note.
+    await sendGrnOnWhatsApp(
       db,
-      scope(res),
-      receiptId(req.params.id),
-      notes,
-      getAuth(res).user,
+      approved,
+      () => buildGrnPdf(db, scope(res), approved, config),
+      sendWhatsApp,
+      user,
     );
-    res.json({ receipt });
+    res.json({ receipt: await getReceipt(db, scope(res), approved.id) });
+  });
+
+  // Sends an approved note on WhatsApp again (after a failure, or once a number was added).
+  router.post('/:id/whatsapp', requirePermission('receipt.verify'), async (req, res) => {
+    const { user } = getAuth(res);
+    const receipt = await getReceipt(db, scope(res), receiptId(req.params.id));
+    if (receipt.status !== 'VERIFIED' && receipt.status !== 'POSTED') {
+      throw new AppError(
+        409,
+        'RECEIPT_NOT_APPROVED',
+        'Only an approved goods-received note is sent on WhatsApp.',
+      );
+    }
+    await sendGrnOnWhatsApp(
+      db,
+      receipt,
+      () => buildGrnPdf(db, scope(res), receipt, config),
+      sendWhatsApp,
+      user,
+    );
+    res.json({ receipt: await getReceipt(db, scope(res), receipt.id) });
   });
 
   router.post('/:id/reject', requirePermission('receipt.verify'), async (req, res) => {

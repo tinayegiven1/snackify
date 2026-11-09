@@ -48,6 +48,7 @@ class _OrganisationFormScreenState extends State<OrganisationFormScreen> {
     'billingName': TextEditingController(text: widget.organisation?.billingName),
     'billingAddress': TextEditingController(text: widget.organisation?.billingAddress),
     'taxNumber': TextEditingController(text: widget.organisation?.taxNumber),
+    'whatsappNumber': TextEditingController(text: widget.organisation?.whatsappNumber),
   };
   late final _creditLimit = TextEditingController(text: widget.organisation?.creditLimit);
   late bool _isActive = widget.organisation?.isActive ?? true;
@@ -207,6 +208,18 @@ class _OrganisationFormScreenState extends State<OrganisationFormScreen> {
                           ? null
                           : 'Use digits, spaces, brackets or dashes',
                     ),
+                    if (!(organisation?.isHeadOffice ?? false))
+                      _field(
+                        'whatsappNumber',
+                        'WhatsApp number (optional)',
+                        hint: 'e.g. +263 77 123 4567',
+                        helper:
+                            'With the country code. Approved goods-received notes are sent here.',
+                        keyboardType: TextInputType.phone,
+                        validator: (value) => value.isEmpty || _phoneFormat.hasMatch(value)
+                            ? null
+                            : 'Use digits, spaces, brackets or dashes',
+                      ),
                     _field(
                       'contactEmail',
                       'Email (optional)',

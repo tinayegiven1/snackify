@@ -18,10 +18,25 @@ FakeBackend backendFor(String role) => FakeBackend(role: role)
 Finder grnTile(String number) =>
     find.ancestor(of: find.textContaining(number), matching: find.byType(ListTile)).first;
 
-/// Opens Goods Received and starts a new receipt.
+/// Opens Goods Received (unless already there) and starts a new receipt.
 Future<void> startReceipt(WidgetTester tester) async {
-  await openSection(tester, 'Goods Received');
+  if (find.text('Receive stock').evaluate().isEmpty) await openSection(tester, 'Goods Received');
   await press(tester, find.text('Receive stock'));
+}
+
+/// Closes any open screens, back to the section the app shows first.
+Future<void> backToStart(WidgetTester tester) async {
+  tester.state<NavigatorState>(find.byType(Navigator).first).popUntil((route) => route.isFirst);
+  await tester.pumpAndSettle();
+}
+
+/// Signs in as someone else on the same data (the app is reused, so screens are closed first).
+/// Returns their server, whose stock follows what they do.
+Future<FakeBackend> switchPerson(WidgetTester tester, FakeBackend backend, String role) async {
+  await backToStart(tester);
+  final other = sameDataAs(backend, role);
+  await pumpSnackify(tester, signedIn: true, backend: other);
+  return other;
 }
 
 /// A submitted receipt for 100 BBQ at 0.4250, with one PDF, added straight to the backend
@@ -33,6 +48,20 @@ Future<void> submitThroughScreens(WidgetTester tester, TestApp app, {String? own
   app.documents.willPick([pdfDocument()]);
   await press(tester, find.text('Attach document'));
   await press(tester, find.text('Submit for verification'));
+}
+
+/// Another person, signed in with [role], working on the same server data as [backend].
+FakeBackend sameDataAs(FakeBackend backend, String role) => FakeBackend(role: role)
+  ..products.addAll(backend.products)
+  ..catalogue['suppliers']!.addAll(backend.catalogue['suppliers']!)
+  ..grns.addAll(backend.grns)
+  ..movements.addAll(backend.movements);
+
+/// Opens a goods-received note from the list.
+Future<void> openGrn(WidgetTester tester, String number) async {
+  await openSection(tester, 'Goods Received');
+  await tester.tap(grnTile(number));
+  await tester.pumpAndSettle();
 }
 
 void main() {
@@ -130,7 +159,10 @@ void main() {
     expect(app.sharedPdfs.last.$1, 'GRN000001.pdf');
   });
 
-  testWidgets('rejecting the receipt takes its stock out', (tester) async {
+  testWidgets('whoever entered a note cannot decide on it; someone else rejects it', (
+    tester,
+  ) async {
+    // An administrator could otherwise both enter and approve.
     final backend = backendFor('admin');
     final app = await pumpSnackify(tester, signedIn: true, backend: backend);
     await submitThroughScreens(tester, app);
@@ -138,13 +170,22 @@ void main() {
 
     await tester.tap(grnTile('GRN000001'));
     await tester.pumpAndSettle();
+    expect(
+      find.text('You entered this goods-received note, so someone else must verify or reject it.'),
+      findsOneWidget,
+    );
+    expect(find.text('Verify receipt'), findsNothing);
+    expect(find.text('Reject receipt'), findsNothing);
+
+    final finance = await switchPerson(tester, backend, 'accounts');
+    await openGrn(tester, 'GRN000001');
     await press(tester, find.text('Reject receipt'));
     await tester.enterText(find.widgetWithText(TextField, 'Reason'), 'Not our order');
     await tester.tap(find.text('Reject').last);
     await tester.pumpAndSettle();
     expect(find.text('Receipt GRN000001 rejected.'), findsOneWidget);
     expect(find.text('Rejected because'), findsOneWidget);
-    expect(backend.onHand('product-1'), 10);
+    expect(finance.onHand('product-1'), 10);
   });
 
   testWidgets('Head Office receives stock for a subsidiary: only its balance grows', (
@@ -218,11 +259,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(backend.grns.single['noDocumentReason'], 'Supplier will email it');
 
-    await tester.tap(grnTile('GRN000001'));
-    await tester.pumpAndSettle();
+    // Finance verifies it; the administrator then reverses it.
+    final finance = await switchPerson(tester, backend, 'accounts');
+    await openGrn(tester, 'GRN000001');
     await press(tester, find.text('Verify receipt'));
     await tester.tap(find.text('Verify').last);
     await tester.pumpAndSettle();
+    final admin = await switchPerson(tester, finance, 'admin');
+    await openGrn(tester, 'GRN000001');
     await press(tester, find.text('Reverse receipt'));
     await tester.enterText(find.widgetWithText(TextField, 'Reason'), 'Entered twice');
     await tester.tap(find.text('Reverse').last);
@@ -230,7 +274,7 @@ void main() {
 
     expect(find.text('Receipt GRN000001 reversed.'), findsOneWidget);
     expect(find.text('No stock added'), findsOneWidget);
-    expect(backend.onHand('product-1'), 10);
+    expect(admin.onHand('product-1'), 10);
   });
 
   testWidgets('a delivery in cartons is added to stock in packs', (tester) async {
@@ -296,5 +340,39 @@ void main() {
       },
     ]);
     expect(backend.requests, contains('PUT /api/v1/products/product-1/conversions'));
+  });
+
+  testWidgets("an approved subsidiary note is sent to the subsidiary's WhatsApp", (tester) async {
+    final backend = backendFor('storekeeper');
+    final storekeeper = await pumpSnackify(tester, signedIn: true, backend: backend);
+    await submitThroughScreens(tester, storekeeper, owner: 'Mbare Branch (SUB-01)');
+
+    final finance = sameDataAs(backend, 'accounts');
+    finance.organisations.firstWhere((o) => o['code'] == 'SUB-01')['whatsappNumber'] =
+        '+263 77 123 4567';
+    await backToStart(tester);
+    await pumpSnackify(tester, signedIn: true, backend: finance);
+    await openGrn(tester, 'GRN000001');
+    await press(tester, find.text('Verify receipt'));
+    await tester.tap(find.text('Verify').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sent to +263 77 123 4567'), findsOneWidget);
+    expect(finance.whatsappSent, [
+      {'to': '+263 77 123 4567', 'grnNumber': 'GRN000001'},
+    ]);
+    await press(tester, find.text('Send on WhatsApp again'));
+    expect(find.text('Sent GRN000001 on WhatsApp again.'), findsOneWidget);
+    expect(find.text('Sent to +263 77 123 4567'), findsNWidgets(2));
+
+    // Without a number nothing is sent, and the note says what to do.
+    finance.organisations.firstWhere((o) => o['code'] == 'SUB-01')['whatsappNumber'] = null;
+    await press(tester, find.text('Send on WhatsApp again'));
+    expect(find.text('Not sent'), findsOneWidget);
+    expect(
+      find.textContaining('Mbare Branch has no WhatsApp number. Add one under Organisations'),
+      findsOneWidget,
+    );
+    expect(finance.whatsappSent, hasLength(2));
   });
 }

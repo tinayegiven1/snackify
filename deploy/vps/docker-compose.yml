@@ -43,6 +43,11 @@ services:
       ATTACHMENT_STORAGE_DIR: /data/attachments
       BUSINESS_TIMEZONE: Africa/Harare
       BUSINESS_NAME: ${BUSINESS_NAME:-Snackify}
+      # WhatsApp sending; empty until the Meta details are added to /etc/snackify/snackify.env.
+      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WHATSAPP_TEMPLATE_NAME: ${WHATSAPP_TEMPLATE_NAME:-goods_received_note}
+      WHATSAPP_TEMPLATE_LANGUAGE: ${WHATSAPP_TEMPLATE_LANGUAGE:-en}
     volumes:
       - attachments:/data/attachments
     # Only nginx on this server reaches it.

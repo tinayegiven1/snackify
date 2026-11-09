@@ -128,6 +128,16 @@ export interface Receipt extends ReceiptSummary {
   noDocumentReason: string | null;
   lines: ReceiptLine[];
   attachments: ReceiptAttachment[];
+  /** Every attempt to send the approved note to the subsidiary on WhatsApp, newest first. */
+  whatsappMessages: ReceiptWhatsAppMessage[];
+}
+
+export interface ReceiptWhatsAppMessage {
+  status: 'SENT' | 'FAILED' | 'SKIPPED';
+  toNumber: string | null;
+  detail: string | null;
+  sentBy: { id: string; fullName: string };
+  createdAt: Date;
 }
 
 const SUMMARY_SELECT = `
@@ -345,6 +355,21 @@ export async function getReceipt(db: Queryable, scope: AccessScope, id: string):
      ORDER BY a.uploaded_at, a.id`,
     [id],
   );
+  const { rows: messages } = await db.query<{
+    status: ReceiptWhatsAppMessage['status'];
+    to_number: string | null;
+    detail: string | null;
+    sent_by: { id: string; fullName: string };
+    created_at: Date;
+  }>(
+    `SELECT m.status, m.to_number, m.detail, m.created_at,
+            json_build_object('id', u.id, 'fullName', u.full_name) AS sent_by
+     FROM grn_whatsapp_messages m
+     JOIN users u ON u.id = m.sent_by
+     WHERE m.receipt_id = $1
+     ORDER BY m.created_at DESC, m.id`,
+    [id],
+  );
 
   return {
     ...toSummary(row),
@@ -389,10 +414,35 @@ export async function getReceipt(db: Queryable, scope: AccessScope, id: string):
       reviewNotes: a.review_notes,
       documentTotal: a.document_total,
     })),
+    whatsappMessages: messages.map((m) => ({
+      status: m.status,
+      toNumber: m.to_number,
+      detail: m.detail,
+      sentBy: m.sent_by,
+      createdAt: m.created_at,
+    })),
   };
 }
 
 const ALL: AccessScope = { allOrganisations: true, organisationId: '' };
+
+/**
+ * One person enters a goods-received note and another decides on it: whoever received or
+ * submitted it may not approve or reject it, whatever their roles.
+ */
+function checkDifferentPerson(
+  receipt: { received_by: string; submitted_by: string | null },
+  actor: PublicUser,
+  action: 'approve' | 'reject',
+): void {
+  if (actor.id === receipt.received_by || actor.id === receipt.submitted_by) {
+    throw new AppError(
+      409,
+      'SAME_PERSON',
+      `You entered this goods-received note, so someone else must ${action} it.`,
+    );
+  }
+}
 
 /** Locks the receipt row and returns its status, owner and posting state. */
 async function lockReceipt(client: pg.PoolClient, scope: AccessScope, id: string) {
@@ -404,10 +454,11 @@ async function lockReceipt(client: pg.PoolClient, scope: AccessScope, id: string
     grn_number: string;
     posted_at: Date | null;
     received_by: string;
+    submitted_by: string | null;
     no_document_reason: string | null;
   }>(
     `SELECT status, owner_organisation_id, warehouse_id, received_date, grn_number, posted_at,
-            received_by, no_document_reason
+            received_by, submitted_by, no_document_reason
      FROM stock_receipts WHERE id = $1 FOR UPDATE`,
     [id],
   );
@@ -813,6 +864,7 @@ export async function verifyReceipt(
   await withTransaction(pool, async (client) => {
     const current = await lockReceipt(client, scope, id);
     if (current.status !== 'PENDING_VERIFICATION') throw wrongStatus(current.status, 'verified');
+    checkDifferentPerson(current, actor, 'approve');
     // Verifying the receipt also verifies any document not yet reviewed on its own.
     await client.query(
       `UPDATE stock_receipt_attachments
@@ -888,6 +940,7 @@ export async function rejectReceipt(
   await withTransaction(pool, async (client) => {
     const current = await lockReceipt(client, scope, id);
     if (current.status !== 'PENDING_VERIFICATION') throw wrongStatus(current.status, 'rejected');
+    checkDifferentPerson(current, actor, 'reject');
     if (current.posted_at) {
       await takeStockBack(client, id, reason, actor, today, current.grn_number);
     }

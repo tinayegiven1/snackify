@@ -4,6 +4,7 @@ import request from 'supertest';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../app.js';
 import { businessToday } from '../../utils/dates.js';
+import { WhatsAppError, type WhatsAppDocument } from '../../modules/whatsapp/whatsapp.js';
 import { testConfig } from '../test-config.js';
 import {
   auditEntries,
@@ -693,3 +694,140 @@ describe('posting', () => {
     expect(await auditEntries(pools.owner, 'receipt.posted')).toHaveLength(1);
   });
 });
+
+describe('approval by a second person', () => {
+  it('lets nobody approve or reject a note they entered themselves', async () => {
+    // An administrator holds every Head Office role, so could otherwise do both.
+    const draft = await as('admin').post('/api/v1/receipts', draftBody());
+    expect(draft.status).toBe(201);
+    const id = draft.body.receipt.id as string;
+    expect((await upload('admin', id, 'invoice.pdf', FILES.pdf)).status).toBe(201);
+    expect((await as('admin').post(`/api/v1/receipts/${id}/submit`)).status).toBe(200);
+
+    for (const action of ['verify', 'reject']) {
+      const own = await as('admin').post(`/api/v1/receipts/${id}/${action}`, {
+        reason: 'Wrong supplier',
+      });
+      expect(own.status, action).toBe(409);
+      expect(own.body.error.code).toBe('SAME_PERSON');
+    }
+    const other = await as('accounts').post(`/api/v1/receipts/${id}/verify`);
+    expect(other.status).toBe(200);
+    expect(other.body.receipt.verifiedBy.fullName).toBe('Test accounts');
+  });
+});
+
+describe('sending approved notes on WhatsApp', () => {
+  let sent: WhatsAppDocument[];
+  let failNext: string | null;
+
+  beforeEach(async () => {
+    sent = [];
+    failNext = null;
+    app = createApp(testConfig, {
+      db: pools.app,
+      checkDatabase: async () => true,
+      sendWhatsApp: async (document) => {
+        if (failNext) {
+          const reason = failNext;
+          failNext = null;
+          throw new WhatsAppError(reason);
+        }
+        sent.push(document);
+        return { messageId: `wamid.${sent.length}` };
+      },
+    });
+    const patched = await request(app)
+      .patch(`/api/v1/organisations/${subA}`)
+      .set(auth('admin'))
+      .send({ whatsappNumber: '+263 77 123 4567' });
+    expect(patched.status, JSON.stringify(patched.body)).toBe(200);
+    expect(patched.body.organisation.whatsappNumber).toBe('+263 77 123 4567');
+  });
+
+  it("sends the PDF to the subsidiary's WhatsApp number when the note is approved", async () => {
+    const receipt = await submitted({ organisationId: subA });
+    const approved = await as('accounts').post(`/api/v1/receipts/${receipt.id}/verify`);
+    expect(approved.status).toBe(200);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      to: '+263 77 123 4567',
+      filename: `${receipt.grnNumber}.pdf`,
+      bodyValues: [receipt.grnNumber, 'Avondale Shop', expect.any(String)],
+    });
+    expect(sent[0]?.content.subarray(0, 5).toString()).toBe('%PDF-');
+    expect(approved.body.receipt.whatsappMessages).toEqual([
+      {
+        status: 'SENT',
+        toNumber: '+263 77 123 4567',
+        detail: null,
+        sentBy: { id: expect.any(String), fullName: 'Test accounts' },
+        createdAt: expect.any(String),
+      },
+    ]);
+  });
+
+  it("does not send notes for the Head Office's own stock", async () => {
+    const receipt = await submitted();
+    const approved = await as('accounts').post(`/api/v1/receipts/${receipt.id}/verify`);
+    expect(approved.status).toBe(200);
+    expect(sent).toEqual([]);
+    expect(approved.body.receipt.whatsappMessages).toEqual([]);
+  });
+
+  it('records a failure with the reason, and can send again', async () => {
+    const receipt = await submitted({ organisationId: subA });
+    failNext = 'WhatsApp refused the message (code 131026): Message undeliverable';
+    const approved = await as('accounts').post(`/api/v1/receipts/${receipt.id}/verify`);
+    // The approval stands even though sending failed.
+    expect(approved.status).toBe(200);
+    expect(approved.body.receipt.status).toBe('POSTED');
+    expect(approved.body.receipt.whatsappMessages).toMatchObject([
+      { status: 'FAILED', detail: failNextWas('Message undeliverable') },
+    ]);
+
+    const again = await as('accounts').post(`/api/v1/receipts/${receipt.id}/whatsapp`);
+    expect(again.status).toBe(200);
+    expect(again.body.receipt.whatsappMessages.map((m: { status: string }) => m.status)).toEqual([
+      'SENT',
+      'FAILED',
+    ]);
+    expect(sent).toHaveLength(1);
+
+    // Only finance sends; only approved notes are sent.
+    expect((await as('storekeeper').post(`/api/v1/receipts/${receipt.id}/whatsapp`)).status).toBe(
+      403,
+    );
+    const pending = await submitted({ organisationId: subA });
+    const early = await as('accounts').post(`/api/v1/receipts/${pending.id}/whatsapp`);
+    expect(early.status).toBe(409);
+    expect(early.body.error.code).toBe('RECEIPT_NOT_APPROVED');
+  });
+
+  it('says why nothing was sent: no number, or WhatsApp not set up', async () => {
+    const noNumber = await submitted({ organisationId: subB });
+    const approved = await as('accounts').post(`/api/v1/receipts/${noNumber.id}/verify`);
+    expect(approved.body.receipt.whatsappMessages).toMatchObject([
+      {
+        status: 'SKIPPED',
+        toNumber: null,
+        detail:
+          'Borrowdale Shop has no WhatsApp number. Add one under Organisations, then send again.',
+      },
+    ]);
+
+    app = createDbTestApp(pools.app); // no sender: WhatsApp is not configured
+    const notSetUp = await submitted({ organisationId: subA });
+    const verified = await as('accounts').post(`/api/v1/receipts/${notSetUp.id}/verify`);
+    expect(verified.body.receipt.whatsappMessages).toMatchObject([
+      { status: 'SKIPPED', detail: 'WhatsApp sending is not set up on the server yet.' },
+    ]);
+    expect(sent).toEqual([]);
+  });
+});
+
+/** Matches a stored failure that mentions [text]. */
+function failNextWas(text: string) {
+  return expect.stringContaining(text);
+}
