@@ -32,6 +32,8 @@ WORKDIR /app/backend
 COPY backend/package.json backend/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY --from=build /app/backend/dist ./dist
+# The logo printed on PDFs (dist/modules/pdf/letterhead.js looks for it here).
+COPY backend/assets ./assets
 # The migration runner looks for ../database/migrations relative to the backend folder.
 COPY database/migrations /app/database/migrations
 COPY --from=web /src/mobile_web/build/web /app/web

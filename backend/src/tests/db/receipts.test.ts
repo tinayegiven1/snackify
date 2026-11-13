@@ -280,8 +280,8 @@ describe('a Head Office receipt', () => {
     // The note, then one page per picture; only the good photo is embedded as an image.
     const pages = (pdf: string) => pdf.match(new RegExp('/Type /Page[^s]', 'g'))?.length ?? 0;
     expect(pages(text)).toBe(3);
-    // Only the good photo is embedded: its picture plus its transparency mask.
-    expect(text.split('/Subtype /Image')).toHaveLength(3);
+    // The logo (one image) and the good photo (a picture plus its transparency mask).
+    expect(text.split('/Subtype /Image')).toHaveLength(4);
 
     const plain = await createDraft();
     const plainPdf = await download('storekeeper', `/api/v1/receipts/${plain.id}/pdf`);

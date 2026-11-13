@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import { drawLetterhead } from '../pdf/letterhead.js';
 import { displayDate } from '../invoices/invoice-pdf.js';
 import type { Receipt } from './receipts.service.js';
 
@@ -61,8 +62,8 @@ export function renderGrnPdf(
   });
 
   // Business (left) and the note's details (right).
-  doc.font('Helvetica-Bold').fontSize(18).text(business.name, LEFT, 50, { width: 230 });
-  if (business.contact) doc.font('Helvetica').fontSize(9).text(business.contact, { width: 230 });
+  // The logo, then the business's name and contact.
+  drawLetterhead(doc, business, { left: LEFT, top: 50, width: 230 });
 
   doc
     .font('Helvetica-Bold')

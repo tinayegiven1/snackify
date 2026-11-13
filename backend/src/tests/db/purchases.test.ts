@@ -520,7 +520,8 @@ describe('supplier documents on goods bought', () => {
     const plainPdf = await download('storekeeper', `/api/v1/purchases/${plain.id}/pdf`);
     const plainPages = pages((plainPdf.body as Buffer).toString('latin1'));
     expect(plainPages).toBeGreaterThanOrEqual(1);
-    expect((plainPdf.body as Buffer).toString('latin1')).not.toContain('/Subtype /Image');
+    // A plain list has just the logo (one image: it has no see-through parts).
+    expect((plainPdf.body as Buffer).toString('latin1').split('/Subtype /Image')).toHaveLength(2);
 
     // A real 1x1 PNG (a camera photo), a PDF (not printed) and a damaged PNG (noted instead).
     const photo = Buffer.from(
@@ -538,7 +539,7 @@ describe('supplier documents on goods bought', () => {
     const text = (pdf.body as Buffer).toString('latin1');
     // The list, then one page per picture (the damaged one gets a note instead).
     expect(pages(text)).toBe(plainPages + 2);
-    // Only the good photo is embedded: its picture plus its transparency mask.
-    expect(text.split('/Subtype /Image')).toHaveLength(3);
+    // The logo (one image) and the good photo (a picture plus its transparency mask).
+    expect(text.split('/Subtype /Image')).toHaveLength(4);
   });
 });

@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import { drawLetterhead } from '../pdf/letterhead.js';
 import type { Invoice } from './invoices.service.js';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -46,8 +47,8 @@ export function renderInvoicePdf(
   const money = (amount: string) => `${invoice.currency} ${amount}`;
 
   // Business (left) and invoice details (right).
-  doc.font('Helvetica-Bold').fontSize(18).text(business.name, LEFT, 50, { width: 260 });
-  if (business.contact) doc.font('Helvetica').fontSize(9).text(business.contact, { width: 260 });
+  // The logo, then the business's name and contact.
+  drawLetterhead(doc, business, { left: LEFT, top: 50, width: 260 });
 
   const heading =
     invoice.status === 'issued'

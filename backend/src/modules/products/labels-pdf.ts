@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import { logoPath } from '../pdf/letterhead.js';
 import { ean13Modules } from '../../utils/ean13.js';
 import type { Product } from './products.service.js';
 
@@ -21,6 +22,8 @@ export const LABEL_SHEET = {
 /** Module (thinnest bar) width at EAN-13's nominal size, so phone cameras read it easily. */
 export const MODULE_MM = 0.33;
 const BAR_HEIGHT_MM = 13;
+/** The logo on each label: small enough to stay clear of the barcode's 3.6 mm quiet zone. */
+const LABEL_LOGO_MM = 11;
 /** The start, centre and end guard bars reach a little lower than the rest. */
 const GUARD_EXTRA_MM = 1.6;
 const GUARD_MODULES = new Set([0, 1, 2, 45, 46, 47, 48, 49, 92, 93, 94]);
@@ -98,6 +101,7 @@ export function renderLabelsPdf(
   });
 
   const sheet = LABEL_SHEET;
+  const logo = logoPath();
   const description = `${product.name} — ${product.flavour} — ${product.size}`;
   const inset = sheet.insetMm * MM;
   const labelWidth = sheet.widthMm * MM;
@@ -133,6 +137,9 @@ export function renderLabelsPdf(
         lineBreak: false,
       });
     drawEan13(doc, ean13, x + labelWidth / 2, y + inset + 31);
+    // The logo, 11 mm, left of the barcode and outside its quiet zone.
+    if (logo)
+      doc.image(logo, x + inset, y + inset + 31, { fit: [LABEL_LOGO_MM * MM, LABEL_LOGO_MM * MM] });
   }
 
   doc.end();
