@@ -94,8 +94,9 @@ void main() {
     expect(find.text('Waiting for verification'), findsWidgets);
     expect(app.backend.onHand('product-1'), 106);
     expect(app.backend.grns.single, containsPair('supplierInvoiceNumber', 'INV-1042'));
-    // Draft 42.50: 100 bought x 0.4250, whatever arrived.
-    expect(find.text('USD 42.50'), findsOneWidget);
+    // Valued at what arrived: 96 received x 0.4250 = 40.80 (not the 100 bought: 42.50).
+    expect(find.text('USD 40.80'), findsOneWidget);
+    expect(find.text('USD 42.50'), findsNothing);
   });
 
   testWidgets('the receipt form has no documents: it submits without one', (tester) async {

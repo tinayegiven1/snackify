@@ -1452,7 +1452,7 @@ class FakeBackend {
             'quantityReceived': line['quantityReceived'],
             'baseQuantityReceived': (line['quantityReceived'] as int) * perUnit,
             'unitCost': line['unitCost'],
-            'lineTotal': _lineTotal(line['quantityPurchased'] as int, line['unitCost'] as String),
+            'lineTotal': _lineTotal(line['quantityReceived'] as int, line['unitCost'] as String),
             'batchNumber': line['batchNumber'],
             'expiryDate': line['expiryDate'],
             'discrepancyReason': line['discrepancyReason'],

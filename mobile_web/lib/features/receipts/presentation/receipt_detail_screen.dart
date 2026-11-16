@@ -321,7 +321,8 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
                       ].join(' · '),
                     ),
                     trailing: Text(
-                      '${line.unitCost} × ${line.quantityPurchased}\n${line.lineTotal}',
+                      // Valued at what arrived, not what was bought.
+                      '${line.unitCost} × ${line.quantityReceived}\n${line.lineTotal}',
                       textAlign: TextAlign.right,
                     ),
                   ),

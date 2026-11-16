@@ -327,8 +327,16 @@ describe('a Head Office receipt', () => {
       lines: [line({ quantityReceived: 96, discrepancyReason: 'shortage' })],
     });
     expect(receipt.flags.discrepancies).toBe(1);
-    expect(receipt.lines[0]).toMatchObject({ baseQuantityReceived: 96, lineTotal: '42.50' });
+    // Valued at what arrived: 96 received x 0.4250, not the 100 bought (42.50).
+    expect(receipt.lines[0]).toMatchObject({ baseQuantityReceived: 96, lineTotal: '40.80' });
+    expect(receipt.total).toBe('40.80');
     expect(await owned(bbq, hq)).toBe(96);
+
+    // More arrived than was bought: worth more.
+    const over = await submitted({
+      lines: [line({ quantityReceived: 104, discrepancyReason: 'overage' })],
+    });
+    expect(over.lines[0].lineTotal).toBe('44.20');
   });
 });
 

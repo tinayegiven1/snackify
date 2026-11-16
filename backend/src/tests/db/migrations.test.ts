@@ -3,6 +3,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { MIGRATIONS_DIR, runMigrations } from '../../database/migrations.js';
 import {
   createTestPools,
+  createTestProduct,
   createTestUser,
   migrateTestDatabase,
   ownerDatabaseUrl,
@@ -155,6 +156,44 @@ describe('database migrations', () => {
       `SELECT code FROM permissions WHERE code LIKE 'customer.%' OR code LIKE '%credit_limit'`,
     );
     expect(permissions).toEqual([{ code: 'organisation.edit_credit_limit' }]);
+    await resetDatabase(pools.owner);
+  });
+
+  it('revalue every goods-received note at what arrived, even submitted ones', async () => {
+    await migrateTestDatabase();
+    await resetDatabase(pools.owner);
+    const user = await createTestUser(pools.app, { username: 'revaluer', password: '482915' });
+    const product = await createTestProduct(pools.owner);
+    // Back to just before notes were valued at the quantity received.
+    await runMigrations(ownerDatabaseUrl, 'down', { count: 1, quiet: true });
+    const q = (sql: string, params: unknown[] = []) => pools.owner.query(sql, params);
+
+    // A submitted note (its lines are locked): 100 bought, 96 arrived, valued the old way.
+    const { rows } = await q(
+      `INSERT INTO stock_receipts (owner_organisation_id, warehouse_id, received_date, currency,
+                                   status, received_by, submitted_by, submitted_at)
+       VALUES (hq_organisation_id(), default_warehouse_id(), current_date, 'USD',
+               'PENDING_VERIFICATION', $1, $1, now())
+       RETURNING id`,
+      [user.id],
+    );
+    const receiptId = rows[0]?.id as string;
+    await q('ALTER TABLE stock_receipt_lines DISABLE TRIGGER stock_receipt_lines_draft_only');
+    await q(
+      `INSERT INTO stock_receipt_lines (receipt_id, line_number, product_id, unit_id,
+         quantity_purchased, quantity_received, base_quantity_received, unit_cost, line_total,
+         discrepancy_reason)
+       VALUES ($1, 1, $2, (SELECT id FROM units WHERE code = 'pack'), 100, 96, 96, 0.4250, 42.50,
+               'shortage')`,
+      [receiptId, product],
+    );
+    await q('ALTER TABLE stock_receipt_lines ENABLE TRIGGER stock_receipt_lines_draft_only');
+
+    expect(await migrateTestDatabase()).toEqual(['20261115090000000_grn-totals-from-received']);
+    const { rows: lines } = await q('SELECT line_total::text FROM stock_receipt_lines');
+    expect(lines).toEqual([{ line_total: '40.80' }]);
+    // The lock is back on, and the new rule holds.
+    await expect(q('UPDATE stock_receipt_lines SET notes = $1', ['changed'])).rejects.toThrow();
     await resetDatabase(pools.owner);
   });
 

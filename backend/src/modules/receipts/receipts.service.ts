@@ -518,13 +518,14 @@ async function writeLines(
       line.quantityReceived,
       `lines.${index}.unitId`,
     );
-    // The line total is worked out by the database, exactly (numeric), never in floating point.
+    // The line total (quantity received x unit cost: what arrived, not what was bought) is worked
+    // out by the database, exactly (numeric), never in floating point.
     await client.query(
       `INSERT INTO stock_receipt_lines
          (receipt_id, line_number, product_id, unit_id, quantity_purchased, quantity_received,
           base_quantity_received, unit_cost, line_total, batch_number, expiry_date,
           discrepancy_reason, notes, purchase_line_id)
-       VALUES ($1, $2, $3, $4, $5::int, $6, $7, $8::numeric, round($5::int * $8::numeric, 2), $9, $10, $11, $12, $13)`,
+       VALUES ($1, $2, $3, $4, $5::int, $6, $7, $8::numeric, round($6::int * $8::numeric, 2), $9, $10, $11, $12, $13)`,
       [
         receiptId,
         index + 1,
