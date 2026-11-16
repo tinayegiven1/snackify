@@ -12,6 +12,7 @@ import {
 
 const pools = createTestPools();
 const CUSTOMERS_MIGRATION = '20261108090000000_organisations-replace-customers';
+const REVALUE_MIGRATION = '20261115090000000_grn-totals-from-received';
 
 async function tableExists(name: string): Promise<boolean> {
   const result = await pools.owner.query<{ exists: boolean }>(
@@ -165,7 +166,12 @@ describe('database migrations', () => {
     const user = await createTestUser(pools.app, { username: 'revaluer', password: '482915' });
     const product = await createTestProduct(pools.owner);
     // Back to just before notes were valued at the quantity received.
-    await runMigrations(ownerDatabaseUrl, 'down', { count: 1, quiet: true });
+    const later = (await readdir(MIGRATIONS_DIR))
+      .filter((name) => name.endsWith('.sql'))
+      .map((name) => name.replace(/[.]sql$/, ''))
+      .sort()
+      .filter((name) => name >= REVALUE_MIGRATION);
+    await runMigrations(ownerDatabaseUrl, 'down', { count: later.length, quiet: true });
     const q = (sql: string, params: unknown[] = []) => pools.owner.query(sql, params);
 
     // A submitted note (its lines are locked): 100 bought, 96 arrived, valued the old way.
@@ -189,7 +195,7 @@ describe('database migrations', () => {
     );
     await q('ALTER TABLE stock_receipt_lines ENABLE TRIGGER stock_receipt_lines_draft_only');
 
-    expect(await migrateTestDatabase()).toEqual(['20261115090000000_grn-totals-from-received']);
+    expect(await migrateTestDatabase()).toEqual(later);
     const { rows: lines } = await q('SELECT line_total::text FROM stock_receipt_lines');
     expect(lines).toEqual([{ line_total: '40.80' }]);
     // The lock is back on, and the new rule holds.

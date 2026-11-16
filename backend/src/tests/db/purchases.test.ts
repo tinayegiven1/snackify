@@ -166,11 +166,12 @@ describe('goods bought', () => {
     expect(purchase.lines[1].notes).toBe('Promo packs');
     expect(await auditEntries(pools.owner, 'purchase.created')).toHaveLength(1);
 
-    // The warehouse sees it but cannot enter one; sales staff see nothing.
+    // Every user sees the lists and enters their own.
     expect((await as('storekeeper').get(`/api/v1/purchases/${purchase.id}`)).status).toBe(200);
-    expect((await as('storekeeper').post('/api/v1/purchases', purchaseBody())).status).toBe(403);
-    expect((await as('salesperson').get('/api/v1/purchases')).status).toBe(403);
-    expect((await as('admin').post('/api/v1/purchases', purchaseBody())).status).toBe(201);
+    expect((await as('salesperson').get('/api/v1/purchases')).status).toBe(200);
+    for (const role of ['storekeeper', 'salesperson', 'admin']) {
+      expect((await as(role).post('/api/v1/purchases', purchaseBody())).status).toBe(201);
+    }
   });
 
   it('print as a PDF', async () => {
@@ -338,6 +339,40 @@ describe('goods bought', () => {
     const open = await as('accounts').get('/api/v1/purchases?status=OPEN');
     expect(open.body.total).toBe(0);
   });
+
+  it('can be changed or cancelled by whoever entered them, or by finance and administrators', async () => {
+    const theirs = await bought();
+    const mine = (await as('storekeeper').post('/api/v1/purchases', purchaseBody())).body.purchase;
+    expect(mine.createdBy.fullName).toBe('Test storekeeper');
+
+    // Someone else's list: refused.
+    expect(
+      (await as('storekeeper').put(`/api/v1/purchases/${theirs.id}`, purchaseBody())).status,
+    ).toBe(403);
+    const refused = await as('storekeeper').post(`/api/v1/purchases/${theirs.id}/cancel`, {
+      reason: 'Not mine',
+    });
+    expect(refused.status).toBe(403);
+    expect((await upload('storekeeper', theirs.id, 'invoice.pdf', FILES.pdf)).status).toBe(403);
+
+    // Their own list: allowed, documents included, but they cannot verify them.
+    expect(
+      (await as('storekeeper').put(`/api/v1/purchases/${mine.id}`, purchaseBody())).status,
+    ).toBe(200);
+    const uploaded = await upload('storekeeper', mine.id, 'invoice.pdf', FILES.pdf);
+    expect(uploaded.status).toBe(201);
+    const document = uploaded.body.purchase.attachments[0].id;
+    const review = await as('storekeeper').post(
+      `/api/v1/purchases/${mine.id}/attachments/${document}/review`,
+      { status: 'VERIFIED' },
+    );
+    expect(review.status).toBe(403);
+    // Finance changes or cancels anyone's list.
+    const cancelled = await as('accounts').post(`/api/v1/purchases/${mine.id}/cancel`, {
+      reason: 'Entered twice',
+    });
+    expect(cancelled.status).toBe(200);
+  });
 });
 
 describe('supplier documents on goods bought', () => {
@@ -365,7 +400,7 @@ describe('supplier documents on goods bought', () => {
     expect((await upload('accounts', purchase.id, 'empty.pdf', Buffer.alloc(0))).status).toBe(400);
     const huge = Buffer.concat([FILES.pdf, Buffer.alloc(testConfig.attachments.maxBytes)]);
     expect((await upload('accounts', purchase.id, 'huge.pdf', huge)).status).toBe(413);
-    // The warehouse and sales staff do not attach them.
+    // Others attach them only to the lists they entered themselves.
     expect((await upload('storekeeper', purchase.id, 'invoice.pdf', FILES.pdf)).status).toBe(403);
     expect((await upload('salesperson', purchase.id, 'invoice.pdf', FILES.pdf)).status).toBe(403);
     const unknown = '00000000-0000-4000-8000-000000000000';
@@ -426,7 +461,7 @@ describe('supplier documents on goods bought', () => {
     expect(Buffer.compare(file.body as Buffer, FILES.pdf)).toBe(0);
     expect((await download('accounts', path)).status).toBe(200);
     expect((await download(null, path)).status).toBe(401);
-    expect((await download('salesperson', path)).status).toBe(403);
+    expect((await download('salesperson', path)).status).toBe(200);
     expect(
       (await download('accounts', `/api/v1/purchases/${purchase.id}/attachments/${purchase.id}`))
         .status,

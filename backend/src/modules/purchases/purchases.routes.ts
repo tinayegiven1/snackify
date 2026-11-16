@@ -2,7 +2,13 @@ import express, { Router, type Response } from 'express';
 import type pg from 'pg';
 import { z } from 'zod';
 import type { AppConfig } from '../../config/env.js';
-import { getAuth, requireAuth, requirePermission } from '../../middleware/authenticate.js';
+import {
+  can,
+  forbidden,
+  getAuth,
+  requireAuth,
+  requirePermission,
+} from '../../middleware/authenticate.js';
 import { AppError } from '../../utils/app-error.js';
 import { businessToday } from '../../utils/dates.js';
 import { optionalText, parseIdParam } from '../../utils/schemas.js';
@@ -104,19 +110,27 @@ const reasonSchema = z.object({
 });
 
 /**
- * Goods bought (/api/v1/purchases). Finance and administrators (purchase.manage) enter, change
- * and cancel lists; warehouse staff (stock.receive) and verifiers (receipt.verify) see them, to
+ * Goods bought (/api/v1/purchases). Every user (purchase.enter) enters lists and changes or
+ * cancels their own; finance and administrators (purchase.manage) change or cancel any list; warehouse staff (stock.receive) and verifiers (receipt.verify) see them, to
  * receive against them and check deliveries.
  */
 export function purchasesRouter(db: pg.Pool, config: AppConfig): Router {
   const router = Router();
   router.use(
     requireAuth(db),
-    requirePermission('purchase.manage', 'stock.receive', 'receipt.verify'),
+    requirePermission('purchase.enter', 'purchase.manage', 'stock.receive', 'receipt.verify'),
   );
   const today = () => businessToday(config.businessTimezone);
   const scope = (res: Response) => scopeOf(getAuth(res).user);
   const purchaseId = (value: unknown) => parseIdParam(value, purchaseNotFound);
+
+  /** Finance and administrators change any list; everyone else only the lists they entered. */
+  async function requireOwnOrManage(res: Response, id: unknown): Promise<void> {
+    const { user } = getAuth(res);
+    if (can(user, 'purchase.manage')) return;
+    const purchase = await getPurchase(db, scope(res), purchaseId(id));
+    if (purchase.createdBy.id !== user.id) throw forbidden();
+  }
 
   function toInput(res: Response, body: unknown): PurchaseInput {
     const { organisationId, purchaseDate, ...input } = parseBody(purchaseSchema, body);
@@ -168,7 +182,7 @@ export function purchasesRouter(db: pg.Pool, config: AppConfig): Router {
       .send(pdf);
   });
 
-  router.post('/', requirePermission('purchase.manage'), async (req, res) => {
+  router.post('/', requirePermission('purchase.enter', 'purchase.manage'), async (req, res) => {
     const purchase = await createPurchase(
       db,
       toInput(res, req.body),
@@ -178,7 +192,8 @@ export function purchasesRouter(db: pg.Pool, config: AppConfig): Router {
     res.status(201).json({ purchase });
   });
 
-  router.put('/:id', requirePermission('purchase.manage'), async (req, res) => {
+  router.put('/:id', requirePermission('purchase.enter', 'purchase.manage'), async (req, res) => {
+    await requireOwnOrManage(res, req.params.id);
     const purchase = await updatePurchase(
       db,
       scope(res),
@@ -189,17 +204,22 @@ export function purchasesRouter(db: pg.Pool, config: AppConfig): Router {
     res.json({ purchase });
   });
 
-  router.post('/:id/cancel', requirePermission('purchase.manage'), async (req, res) => {
-    const { reason } = parseBody(reasonSchema, req.body);
-    const purchase = await cancelPurchase(
-      db,
-      scope(res),
-      purchaseId(req.params.id),
-      reason,
-      getAuth(res).user,
-    );
-    res.json({ purchase });
-  });
+  router.post(
+    '/:id/cancel',
+    requirePermission('purchase.enter', 'purchase.manage'),
+    async (req, res) => {
+      await requireOwnOrManage(res, req.params.id);
+      const { reason } = parseBody(reasonSchema, req.body);
+      const purchase = await cancelPurchase(
+        db,
+        scope(res),
+        purchaseId(req.params.id),
+        reason,
+        getAuth(res).user,
+      );
+      res.json({ purchase });
+    },
+  );
 
   router.get('/:id/attachments/:attachmentId', async (req, res) => {
     const document = await readPurchaseDocument(
@@ -225,13 +245,14 @@ export function purchasesRouter(db: pg.Pool, config: AppConfig): Router {
   // The content, not the name or the declared type, decides whether it is accepted.
   router.post(
     '/:id/attachments',
-    requirePermission('purchase.manage'),
+    requirePermission('purchase.enter', 'purchase.manage'),
     express.raw({ type: () => true, limit: config.attachments.maxBytes }),
     async (req, res) => {
       const { filename } = parseBody(
         z.object({ filename: z.string({ error: 'Required' }).min(1, 'Required') }),
         req.query,
       );
+      await requireOwnOrManage(res, req.params.id);
       const content = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
       const purchase = await uploadPurchaseDocument(
         db,

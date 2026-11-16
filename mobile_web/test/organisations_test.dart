@@ -31,6 +31,7 @@ void main() {
     expect(sections.sublist(0, sections.indexOf('Change PIN')), [
       'Products',
       'Stock',
+      'Goods Bought',
       'Goods Received',
       'Orders',
       'Organisations',

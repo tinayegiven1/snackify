@@ -685,23 +685,25 @@ name already used answers **409** `ALREADY_EXISTS` with the field in `details`.
 ## Goods bought (`/api/v1/purchases`)
 
 What was bought from a supplier, entered before the goods arrive, so the warehouse can receive
-against it. Finance and administrators (`purchase.manage`) enter, change and cancel lists;
-anyone with `stock.receive` or `receipt.verify` can see them and print them.
+against it. Every user (`purchase.enter`, given to all roles) enters lists and changes or
+cancels the ones they entered; finance and administrators (`purchase.manage`) change or cancel
+any list. Anyone with `purchase.enter`, `stock.receive` or `receipt.verify` can see and print them.
+Changing, cancelling or attaching to someone else's list without `purchase.manage` is **403**.
 
 | Method and path | Who | What |
 | --------------- | --- | ---- |
 | `GET /` | viewers | `?q=` (number, supplier invoice no. or supplier), `status=` (`OPEN`, `CANCELLED`, or for open lists `NOT_RECEIVED`, `PARTLY_RECEIVED`, `RECEIVED`), `limit`, `offset` → `{ purchases, total }` |
 | `GET /:id` | viewers | `{ purchase }` with `lines` (bought, `quantityReceived`, `quantityOutstanding`) and the goods-received notes made from it (`receipts`) |
 | `GET /:id/pdf` | viewers | The list as an A4 PDF, with columns to tick off on delivery and signature lines |
-| `POST /` | `purchase.manage` | `{ organisationId?, supplierId?, supplierInvoiceNumber?, purchaseDate?, notes?, lines: [{ productId, unitId, quantity, unitCost, notes? }] }` → **201** |
-| `PUT /:id` | `purchase.manage` | Same body; replaces the list. **409** `PURCHASE_HAS_RECEIPTS` once any goods-received note was made from it |
-| `POST /:id/cancel` | `purchase.manage` | `{ reason }`. **409** `PURCHASE_HAS_RECEIPTS` while a note made from it stands (not rejected or reversed) |
+| `POST /` | `purchase.enter` | `{ organisationId?, supplierId?, supplierInvoiceNumber?, purchaseDate?, notes?, lines: [{ productId, unitId, quantity, unitCost, notes? }] }` → **201** |
+| `PUT /:id` | whoever entered it, or `purchase.manage` | Same body; replaces the list. **409** `PURCHASE_HAS_RECEIPTS` once any goods-received note was made from it |
+| `POST /:id/cancel` | whoever entered it, or `purchase.manage` | `{ reason }`. **409** `PURCHASE_HAS_RECEIPTS` while a note made from it stands (not rejected or reversed) |
 
 **Supplier documents** (the supplier's invoice or delivery note) are attached to the list:
 
 | Method and path | Who | What |
 | --------------- | --- | ---- |
-| `POST /:id/attachments?filename=invoice.pdf` | `purchase.manage` | The request **body is the file** (any `Content-Type`). Only PDF, JPEG and PNG, decided from its first bytes, with a matching extension (**415** `UNSUPPORTED_DOCUMENT` otherwise); larger than `ATTACHMENT_MAX_BYTES` **413**; a cancelled list **409**. Stored outside the web app under random names, with a SHA-256 checksum, never deleted |
+| `POST /:id/attachments?filename=invoice.pdf` | whoever entered it, or `purchase.manage` | The request **body is the file** (any `Content-Type`). Only PDF, JPEG and PNG, decided from its first bytes, with a matching extension (**415** `UNSUPPORTED_DOCUMENT` otherwise); larger than `ATTACHMENT_MAX_BYTES` **413**; a cancelled list **409**. Stored outside the web app under random names, with a SHA-256 checksum, never deleted |
 | `GET /:id/attachments/:attachmentId` | viewers | Downloads it (always as an attachment) |
 | `POST /:id/attachments/:attachmentId/review` | `purchase.manage` | **Only finance and administrators** verify or reject: `{ "status": "VERIFIED", "documentTotal": "57.50" }` or `{ "status": "REJECTED", "notes": "Blurry" }` (a reason is required). Once each (**409** `DOCUMENT_ALREADY_REVIEWED`) |
 

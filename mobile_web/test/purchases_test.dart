@@ -141,7 +141,8 @@ void main() {
     final backend = withPurchase(backendFor('storekeeper'));
     await pumpSnackify(tester, signedIn: true, backend: backend);
     await openSection(tester, 'Goods Bought');
-    expect(find.text('Record goods bought'), findsNothing);
+    // Anyone records goods bought, but changes only the lists they entered.
+    expect(find.text('Record goods bought'), findsOneWidget);
     await tester.tap(purchaseTile('GB000001'));
     await tester.pumpAndSettle();
     expect(find.text('Edit'), findsNothing);
@@ -269,17 +270,22 @@ void main() {
     expect(backend.requests, contains('PUT /api/v1/purchases/purchase-1'));
   });
 
-  testWidgets('Goods Bought is for finance, warehouse staff and administrators only', (
-    tester,
-  ) async {
-    await pumpSnackify(tester, signedIn: true, backend: backendFor('salesperson'));
-    expect(await menuSections(tester), isNot(contains('Goods Bought')));
+  testWidgets('every user records goods bought, and changes only their own lists', (tester) async {
+    final backend = withPurchase(backendFor('salesperson'));
+    await pumpSnackify(tester, signedIn: true, backend: backend);
+    // Someone else's list: no Edit or Cancel, and no documents added.
+    await openPurchase(tester, 'GB000001');
+    expect(find.text('Edit'), findsNothing);
+    expect(find.text('Cancel goods bought'), findsNothing);
 
-    final sections = await (() async {
-      await pumpSnackify(tester, signedIn: true, backend: backendFor('storekeeper'));
-      return menuSections(tester);
-    })();
-    expect(sections.indexOf('Goods Bought'), sections.indexOf('Goods Received') - 1);
+    // Their own list: they may change it.
+    backend.purchases.single['createdBy'] = {'id': backend.userId, 'fullName': 'Tendai Moyo'};
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    await tester.tap(purchaseTile('GB000001'));
+    await tester.pumpAndSettle();
+    expect(find.text('Edit'), findsOneWidget);
+    expect(find.text('Cancel goods bought'), findsOneWidget);
   });
 
   testWidgets('Receive uses the list as it is now, even if it was changed elsewhere', (

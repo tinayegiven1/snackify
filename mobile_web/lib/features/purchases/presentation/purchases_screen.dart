@@ -82,7 +82,7 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      floatingActionButton: widget.services.canManage
+      floatingActionButton: widget.services.canEnter
           ? FloatingActionButton.extended(
               heroTag: 'record-goods-bought',
               onPressed: _record,
@@ -153,9 +153,7 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
         title: 'No goods bought',
         message: _filter != null || _search.text.trim().isNotEmpty
             ? 'None match.'
-            : widget.services.canManage
-            ? 'Lists recorded with "Record goods bought" appear here.'
-            : 'Lists of goods bought appear here once finance records them.',
+            : 'Lists recorded with "Record goods bought" appear here.',
       );
     }
     return Align(

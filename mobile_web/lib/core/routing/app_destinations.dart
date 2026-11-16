@@ -26,7 +26,10 @@ bool _everyone(AppUser user) => true;
 bool _dashboard(AppUser user) => user.can('report.dashboard');
 bool _stock(AppUser user) => user.can('stock.view');
 bool _purchases(AppUser user) =>
-    user.can('purchase.manage') || user.can('stock.receive') || user.can('receipt.verify');
+    user.can('purchase.enter') ||
+    user.can('purchase.manage') ||
+    user.can('stock.receive') ||
+    user.can('receipt.verify');
 bool _catalogue(AppUser user) =>
     user.can('catalogue.manage') || user.can('supplier.manage') || user.can('stock.receive');
 bool _orders(AppUser user) => user.can('order.view');

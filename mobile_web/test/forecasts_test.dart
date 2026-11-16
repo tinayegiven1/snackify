@@ -208,6 +208,7 @@ void main() {
       'Dashboard',
       'Products',
       'Stock',
+      'Goods Bought',
       'Goods Received',
       'Orders',
       'Dispatches',

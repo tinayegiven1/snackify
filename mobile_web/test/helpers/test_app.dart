@@ -177,6 +177,7 @@ class FakeBackend {
   /// 20261021090000000, 20261021110000000 and 20261108090000000).
   static const rolePermissions = <String, List<String>>{
     'system_admin': [
+      'purchase.enter',
       'order.view',
       'catalogue.manage',
       'supplier.manage',
@@ -197,6 +198,7 @@ class FakeBackend {
       'report.dashboard',
     ],
     'hq_warehouse_officer': [
+      'purchase.enter',
       'supplier.manage',
       'label.print',
       'stock.view',
@@ -209,6 +211,7 @@ class FakeBackend {
       'forecast.use',
     ],
     'hq_finance_officer': [
+      'purchase.enter',
       'order.view',
       'order.price',
       'order.approve',
@@ -226,14 +229,15 @@ class FakeBackend {
       'forecast.use',
     ],
     'hq_sales_officer': [
+      'purchase.enter',
       'order.view',
       'stock.view',
       'dispatch.view',
       'dispatch.draft',
       'report.dashboard',
     ],
-    'subsidiary_manager': ['stock.view', 'order.view', 'order.create'],
-    'subsidiary_storekeeper': ['stock.view'],
+    'subsidiary_manager': ['stock.view', 'order.view', 'order.create', 'purchase.enter'],
+    'subsidiary_storekeeper': ['stock.view', 'purchase.enter'],
   };
 
   static const roleNames = <String, String>{
@@ -1163,10 +1167,13 @@ class FakeBackend {
 
   http.Response _purchases(http.Request request) {
     final notFound = _error(404, 'PURCHASE_NOT_FOUND', 'No goods-bought list has that id.');
-    if (!can('purchase.manage') && !can('stock.receive') && !can('receipt.verify')) {
+    if (!can('purchase.enter') && !can('stock.receive') && !can('receipt.verify')) {
       return _forbidden;
     }
     final segments = request.url.pathSegments; // api, v1, purchases, id?, action?
+    // Finance and administrators change any list; everyone else only their own.
+    bool mayChange(Map<String, Object?> p) =>
+        can('purchase.manage') || (p['createdBy'] as Map?)?['id'] == userId;
     final visible = purchases.where(
       (p) => organisation['type'] == 'HQ' || p['ownerId'] == organisation['id'],
     );
@@ -1229,8 +1236,8 @@ class FakeBackend {
         }
         return http.Response.bytes(document['bytes'] as List<int>, 200);
       case 'POST attachments' when segments.length == 5:
-        if (!can('purchase.manage')) return _forbidden;
-        if (purchase!['status'] == 'CANCELLED') {
+        if (!mayChange(purchase!)) return _forbidden;
+        if (purchase['status'] == 'CANCELLED') {
           return _error(409, 'PURCHASE_CANCELLED', 'This goods-bought list was cancelled.');
         }
         final bytes = request.bodyBytes;
@@ -1287,7 +1294,7 @@ class FakeBackend {
           ..['reviewedAt'] = '2026-11-09T09:00:00Z';
         return _json(200, {'purchase': _purchaseJson(purchase)});
       case 'POST ' || 'PUT :id':
-        if (!can('purchase.manage')) return _forbidden;
+        if (purchase != null && !mayChange(purchase)) return _forbidden;
         if (purchase != null) {
           if (purchase['status'] == 'CANCELLED') {
             return _error(409, 'PURCHASE_CANCELLED', 'This goods-bought list was cancelled.');
@@ -1360,8 +1367,8 @@ class FakeBackend {
         purchase.addAll(fields);
         return _json(200, {'purchase': _purchaseJson(purchase)});
       case 'POST cancel':
-        if (!can('purchase.manage')) return _forbidden;
-        if (purchase!['status'] == 'CANCELLED') {
+        if (!mayChange(purchase!)) return _forbidden;
+        if (purchase['status'] == 'CANCELLED') {
           return _error(409, 'PURCHASE_CANCELLED', 'This goods-bought list was cancelled.');
         }
         if (_hasStandingGrn(purchase)) {

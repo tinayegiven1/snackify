@@ -7,6 +7,7 @@ export const PERMISSIONS = [
   'organisation.manage',
   'organisation.edit_credit_limit',
   'purchase.manage',
+  'purchase.enter',
   'user.manage',
   'role.manage',
   'audit.view',

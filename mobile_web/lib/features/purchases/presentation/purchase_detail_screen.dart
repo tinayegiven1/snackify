@@ -310,7 +310,7 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
     final purchase = _purchase;
     if (purchase == null) return const Center(child: CircularProgressIndicator());
     final theme = Theme.of(context);
-    final canAddDocuments = _services.canManage && purchase.status == PurchaseStatus.open;
+    final canAddDocuments = _services.canChange(purchase) && purchase.status == PurchaseStatus.open;
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -425,12 +425,12 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
                   spacing: 12,
                   runSpacing: 12,
                   children: [
-                    if (purchase.canCancel && _services.canManage)
+                    if (purchase.canCancel && _services.canChange(purchase))
                       OutlinedButton(
                         onPressed: _busy ? null : () => _cancel(purchase),
                         child: const Text('Cancel goods bought'),
                       ),
-                    if (purchase.canChange && _services.canManage)
+                    if (purchase.canChange && _services.canChange(purchase))
                       OutlinedButton.icon(
                         onPressed: _busy ? null : () => _edit(purchase),
                         icon: const Icon(Icons.edit_outlined),

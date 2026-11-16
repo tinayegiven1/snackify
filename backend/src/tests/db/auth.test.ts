@@ -58,6 +58,7 @@ describe('POST /api/v1/auth/login', () => {
         'dispatch.view',
         'forecast.use',
         'label.print',
+        'purchase.enter',
         'report.dashboard',
         'report.stock',
         'stock.receive',
