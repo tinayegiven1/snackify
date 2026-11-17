@@ -705,12 +705,11 @@ Changing, cancelling or attaching to someone else's list without `purchase.manag
 | --------------- | --- | ---- |
 | `POST /:id/attachments?filename=invoice.pdf` | whoever entered it, or `purchase.manage` | The request **body is the file** (any `Content-Type`). Only PDF, JPEG and PNG, decided from its first bytes, with a matching extension (**415** `UNSUPPORTED_DOCUMENT` otherwise); larger than `ATTACHMENT_MAX_BYTES` **413**; a cancelled list **409**. Stored outside the web app under random names, with a SHA-256 checksum, never deleted |
 | `GET /:id/attachments/:attachmentId` | viewers | Downloads it (always as an attachment) |
-| `POST /:id/attachments/:attachmentId/review` | `purchase.manage` | **Only finance and administrators** verify or reject: `{ "status": "VERIFIED", "documentTotal": "57.50" }` or `{ "status": "REJECTED", "notes": "Blurry" }` (a reason is required). Once each (**409** `DOCUMENT_ALREADY_REVIEWED`) |
 
-The list's JSON has `attachments` (oldest first, with `verificationStatus`, reviewer, notes and
-`documentTotal`), and every summary `documentCount` and `documentsPending`. Goods can be received
-before the documents are checked. The PDF prints photographed documents after the list, one to a
-page. Audit actions: `purchase.document_added`, `purchase.document_reviewed`.
+Documents are not verified or rejected (the review step was removed on 2026-11-16). The list's
+JSON has `attachments` (oldest first; `verificationStatus` and the reviewer fields remain only for
+older apps and past reviews), and every summary `documentCount`. The PDF prints photographed documents after the list, one to a
+page. Audit actions: `purchase.document_added` (and `purchase.document_reviewed` for past reviews).
 
 Numbers are `GB000001`, `GB000002`, … Line totals and the total are worked out by the database.
 `receivingStatus` is `NOT_RECEIVED`, `PARTLY_RECEIVED` or `RECEIVED`, counting goods-received
@@ -802,19 +801,12 @@ List query: optional `status`, `organisationId`, `from`, `to`, `limit` (1–200,
 Since 2026-11-09 supplier documents belong to **goods bought** (see
 `/api/v1/purchases/:id/attachments`), not to goods-received notes: the warehouse only records what
 arrived. `POST /api/v1/receipts/:id/attachments` answers **409** `DOCUMENTS_ON_GOODS_BOUGHT`.
-Documents already on older notes stay listed in `attachments` and can still be downloaded and
-reviewed:
+Documents already on older notes stay listed in `attachments` and can still be downloaded:
 
 ### `GET /api/v1/receipts/:id/attachments/:attachmentId`
 
 Downloads the document (as an attachment, never shown as a web page) for someone who may see
 the receipt.
-
-### `POST /api/v1/receipts/:id/attachments/:attachmentId/review` (`receipt.verify`)
-
-`{ "status": "VERIFIED", "notes": null, "documentTotal": "125.50" }` or
-`{ "status": "REJECTED", "notes": "Photo too blurry" }` (a reason is required). Each document is
-reviewed once (**409** `DOCUMENT_ALREADY_REVIEWED`).
 
 ### `POST /api/v1/receipts/:id/submit` (`stock.receive`)
 
@@ -824,7 +816,7 @@ Needs at least one line. No document is needed (documents are on goods bought); 
 ### `POST /api/v1/receipts/:id/verify` (`receipt.verify`)
 
 `{ "notes": "Matches the invoice" }`. No document is needed. Documents an older note still has
-and that were not reviewed are verified with it.
+are marked verified with it.
 
 **One person enters, another decides:** whoever received or submitted the note gets **409**
 `SAME_PERSON` from verify and reject, whatever their roles.

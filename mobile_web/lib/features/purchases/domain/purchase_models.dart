@@ -59,7 +59,6 @@ class PurchaseSummary {
     required this.lineCount,
     required this.createdBy,
     this.documentCount = 0,
-    this.documentsPending = 0,
   });
 
   factory PurchaseSummary.fromJson(Map<String, dynamic> json) => PurchaseSummary(
@@ -78,7 +77,6 @@ class PurchaseSummary {
     lineCount: json['lineCount'] as int,
     createdBy: PersonRef.fromJson(json['createdBy'] as Map<String, dynamic>),
     documentCount: (json['documentCount'] as int?) ?? 0,
-    documentsPending: (json['documentsPending'] as int?) ?? 0,
   );
 
   final String id;
@@ -102,9 +100,6 @@ class PurchaseSummary {
 
   /// Supplier documents (invoices, delivery notes) attached to the list.
   final int documentCount;
-
-  /// Documents finance has not verified or rejected yet.
-  final int documentsPending;
 
   bool get isCancelled => status == PurchaseStatus.cancelled;
 
@@ -213,7 +208,6 @@ class Purchase extends PurchaseSummary {
     required super.lineCount,
     required super.createdBy,
     super.documentCount,
-    super.documentsPending,
     required this.notes,
     required this.cancelledBy,
     required this.cancelReason,
@@ -240,7 +234,6 @@ class Purchase extends PurchaseSummary {
       lineCount: summary.lineCount,
       createdBy: summary.createdBy,
       documentCount: summary.documentCount,
-      documentsPending: summary.documentsPending,
       notes: json['notes'] as String?,
       cancelledBy: PersonRef.maybe(json['cancelledBy']),
       cancelReason: json['cancelReason'] as String?,
@@ -275,17 +268,6 @@ class Purchase extends PurchaseSummary {
 
   /// Supplier documents (invoices, delivery notes, photos), oldest first.
   final List<ReceiptDocument> documents;
-
-  /// A verified document whose total differs from the list's total (compared in cents).
-  bool get documentTotalMismatch {
-    final listCents = decimalCents(total);
-    return documents.any(
-      (document) =>
-          document.status == DocumentStatus.verified &&
-          document.documentTotal != null &&
-          decimalCents(document.documentTotal!) != listCents,
-    );
-  }
 
   /// Open, with something still to arrive.
   bool get canReceive => !isCancelled && receivingStatus != ReceivingStatus.received;

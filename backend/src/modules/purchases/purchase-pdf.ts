@@ -202,12 +202,9 @@ export function renderPurchasePdf(
         50,
         { width: TABLE_WIDTH },
       );
-    doc
-      .font('Helvetica')
-      .fontSize(9)
-      .text(`${picture.filename} (${picture.verificationStatus.toLowerCase()})`, {
-        width: TABLE_WIDTH,
-      });
+    doc.font('Helvetica').fontSize(9).text(picture.filename, {
+      width: TABLE_WIDTH,
+    });
     const pictureTop = doc.y + 10;
     try {
       doc.image(picture.content, LEFT, pictureTop, {

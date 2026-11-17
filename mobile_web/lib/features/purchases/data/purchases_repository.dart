@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 
 import '../../../core/network/api_client.dart';
-import '../../receipts/domain/receipt_models.dart' show DocumentStatus;
 import '../domain/purchase_models.dart';
 
 /// Goods bought from suppliers (lists to receive against), through the backend.
@@ -54,21 +53,6 @@ class PurchasesRepository {
       '$_base/$id/attachments?${Uri(queryParameters: {'filename': filename}).query}',
       bytes,
     ),
-  );
-
-  /// Verifies or rejects a document (finance and administrators only). Rejecting needs [notes].
-  Future<Purchase> reviewDocument(
-    String id,
-    String documentId, {
-    required DocumentStatus status,
-    String? notes,
-    String? documentTotal,
-  }) => _purchase(
-    _api.postJson('$_base/$id/attachments/$documentId/review', {
-      'status': status.code,
-      'notes': ?notes,
-      'documentTotal': ?documentTotal,
-    }),
   );
 
   Future<Uint8List> document(String id, String documentId) =>

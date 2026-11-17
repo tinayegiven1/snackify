@@ -381,7 +381,7 @@ class _PurchaseEditorScreenState extends State<PurchaseEditorScreen> {
                     contentPadding: EdgeInsets.zero,
                     leading: _savedThumbnail(document),
                     title: Text(document.filename),
-                    subtitle: Text('${document.sizeLabel} · ${document.status.label}'),
+                    subtitle: Text(document.sizeLabel),
                     onTap: document.isPdf ? null : () => _previewSaved(document),
                   ),
                 for (final (index, document) in _newDocuments.indexed)

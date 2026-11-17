@@ -205,7 +205,6 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
 /// Nothing when every document has been reviewed (or the list is cancelled).
 Pill? _documentsPill(PurchaseSummary purchase) {
   if (purchase.isCancelled) return null;
-  if (purchase.documentsPending > 0) return const Pill('Documents to check', tone: Tone.warn);
   if (purchase.documentCount == 0) return const Pill('No document', tone: Tone.neutral);
   return null;
 }

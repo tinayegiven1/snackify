@@ -402,7 +402,7 @@ class _ReceiptEditorScreenState extends State<ReceiptEditorScreen> {
                       contentPadding: EdgeInsets.zero,
                       leading: _savedThumbnail(document),
                       title: Text(document.filename),
-                      subtitle: Text('${document.sizeLabel} · ${document.status.label}'),
+                      subtitle: Text(document.sizeLabel),
                       onTap: document.isPdf ? null : () => _previewSaved(document),
                     ),
                 ],

@@ -344,15 +344,7 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
                           )
                         : () => _preview(document),
                     title: Text(document.filename),
-                    subtitle: Text(
-                      [
-                        '${document.sizeLabel} · ${document.status.label}',
-                        if (document.documentTotal != null)
-                          'Document total ${receipt.currency} ${document.documentTotal}',
-                        ?document.reviewNotes,
-                      ].join('\n'),
-                    ),
-                    isThreeLine: document.reviewNotes != null || document.documentTotal != null,
+                    subtitle: Text(document.sizeLabel),
                   ),
                 if (receipt.whatsappMessages.isNotEmpty) ...[
                   const SizedBox(height: 16),

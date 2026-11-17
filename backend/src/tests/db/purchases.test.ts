@@ -355,18 +355,12 @@ describe('goods bought', () => {
     expect(refused.status).toBe(403);
     expect((await upload('storekeeper', theirs.id, 'invoice.pdf', FILES.pdf)).status).toBe(403);
 
-    // Their own list: allowed, documents included, but they cannot verify them.
+    // Their own list: allowed, documents included.
     expect(
       (await as('storekeeper').put(`/api/v1/purchases/${mine.id}`, purchaseBody())).status,
     ).toBe(200);
     const uploaded = await upload('storekeeper', mine.id, 'invoice.pdf', FILES.pdf);
     expect(uploaded.status).toBe(201);
-    const document = uploaded.body.purchase.attachments[0].id;
-    const review = await as('storekeeper').post(
-      `/api/v1/purchases/${mine.id}/attachments/${document}/review`,
-      { status: 'VERIFIED' },
-    );
-    expect(review.status).toBe(403);
     // Finance changes or cancels anyone's list.
     const cancelled = await as('accounts').post(`/api/v1/purchases/${mine.id}/cancel`, {
       reason: 'Entered twice',
@@ -407,9 +401,9 @@ describe('supplier documents on goods bought', () => {
     expect((await upload('accounts', unknown, 'invoice.pdf', FILES.pdf)).status).toBe(404);
     expect((await readdir(dir)).length).toBe(before);
 
-    // Listed oldest first, waiting for review.
+    // Listed oldest first.
     const detail = (await as('storekeeper').get(`/api/v1/purchases/${purchase.id}`)).body.purchase;
-    expect(detail).toMatchObject({ documentCount: 3, documentsPending: 3 });
+    expect(detail).toMatchObject({ documentCount: 3 });
     expect(detail.attachments).toHaveLength(3);
     expect(detail.attachments[0]).toEqual({
       id: expect.any(String),
@@ -436,9 +430,7 @@ describe('supplier documents on goods bought', () => {
       ['photo.jpeg', 'image/jpeg', expect.objectContaining({ fullName: 'Test accounts' })],
     ]);
     const list = (await as('accounts').get('/api/v1/purchases')).body.purchases;
-    expect(list).toEqual([
-      expect.objectContaining({ id: purchase.id, documentCount: 3, documentsPending: 3 }),
-    ]);
+    expect(list).toEqual([expect.objectContaining({ id: purchase.id, documentCount: 3 })]);
     const [entry] = await auditEntries(pools.owner, 'purchase.document_added');
     expect(entry?.details).toMatchObject({
       purchaseNumber: 'GB000001',
@@ -471,60 +463,18 @@ describe('supplier documents on goods bought', () => {
     await expect(pools.app.query('DELETE FROM purchase_attachments')).rejects.toThrow();
   });
 
-  it('are verified or rejected with a reason by finance or an administrator only', async () => {
+  it('are not verified or rejected: there is no review step', async () => {
     const purchase = await bought();
-    await upload('accounts', purchase.id, 'invoice.pdf', FILES.pdf);
-    const uploaded = await upload('accounts', purchase.id, 'invoice-scan.pdf', FILES.pdf);
-    const [first, second] = uploaded.body.purchase.attachments.map((a: { id: string }) => a.id);
-    const review = (who: string, attachmentId: string, body: object) =>
-      as(who).post(`/api/v1/purchases/${purchase.id}/attachments/${attachmentId}/review`, body);
-
-    // The warehouse may look at documents but not decide on them.
-    expect((await review('storekeeper', first, { status: 'VERIFIED' })).status).toBe(403);
-    expect((await review('salesperson', first, { status: 'VERIFIED' })).status).toBe(403);
-
-    const noReason = await review('accounts', first, { status: 'REJECTED' });
-    expect(noReason.status).toBe(400);
-    expect(noReason.body.error.details).toEqual([
-      { field: 'notes', message: 'Say why the document is rejected' },
-    ]);
-    const rejected = await review('accounts', first, {
-      status: 'REJECTED',
-      notes: 'Photo too blurry',
-    });
-    expect(rejected.status).toBe(200);
-    expect(rejected.body.purchase.attachments[0]).toMatchObject({
-      verificationStatus: 'REJECTED',
-      reviewNotes: 'Photo too blurry',
-      reviewedBy: { fullName: 'Test accounts' },
-      reviewedAt: expect.any(String),
-    });
-    const twice = await review('admin', first, { status: 'VERIFIED' });
-    expect(twice.status).toBe(409);
-    expect(twice.body.error.code).toBe('DOCUMENT_ALREADY_REVIEWED');
-
-    const verified = await review('admin', second, { status: 'VERIFIED', documentTotal: 57.5 });
-    expect(verified.status, JSON.stringify(verified.body)).toBe(200);
-    expect(verified.body.purchase).toMatchObject({ documentCount: 2, documentsPending: 0 });
-    expect(verified.body.purchase.attachments[1]).toMatchObject({
-      verificationStatus: 'VERIFIED',
-      documentTotal: '57.50',
-      reviewedBy: { fullName: 'Test admin' },
-    });
-    const badTotal = await review('admin', first, { status: 'VERIFIED', documentTotal: '1.234' });
-    expect(badTotal.status).toBe(400);
-
-    const entries = await auditEntries(pools.owner, 'purchase.document_reviewed');
-    expect(entries).toHaveLength(2);
-    expect(entries.map((e) => e.details)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ status: 'REJECTED', notes: 'Photo too blurry' }),
-        expect.objectContaining({ status: 'VERIFIED', documentTotal: '57.5' }),
-      ]),
+    const uploaded = await upload('accounts', purchase.id, 'invoice.pdf', FILES.pdf);
+    const attachmentId = uploaded.body.purchase.attachments[0].id;
+    const review = await as('accounts').post(
+      `/api/v1/purchases/${purchase.id}/attachments/${attachmentId}/review`,
+      { status: 'VERIFIED' },
     );
+    expect(review.status).toBe(404);
   });
 
-  it('are kept on a cancelled list, but not added to or reviewed', async () => {
+  it('are kept on a cancelled list, but not added to', async () => {
     const purchase = await bought();
     const uploaded = await upload('accounts', purchase.id, 'invoice.pdf', FILES.pdf);
     const attachmentId = uploaded.body.purchase.attachments[0].id;
@@ -533,20 +483,13 @@ describe('supplier documents on goods bought', () => {
     const added = await upload('accounts', purchase.id, 'invoice-2.pdf', FILES.pdf);
     expect(added.status).toBe(409);
     expect(added.body.error.code).toBe('PURCHASE_CANCELLED');
-    const reviewed = await as('accounts').post(
-      `/api/v1/purchases/${purchase.id}/attachments/${attachmentId}/review`,
-      { status: 'VERIFIED' },
-    );
-    expect(reviewed.status).toBe(409);
-    expect(reviewed.body.error.code).toBe('PURCHASE_CANCELLED');
-
     const file = await download(
       'storekeeper',
       `/api/v1/purchases/${purchase.id}/attachments/${attachmentId}`,
     );
     expect(file.status).toBe(200);
     const now = (await as('accounts').get(`/api/v1/purchases/${purchase.id}`)).body.purchase;
-    expect(now).toMatchObject({ status: 'CANCELLED', documentCount: 1, documentsPending: 1 });
+    expect(now).toMatchObject({ status: 'CANCELLED', documentCount: 1 });
   });
 
   it('print on the goods-bought PDF when photographed, each on its own page', async () => {

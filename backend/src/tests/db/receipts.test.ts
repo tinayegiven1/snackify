@@ -20,7 +20,7 @@ import {
 } from './db-test-helpers.js';
 
 // StockFlow Stage 4.4 and 4.5: goods-received notes and their stock. Supplier documents moved
-// to goods bought (2026-11-09); documents already on older notes stay readable and reviewable.
+// to goods bought (2026-11-09); documents already on older notes stay readable.
 const pools = createTestPools();
 const PASSWORD = '4826';
 let app: Express;
@@ -430,7 +430,7 @@ describe('supplier documents on goods-received notes', () => {
     expect(await owned(bbq, hq)).toBe(100);
   });
 
-  it('already on an older note are still listed, downloaded and reviewed', async () => {
+  it('already on an older note are still listed and downloaded', async () => {
     const receipt = await submitted();
     const first = await oldDocument(receipt.id, 'invoice.pdf', FILES.pdf, 'application/pdf');
     const second = await oldDocument(receipt.id, 'delivery note.png', FILES.png, 'image/png');
@@ -461,42 +461,20 @@ describe('supplier documents on goods-received notes', () => {
         .status,
     ).toBe(404);
 
-    // Finance still reviews them; the warehouse does not.
-    const review = (who: string, attachmentId: string, body: object) =>
-      as(who).post(`/api/v1/receipts/${receipt.id}/attachments/${attachmentId}/review`, body);
-    expect((await review('storekeeper', first, { status: 'VERIFIED' })).status).toBe(403);
-    const noReason = await review('accounts', first, { status: 'REJECTED' });
-    expect(noReason.status).toBe(400);
-    expect(noReason.body.error.details).toEqual([
-      { field: 'notes', message: 'Say why the document is rejected' },
-    ]);
-    const reviewed = await review('accounts', first, {
-      status: 'VERIFIED',
-      documentTotal: '40.80',
-    });
-    expect(reviewed.status).toBe(200);
-    expect(reviewed.body.receipt.attachments[0]).toMatchObject({
-      verificationStatus: 'VERIFIED',
-      documentTotal: '40.80',
-      reviewedBy: { fullName: 'Test accounts' },
-    });
-    // The note is for 42.50, the document says 40.80.
-    expect(reviewed.body.receipt.flags).toMatchObject({
-      documentTotalMismatch: true,
-      documentsPending: 1,
-    });
-    expect((await review('accounts', first, { status: 'VERIFIED' })).body.error.code).toBe(
-      'DOCUMENT_ALREADY_REVIEWED',
+    // There is no review step for documents any more.
+    const review = await as('accounts').post(
+      `/api/v1/receipts/${receipt.id}/attachments/${first}/review`,
+      { status: 'VERIFIED' },
     );
-    expect(await auditEntries(pools.owner, 'receipt.document_reviewed')).toHaveLength(1);
+    expect(review.status).toBe(404);
 
-    // Verifying the note verifies the document still waiting.
+    // Approving the note marks any document still waiting as verified.
     const verified = await as('accounts').post(`/api/v1/receipts/${receipt.id}/verify`);
     expect(verified.status, JSON.stringify(verified.body)).toBe(200);
     expect(verified.body.receipt.status).toBe('POSTED');
     expect(verified.body.receipt.attachments).toMatchObject([
       { id: first, verificationStatus: 'VERIFIED' },
-      { id: second, verificationStatus: 'VERIFIED', reviewedBy: { fullName: 'Test accounts' } },
+      { id: second, verificationStatus: 'VERIFIED' },
     ]);
     expect(verified.body.receipt.flags.documentsPending).toBe(0);
 

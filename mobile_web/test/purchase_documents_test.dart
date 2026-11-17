@@ -85,31 +85,6 @@ Future<void> openPurchase(WidgetTester tester, String number) async {
   await tester.pumpAndSettle();
 }
 
-/// Reviews the first document still to check: verifies it, or rejects it with [reason].
-Future<void> review(
-  WidgetTester tester, {
-  String? reason,
-  String? total,
-  bool reject = false,
-}) async {
-  await press(tester, find.text('Review').first);
-  if (reject) {
-    await tester.tap(find.text('Reject'));
-    await tester.pumpAndSettle();
-  }
-  if (reason != null) {
-    await tester.enterText(find.widgetWithText(TextFormField, 'Why it is rejected'), reason);
-  }
-  if (total != null) {
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Total on the document (optional)'),
-      total,
-    );
-  }
-  await tester.tap(find.text(reject ? 'Reject document' : 'Verify document'));
-  await tester.pumpAndSettle();
-}
-
 void main() {
   test('photos are named by the time taken and their real type', () {
     final time = DateTime(2026, 11, 8, 9, 5, 3);
@@ -168,7 +143,7 @@ void main() {
 
     // The list's page shows the saved photo's picture (downloaded) and opens it.
     expect(find.text('Supplier documents'), findsOneWidget);
-    expect(find.text('Not reviewed'), findsNWidgets(2));
+    expect(find.textContaining('Added by Tendai Moyo'), findsNWidgets(2));
     expect(tester.widget<DocumentThumbnail>(thumbnailOf(photoName)).bytes, photoDocument().bytes);
     await press(tester, find.text(photoName));
     expect(previewImage, findsOneWidget);
@@ -177,73 +152,23 @@ void main() {
     await press(tester, find.text('invoice.pdf'));
     expect(app.sharedPdfs.single.$1, 'invoice.pdf');
 
-    // The Goods Bought list says documents are waiting to be checked.
-    await tester.pageBack();
-    await tester.pumpAndSettle();
-    expect(find.text('Documents to check'), findsOneWidget);
-  });
-
-  testWidgets('finance verifies one document with its total and rejects another with a reason', (
-    tester,
-  ) async {
-    final backend = withPurchase(
-      backendFor('accounts'),
-      documents: [
-        storedDocument('purchase-1-doc-1', photoDocument(), 'image/png'),
-        storedDocument('purchase-1-doc-2', pdfDocument(), 'application/pdf'),
-      ],
-    );
-    await pumpSnackify(tester, signedIn: true, backend: backend);
-    await openPurchase(tester, 'GB000001');
-    expect(find.text('Review'), findsNWidgets(2));
-
-    // The total on the photo differs from the list's USD 42.50.
-    await review(tester, total: '40.00');
-    expect(find.text('$photoName verified.'), findsOneWidget);
-    expect(find.textContaining('Verified by Tendai Moyo'), findsOneWidget);
-    expect(find.textContaining('Document total USD 40.00'), findsOneWidget);
-    expect(find.textContaining("A verified document's total differs"), findsOneWidget);
-    expect(find.text('Review'), findsOneWidget);
-
-    // Rejecting needs a reason.
-    await review(tester, reject: true);
-    expect(find.text('Say why (at least 3 characters)'), findsOneWidget);
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Why it is rejected'),
-      'Wrong supplier',
-    );
-    await tester.tap(find.text('Reject document'));
-    await tester.pumpAndSettle();
-    expect(find.text('invoice.pdf rejected.'), findsOneWidget);
-    expect(find.textContaining('Rejected by Tendai Moyo'), findsOneWidget);
-    expect(find.textContaining('Wrong supplier'), findsOneWidget);
+    // Nothing waits to be checked: documents have no review step.
     expect(find.text('Review'), findsNothing);
-
-    final documents = backend.purchases.single['documents'] as List<Map<String, Object?>>;
-    expect(documents.first, containsPair('verificationStatus', 'VERIFIED'));
-    expect(documents.first, containsPair('documentTotal', '40.00'));
-    expect(documents.last, containsPair('verificationStatus', 'REJECTED'));
-    expect(documents.last, containsPair('reviewNotes', 'Wrong supplier'));
-
-    // Every document reviewed: the list shows no document pill.
     await tester.pageBack();
     await tester.pumpAndSettle();
     expect(find.text('Documents to check'), findsNothing);
-    expect(find.text('No document'), findsNothing);
   });
 
-  testWidgets('a matching total raises no warning; a list without documents says so', (
-    tester,
-  ) async {
+  testWidgets('documents are not reviewed; a list without documents says so', (tester) async {
     final backend = withPurchase(
       backendFor('accounts'),
       documents: [storedDocument('purchase-1-doc-1', pdfDocument(), 'application/pdf')],
     );
     await pumpSnackify(tester, signedIn: true, backend: backend);
     await openPurchase(tester, 'GB000001');
-    await review(tester, total: '42.5');
-    expect(find.text('invoice.pdf verified.'), findsOneWidget);
-    expect(find.textContaining("A verified document's total differs"), findsNothing);
+    expect(find.text('invoice.pdf'), findsOneWidget);
+    expect(find.text('Review'), findsNothing);
+    expect(find.text('Not reviewed'), findsNothing);
 
     backend.purchases.single['documents'] = <Map<String, Object?>>[];
     await tester.pageBack();
@@ -251,21 +176,20 @@ void main() {
     expect(find.text('No document'), findsOneWidget);
   });
 
-  testWidgets('a storekeeper sees the documents but cannot attach or review them', (tester) async {
+  testWidgets('a storekeeper sees the documents on a list they did not enter but cannot attach', (
+    tester,
+  ) async {
     final backend = withPurchase(
       backendFor('storekeeper'),
       documents: [storedDocument('purchase-1-doc-1', photoDocument(), 'image/png')],
     );
     await pumpSnackify(tester, signedIn: true, backend: backend);
     await openSection(tester, 'Goods Bought');
-    expect(find.text('Documents to check'), findsOneWidget);
     await press(tester, find.textContaining('GB000001'));
 
     expect(find.text(photoName), findsOneWidget);
-    expect(find.text('Not reviewed'), findsOneWidget);
     expect(find.text('Attach document'), findsNothing);
     expect(find.text('Take photo'), findsNothing);
-    expect(find.text('Review'), findsNothing);
     await press(tester, find.text(photoName));
     expect(previewImage, findsOneWidget);
     await closePreview(tester);

@@ -18,7 +18,6 @@ import {
   readAttachment,
   rejectReceipt,
   reverseReceipt,
-  reviewAttachment,
   submitReceipt,
   updateDraft,
   uploadAttachment,
@@ -42,15 +41,6 @@ const unitCostSchema = z
   .refine((value) => /^\d{1,10}(\.\d{1,4})?$/.test(value), {
     message: 'Use an amount of 0 or more with up to 4 decimal places, e.g. 0.4250',
   });
-const documentTotalSchema = z
-  .union([z.string(), z.number()])
-  .transform((value) => String(value).trim())
-  .refine((value) => /^\d{1,12}(\.\d{1,2})?$/.test(value), {
-    message: 'Use an amount with up to 2 decimal places, e.g. 125.50',
-  })
-  .nullish()
-  .transform((value) => value ?? null);
-
 const lineSchema = z
   .object({
     productId: z.uuid({ error: 'Must be a product id' }),
@@ -122,17 +112,6 @@ const reasonSchema = z.object({
 });
 
 const verifySchema = z.object({ notes: optionalText(500) });
-const reviewSchema = z
-  .object({
-    status: z.enum(['VERIFIED', 'REJECTED'], { error: 'Must be VERIFIED or REJECTED' }),
-    notes: optionalText(500),
-    documentTotal: documentTotalSchema,
-  })
-  .refine((review) => review.status !== 'REJECTED' || (review.notes?.length ?? 0) >= 3, {
-    path: ['notes'],
-    message: 'Say why the document is rejected',
-  });
-
 const listSchema = z.object({
   status: z
     .enum(['DRAFT', 'PENDING_VERIFICATION', 'VERIFIED', 'REJECTED', 'POSTED', 'REVERSED'])
@@ -329,23 +308,6 @@ export function receiptsRouter(
   router.post('/:id/attachments', requirePermission('stock.receive'), async (req, res) => {
     await uploadAttachment(db, scope(res), receiptId(req.params.id));
   });
-
-  router.post(
-    '/:id/attachments/:attachmentId/review',
-    requirePermission('receipt.verify'),
-    async (req, res) => {
-      const review = parseBody(reviewSchema, req.body);
-      const receipt = await reviewAttachment(
-        db,
-        scope(res),
-        receiptId(req.params.id),
-        parseIdParam(req.params.attachmentId, documentNotFound),
-        review,
-        getAuth(res).user,
-      );
-      res.json({ receipt });
-    },
-  );
 
   return router;
 }

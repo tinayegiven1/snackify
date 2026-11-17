@@ -1033,54 +1033,6 @@ export async function uploadAttachment(
   );
 }
 
-export async function reviewAttachment(
-  pool: pg.Pool,
-  scope: AccessScope,
-  id: string,
-  attachmentId: string,
-  review: { status: 'VERIFIED' | 'REJECTED'; notes: string | null; documentTotal: string | null },
-  actor: PublicUser,
-): Promise<Receipt> {
-  await withTransaction(pool, async (client) => {
-    const current = await lockReceipt(client, scope, id);
-    if (current.status !== 'PENDING_VERIFICATION' && current.status !== 'DRAFT') {
-      throw wrongStatus(current.status, 'reviewed');
-    }
-    if (review.status === 'REJECTED' && !review.notes) {
-      throw fieldError('notes', 'Say why the document is rejected');
-    }
-    const { rowCount } = await client.query(
-      `UPDATE stock_receipt_attachments
-       SET verification_status = $3, review_notes = $4, document_total = $5::numeric,
-           reviewed_by = $6, reviewed_at = now()
-       WHERE id = $2 AND receipt_id = $1 AND verification_status = 'PENDING'`,
-      [id, attachmentId, review.status, review.notes, review.documentTotal, actor.id],
-    );
-    if (!rowCount) {
-      throw new AppError(
-        409,
-        'DOCUMENT_ALREADY_REVIEWED',
-        'This document has already been reviewed, or does not belong to this receipt.',
-      );
-    }
-    await recordAudit(client, {
-      actorUserId: actor.id,
-      action: 'receipt.document_reviewed',
-      entityType: 'receipt',
-      entityId: id,
-      organisationId: current.owner_organisation_id,
-      details: {
-        grnNumber: current.grn_number,
-        attachmentId,
-        status: review.status,
-        notes: review.notes,
-        documentTotal: review.documentTotal,
-      },
-    });
-  });
-  return getReceipt(pool, scope, id);
-}
-
 /** A document's content, for someone allowed to see its receipt. */
 export async function readAttachment(
   db: Queryable,

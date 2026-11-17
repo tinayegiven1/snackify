@@ -22,7 +22,6 @@ import {
   listPurchases,
   purchaseNotFound,
   readPurchaseDocument,
-  reviewPurchaseDocument,
   updatePurchase,
   uploadPurchaseDocument,
   type PurchaseInput,
@@ -78,26 +77,6 @@ const listSchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });
-
-const documentTotalSchema = z
-  .union([z.string(), z.number()])
-  .transform((value) => String(value).trim())
-  .refine((value) => /^\d{1,12}(\.\d{1,2})?$/.test(value), {
-    message: 'Use an amount with up to 2 decimal places, e.g. 125.50',
-  })
-  .nullish()
-  .transform((value) => value ?? null);
-
-const reviewSchema = z
-  .object({
-    status: z.enum(['VERIFIED', 'REJECTED'], { error: 'Must be VERIFIED or REJECTED' }),
-    notes: optionalText(500),
-    documentTotal: documentTotalSchema,
-  })
-  .refine((review) => review.status !== 'REJECTED' || (review.notes?.length ?? 0) >= 3, {
-    path: ['notes'],
-    message: 'Say why the document is rejected',
-  });
 
 const documentNotFound = () => new AppError(404, 'DOCUMENT_NOT_FOUND', 'No document has that id.');
 
@@ -170,7 +149,6 @@ export function purchasesRouter(db: pg.Pool, config: AppConfig): Router {
       );
       pictures.push({
         filename: attachment.filename,
-        verificationStatus: attachment.verificationStatus,
         content: document.content,
       });
     }
@@ -263,23 +241,6 @@ export function purchasesRouter(db: pg.Pool, config: AppConfig): Router {
         config.attachments,
       );
       res.status(201).json({ purchase });
-    },
-  );
-
-  // Only finance and administrators verify or reject supplier documents.
-  router.post(
-    '/:id/attachments/:attachmentId/review',
-    requirePermission('purchase.manage'),
-    async (req, res) => {
-      const purchase = await reviewPurchaseDocument(
-        db,
-        scope(res),
-        purchaseId(req.params.id),
-        parseIdParam(req.params.attachmentId, documentNotFound),
-        parseBody(reviewSchema, req.body),
-        getAuth(res).user,
-      );
-      res.json({ purchase });
     },
   );
 

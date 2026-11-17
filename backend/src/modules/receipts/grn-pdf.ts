@@ -32,7 +32,6 @@ const HEADINGS: Record<Receipt['status'], string> = {
 /** A photographed supplier document (JPEG or PNG) to print after the note. */
 export interface DocumentPicture {
   filename: string;
-  verificationStatus: string;
   content: Buffer;
 }
 
@@ -214,12 +213,9 @@ export function renderGrnPdf(
           width: TABLE_WIDTH,
         },
       );
-    doc
-      .font('Helvetica')
-      .fontSize(9)
-      .text(`${picture.filename} (${picture.verificationStatus.toLowerCase()})`, {
-        width: TABLE_WIDTH,
-      });
+    doc.font('Helvetica').fontSize(9).text(picture.filename, {
+      width: TABLE_WIDTH,
+    });
     const top = doc.y + 10;
     try {
       doc.image(picture.content, LEFT, top, {

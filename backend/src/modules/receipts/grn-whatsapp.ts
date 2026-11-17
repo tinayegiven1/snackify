@@ -27,7 +27,6 @@ export async function buildGrnPdf(
     );
     pictures.push({
       filename: attachment.filename,
-      verificationStatus: attachment.verificationStatus,
       content: document.content,
     });
   }

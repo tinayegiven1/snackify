@@ -47,9 +47,8 @@ export interface PurchaseSummary {
   currency: string;
   total: string;
   lineCount: number;
-  /** Supplier documents attached, and how many still wait for finance to review. */
+  /** Supplier documents attached. */
   documentCount: number;
-  documentsPending: number;
   createdBy: Person;
   createdAt: Date;
 }
@@ -148,8 +147,6 @@ const SUMMARY_SELECT = `
          (SELECT count(*)::int FROM purchase_lines l WHERE l.purchase_id = p.id) AS line_count,
          (SELECT count(*)::int FROM purchase_attachments a WHERE a.purchase_id = p.id)
            AS document_count,
-         (SELECT count(*)::int FROM purchase_attachments a
-          WHERE a.purchase_id = p.id AND a.verification_status = 'PENDING') AS documents_pending,
          (SELECT CASE
                    WHEN bool_and(received >= quantity) THEN 'RECEIVED'
                    WHEN bool_or(received > 0) THEN 'PARTLY_RECEIVED'
@@ -189,7 +186,6 @@ interface SummaryRow {
   total: string;
   line_count: number;
   document_count: number;
-  documents_pending: number;
   receiving_status: ReceivingStatus;
   can_change: boolean;
   can_cancel: boolean;
@@ -208,7 +204,6 @@ const toSummary = (row: SummaryRow): PurchaseSummary => ({
   total: row.total,
   lineCount: row.line_count,
   documentCount: row.document_count,
-  documentsPending: row.documents_pending,
   createdBy: row.created_by,
   createdAt: row.created_at,
 });
@@ -593,8 +588,7 @@ async function lockOpen(client: pg.PoolClient, scope: AccessScope, id: string, a
 }
 
 /**
- * Attaches a supplier document (PDF, JPEG or PNG, checked from its content) to an open list. It
- * waits for finance or an administrator to verify or reject it.
+ * Attaches a supplier document (PDF, JPEG or PNG, checked from its content) to an open list.
  */
 export async function uploadPurchaseDocument(
   pool: pg.Pool,
@@ -642,52 +636,6 @@ export async function uploadPurchaseDocument(
     if (storedKey) await unlink(join(settings.storageDir, storedKey)).catch(() => {});
     throw error;
   }
-  return getPurchase(pool, scope, id);
-}
-
-/** Finance or an administrator verifies or rejects a document (a rejection needs a reason). */
-export async function reviewPurchaseDocument(
-  pool: pg.Pool,
-  scope: AccessScope,
-  id: string,
-  attachmentId: string,
-  review: { status: 'VERIFIED' | 'REJECTED'; notes: string | null; documentTotal: string | null },
-  actor: PublicUser,
-): Promise<Purchase> {
-  await withTransaction(pool, async (client) => {
-    const current = await lockOpen(client, scope, id, 'reviewed');
-    if (review.status === 'REJECTED' && !review.notes) {
-      throw fieldError('notes', 'Say why the document is rejected');
-    }
-    const { rowCount } = await client.query(
-      `UPDATE purchase_attachments
-       SET verification_status = $3, review_notes = $4, document_total = $5::numeric,
-           reviewed_by = $6, reviewed_at = now()
-       WHERE id = $2 AND purchase_id = $1 AND verification_status = 'PENDING'`,
-      [id, attachmentId, review.status, review.notes, review.documentTotal, actor.id],
-    );
-    if (!rowCount) {
-      throw new AppError(
-        409,
-        'DOCUMENT_ALREADY_REVIEWED',
-        'This document has already been reviewed, or does not belong to this list.',
-      );
-    }
-    await recordAudit(client, {
-      actorUserId: actor.id,
-      action: 'purchase.document_reviewed',
-      entityType: 'purchase',
-      entityId: id,
-      organisationId: current.owner_organisation_id,
-      details: {
-        purchaseNumber: current.purchase_number,
-        attachmentId,
-        status: review.status,
-        notes: review.notes,
-        documentTotal: review.documentTotal,
-      },
-    });
-  });
   return getPurchase(pool, scope, id);
 }
 

@@ -4,7 +4,6 @@ import '../../../core/files/pdf_sharer.dart';
 import '../../../core/formatting/dates.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/widgets/message_view.dart';
-import '../../../shared/widgets/ui_kit.dart';
 import '../../receipts/domain/receipt_models.dart';
 import '../../receipts/presentation/document_preview.dart';
 import '../../receipts/presentation/receipt_detail_screen.dart';
@@ -17,8 +16,6 @@ import 'purchases_screen.dart' show PurchaseStatusPill;
 
 /// One goods-bought list: what was bought, what has arrived and what is still to come, the
 /// supplier's documents, the goods-received notes made from it, and what may be done next.
-/// Finance and administrators attach documents and verify or reject each one; the warehouse
-/// can look at them.
 class PurchaseDetailScreen extends StatefulWidget {
   const PurchaseDetailScreen({
     super.key,
@@ -147,25 +144,6 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
       isPdf: document.isPdf,
       bytes: _pictures.bytesOf(document.id),
       loading: _pictures.isLoading(document.id),
-    );
-  }
-
-  Future<void> _review(Purchase purchase, ReceiptDocument document) async {
-    final result = await showDialog<_Review>(
-      context: context,
-      builder: (_) => _ReviewDialog(document: document, currency: purchase.currency),
-    );
-    if (result == null || !mounted) return;
-    final verified = result.status == DocumentStatus.verified;
-    await _run(
-      () => _services.purchases.reviewDocument(
-        purchase.id,
-        document.id,
-        status: result.status,
-        notes: result.notes,
-        documentTotal: result.documentTotal,
-      ),
-      '${document.filename} ${verified ? 'verified' : 'rejected'}.',
     );
   }
 
@@ -365,14 +343,6 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
                   ),
                 const SizedBox(height: 16),
                 Text('Supplier documents', style: theme.textTheme.titleMedium),
-                if (purchase.documentTotalMismatch) ...[
-                  const SizedBox(height: 8),
-                  ErrorBanner(
-                    message:
-                        'A verified document\'s total differs from this list\'s total '
-                        '(${purchase.currency} ${purchase.total}).',
-                  ),
-                ],
                 if (purchase.documents.isEmpty)
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 8),
@@ -381,11 +351,8 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
                 for (final document in purchase.documents)
                   _DocumentTile(
                     document: document,
-                    currency: purchase.currency,
                     thumbnail: _thumbnail(document),
                     onTap: () => _openDocument(purchase, document),
-                    showReview: _services.canManage && document.status == DocumentStatus.pending,
-                    onReview: _busy ? null : () => _review(purchase, document),
                   ),
                 if (canAddDocuments)
                   Wrap(
@@ -480,39 +447,18 @@ class _Facts extends StatelessWidget {
   }
 }
 
-/// One supplier document: its picture, name, size and what the reviewer decided.
+/// One supplier document: its picture, name, size and who added it.
 class _DocumentTile extends StatelessWidget {
-  const _DocumentTile({
-    required this.document,
-    required this.currency,
-    required this.thumbnail,
-    required this.onTap,
-    required this.showReview,
-    required this.onReview,
-  });
+  const _DocumentTile({required this.document, required this.thumbnail, required this.onTap});
 
   final ReceiptDocument document;
-  final String currency;
   final Widget thumbnail;
   final VoidCallback onTap;
-  final bool showReview;
-  final VoidCallback? onReview;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final tone = switch (document.status) {
-      DocumentStatus.pending => Tone.warn,
-      DocumentStatus.verified => Tone.good,
-      DocumentStatus.rejected => Tone.bad,
-    };
-    final details = [
-      document.sizeLabel,
-      if (document.reviewedBy != null)
-        '${document.status.label} by ${document.reviewedBy!.fullName}',
-      if (document.documentTotal != null) 'Document total $currency ${document.documentTotal}',
-      ?document.reviewNotes,
-    ];
+    final details = [document.sizeLabel, 'Added by ${document.uploadedBy.fullName}'];
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: InkWell(
@@ -529,136 +475,13 @@ class _DocumentTile extends StatelessWidget {
                 children: [
                   Text(document.filename, style: theme.textTheme.bodyLarge),
                   const SizedBox(height: 4),
-                  Pill(document.status.label, tone: tone),
-                  const SizedBox(height: 4),
                   Text(details.join('\n'), style: theme.textTheme.bodySmall),
-                  if (showReview)
-                    TextButton.icon(
-                      onPressed: onReview,
-                      icon: const Icon(Icons.fact_check_outlined),
-                      label: const Text('Review'),
-                    ),
                 ],
               ),
             ),
           ],
         ),
       ),
-    );
-  }
-}
-
-/// What the reviewer decided about a document.
-typedef _Review = ({DocumentStatus status, String? notes, String? documentTotal});
-
-/// Verifies or rejects one document, with notes (needed to reject) and the total printed on
-/// it. Pops with the decision.
-class _ReviewDialog extends StatefulWidget {
-  const _ReviewDialog({required this.document, required this.currency});
-
-  final ReceiptDocument document;
-  final String currency;
-
-  @override
-  State<_ReviewDialog> createState() => _ReviewDialogState();
-}
-
-class _ReviewDialogState extends State<_ReviewDialog> {
-  final _formKey = GlobalKey<FormState>();
-  final _notes = TextEditingController();
-  final _total = TextEditingController();
-  DocumentStatus _status = DocumentStatus.verified;
-
-  @override
-  void dispose() {
-    _notes.dispose();
-    _total.dispose();
-    super.dispose();
-  }
-
-  void _done() {
-    if (!_formKey.currentState!.validate()) return;
-    final notes = _notes.text.trim();
-    final total = _total.text.trim();
-    Navigator.of(context).pop<_Review>((
-      status: _status,
-      notes: notes.isEmpty ? null : notes,
-      documentTotal: total.isEmpty ? null : total,
-    ));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final rejecting = _status == DocumentStatus.rejected;
-    return AlertDialog(
-      title: Text('Review ${widget.document.filename}'),
-      content: SizedBox(
-        width: 420,
-        child: Form(
-          key: _formKey,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                SegmentedButton<DocumentStatus>(
-                  segments: const [
-                    ButtonSegment(
-                      value: DocumentStatus.verified,
-                      label: Text('Verify'),
-                      icon: Icon(Icons.check),
-                    ),
-                    ButtonSegment(
-                      value: DocumentStatus.rejected,
-                      label: Text('Reject'),
-                      icon: Icon(Icons.close),
-                    ),
-                  ],
-                  selected: {_status},
-                  onSelectionChanged: (selected) => setState(() => _status = selected.first),
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _notes,
-                  maxLength: 500,
-                  decoration: InputDecoration(
-                    labelText: rejecting ? 'Why it is rejected' : 'Notes (optional)',
-                    border: const OutlineInputBorder(),
-                  ),
-                  validator: (value) => rejecting && (value ?? '').trim().length < 3
-                      ? 'Say why (at least 3 characters)'
-                      : null,
-                ),
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: _total,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(
-                    labelText: 'Total on the document (optional)',
-                    hintText: 'e.g. 57.50',
-                    prefixText: '${widget.currency} ',
-                    border: const OutlineInputBorder(),
-                  ),
-                  validator: (value) {
-                    final text = (value ?? '').trim();
-                    if (text.isEmpty) return null;
-                    return RegExp(r'^\d{1,12}(\.\d{1,2})?$').hasMatch(text)
-                        ? null
-                        : 'Use an amount with up to 2 decimal places';
-                  },
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-        FilledButton(
-          onPressed: _done,
-          child: Text(rejecting ? 'Reject document' : 'Verify document'),
-        ),
-      ],
     );
   }
 }
